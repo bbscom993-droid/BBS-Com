@@ -1,0 +1,6 @@
+{
+  "name": "Berkah Bintang Solusindo",
+  "description": "Portal Layanan Pengadaan IT, Infrastruktur Jaringan, Server, CCTV, dan Maintenance Terpercaya",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
