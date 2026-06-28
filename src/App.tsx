@@ -32,6 +32,7 @@ import {
 import Navbar from "./components/Navbar";
 import ManualScheduleForm from "./components/ManualScheduleForm";
 import RfqAnalytics from "./components/RfqAnalytics";
+import BarcodeScanner from "./components/BarcodeScanner";
 import { SERVICE_OFFERINGS, PRODUCT_CATALOG } from "./data";
 import { 
   CompanySettings, 
@@ -165,6 +166,7 @@ export default function App() {
 
   const [rfqCart, setRfqCart] = useState<{ product: ProductItem; quantity: number }[]>([]);
   const [customCartItems, setCustomCartItems] = useState<RFQItem[]>([]);
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
   
   // Custom item adding inputs
   const [customItemName, setCustomItemName] = useState("");
@@ -1899,6 +1901,16 @@ export default function App() {
                         </button>
                       ) : null}
                     </div>
+
+                    {/* Scan Barcode / QR Trigger Button */}
+                    <button
+                      type="button"
+                      onClick={() => setIsScannerOpen(true)}
+                      className="w-full py-2.5 bg-gradient-to-r from-indigo-600/20 to-violet-600/20 hover:from-indigo-600/30 hover:to-violet-600/30 text-indigo-200 hover:text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center space-x-2 border border-indigo-500/20 shadow-sm cursor-pointer group"
+                    >
+                      <Icons.Scan className="h-4 w-4 text-indigo-400 group-hover:scale-110 transition-transform" />
+                      <span>Scan Label Barcode / QR Produk</span>
+                    </button>
 
                     {/* Standard items catalog list */}
                     {rfqCart.length > 0 || customCartItems.length > 0 ? (
@@ -3790,6 +3802,17 @@ export default function App() {
                       </div>
 
                       <div>
+                        <label className="block text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1.5">Motto Perusahaan (Kop Surat)</label>
+                        <input 
+                          type="text" 
+                          value={settings.motto || ""}
+                          onChange={(e) => setSettings({ ...settings, motto: e.target.value })}
+                          className="w-full px-4 py-2.5 bg-slate-950 border border-white/10 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-200"
+                          placeholder="Contoh: Inovasi, Integritas & Pelayanan Terbaik"
+                        />
+                      </div>
+
+                      <div>
                         <label className="block text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1.5">No WhatsApp Kop Surat</label>
                         <input 
                           type="text" 
@@ -4668,8 +4691,11 @@ export default function App() {
                     </div>
                   )}
                   <div>
-                    <h1 className="text-2xl font-extrabold tracking-tight text-slate-900 leading-none">{settings.companyName}</h1>
-                    <p className="text-[10px] uppercase tracking-widest text-indigo-700 font-bold mt-1">{settings.tagline}</p>
+                    <h1 className="text-2xl font-extrabold tracking-tight text-slate-900 leading-none quotation-serif-header">{settings.companyName}</h1>
+                    <p className="text-[10px] uppercase tracking-widest text-indigo-700 font-bold mt-1 quotation-serif-header">{settings.tagline}</p>
+                    {settings.motto && (
+                      <p className="text-[9px] italic text-slate-500 mt-1.5 quotation-serif-header">"{settings.motto}"</p>
+                    )}
                   </div>
                 </div>
                 <p className="text-[10px] text-slate-500 font-medium max-w-md pt-2 leading-relaxed">
@@ -4682,23 +4708,22 @@ export default function App() {
                 {/* QR Code Verification for Procurement & Print Date */}
                 <div className="flex items-stretch space-x-2">
                   {(() => {
-                    const relatedRfq = rfqs.find(r => r.id === selectedQuotation.rfqId);
-                    const rfqNumber = relatedRfq ? relatedRfq.rfqNumber : "N/A";
+                    const quotationNumber = selectedQuotation.quotationNumber || "N/A";
                     // Using a high-quality, reliable, free public QR code generator API (qrserver)
-                    const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(rfqNumber)}`;
+                    const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(quotationNumber)}`;
                     return (
                       <div className="bg-slate-50 border border-slate-200 p-2 rounded-2xl flex flex-col items-center justify-center shrink-0" id="procurement_qr_verification">
                         <img 
                           src={qrCodeUrl} 
-                          alt={`QR Code RFQ ${rfqNumber}`} 
+                          alt={`QR Code Quotation ${quotationNumber}`} 
                           className="w-14 h-14 object-contain mix-blend-multiply"
                           referrerPolicy="no-referrer"
                         />
                         <div className="text-[7px] font-mono font-extrabold text-slate-500 mt-1 uppercase text-center tracking-tight">
-                          RFQ: {rfqNumber}
+                          Q: {quotationNumber}
                         </div>
                         <div className="text-[6px] font-sans font-black text-indigo-600 uppercase tracking-wider text-center">
-                          VERIFIKASI KANP
+                          VERIFIKASI DIGITAL
                         </div>
                       </div>
                     );
@@ -4716,11 +4741,24 @@ export default function App() {
                 </div>
 
                 <div className="text-right space-y-1.5 bg-slate-50 border border-slate-200 p-3.5 rounded-2xl min-h-[94px] flex flex-col justify-between">
-                  <h3 className="text-base font-extrabold text-slate-900 uppercase tracking-wider leading-none">Penawaran Harga</h3>
+                  <h3 className="text-base font-extrabold text-slate-900 uppercase tracking-wider leading-none quotation-serif-header">Penawaran Harga</h3>
                   <div className="font-mono text-[10px] text-slate-600 leading-normal text-right">
                     <div>No: <span className="font-bold text-slate-900">{selectedQuotation.quotationNumber}</span></div>
                     <div>Tanggal: <span className="font-bold text-slate-900">{selectedQuotation.date}</span></div>
                     <div>Valid S.D: <span className="font-bold text-red-600">{selectedQuotation.expiryDate}</span></div>
+                    <div>Batas Penawaran: <span className="font-bold text-indigo-600">
+                      {(() => {
+                        if (!selectedQuotation.date) return "-";
+                        try {
+                          const d = new Date(selectedQuotation.date);
+                          if (!isNaN(d.getTime())) {
+                            d.setDate(d.getDate() + 14);
+                            return d.toISOString().split("T")[0];
+                          }
+                        } catch (e) {}
+                        return "-";
+                      })()}
+                    </span></div>
                   </div>
                 </div>
               </div>
@@ -5037,6 +5075,9 @@ export default function App() {
                     <div>
                       <h1 className="text-2xl font-extrabold tracking-tight text-slate-900 leading-none">{settings.companyName}</h1>
                       <p className="text-[10px] uppercase tracking-widest text-indigo-700 font-bold mt-1">{settings.tagline}</p>
+                      {settings.motto && (
+                        <p className="text-[9px] italic text-slate-500 mt-1">"{settings.motto}"</p>
+                      )}
                     </div>
                   </div>
                   <p className="text-[10px] text-slate-500 font-medium max-w-md pt-2 leading-relaxed">
@@ -5635,8 +5676,21 @@ export default function App() {
             letter-spacing: 0.05em !important;
             font-weight: 600 !important;
           }
+          .quotation-serif-header {
+            font-family: Georgia, Cambria, "Times New Roman", Times, serif !important;
+            letter-spacing: 0.03em !important;
+          }
         }
       `}</style>
+
+      {/* BARCODE / QR SCANNER MODAL */}
+      {isScannerOpen && (
+        <BarcodeScanner
+          catalogProducts={catalogProducts}
+          onScanSuccess={(product) => addToCart(product)}
+          onClose={() => setIsScannerOpen(false)}
+        />
+      )}
 
       {/* OAUTH POPUP MODAL OVERLAY */}
       {oauthModal.isOpen && (
