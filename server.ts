@@ -100,7 +100,8 @@ const DEFAULT_DB = {
       status: "sent",
       adminSignature: "Direktur Pengadaan BBS"
     }
-  ]
+  ],
+  emails: []
 };
 
 // Database Helpers
@@ -116,10 +117,40 @@ const readDB = () => {
       return DEFAULT_DB;
     }
     const data = fs.readFileSync(DB_PATH, "utf-8");
-    return JSON.parse(data);
+    const db = JSON.parse(data);
+    if (!db.emails) {
+      db.emails = [];
+    }
+    if (!db.reminders) {
+      db.reminders = [];
+    }
+    if (!db.reminderConfig) {
+      db.reminderConfig = {
+        autoSchedule: true,
+        delayHours: 48,
+        subjectTemplate: "[PENGINGAT] Menunggu Tindak Lanjut Permintaan Penawaran - {rfqNumber}",
+        bodyTemplate: "Halo {clientName},\n\nKami ingin mengonfirmasi bahwa kami sedang menyusun penawaran terbaik untuk RFQ {rfqNumber} Anda.\n\nTim sales kami akan segera menghubungi Anda untuk mendiskusikan spesifikasi perangkat berkualitas tinggi yang Anda butuhkan.\n\nTerima kasih,\n{companyName}"
+      };
+    }
+    return db;
   } catch (error) {
     console.error("Error reading DB, returning defaults:", error);
-    return DEFAULT_DB;
+    const db = { ...DEFAULT_DB } as any;
+    if (!db.emails) {
+      db.emails = [];
+    }
+    if (!db.reminders) {
+      db.reminders = [];
+    }
+    if (!db.reminderConfig) {
+      db.reminderConfig = {
+        autoSchedule: true,
+        delayHours: 48,
+        subjectTemplate: "[PENGINGAT] Menunggu Tindak Lanjut Permintaan Penawaran - {rfqNumber}",
+        bodyTemplate: "Halo {clientName},\n\nKami ingin mengonfirmasi bahwa kami sedang menyusun penawaran terbaik untuk RFQ {rfqNumber} Anda.\n\nTim sales kami akan segera menghubungi Anda untuk mendiskusikan spesifikasi perangkat berkualitas tinggi yang Anda butuhkan.\n\nTerima kasih,\n{companyName}"
+      };
+    }
+    return db;
   }
 };
 
@@ -144,6 +175,224 @@ app.post("/api/settings", (req, res) => {
   res.json(db.settings);
 });
 
+// Helper to send simulated email
+function triggerSimulatedEmail(rfq: any, settings: any, db: any) {
+  if (!db.emails) {
+    db.emails = [];
+  }
+
+  const companyEmail = settings.email || "noreply@berkahbintangsolusindo.com";
+  const companyName = settings.companyName || "Berkah Bintang Solusindo (BBS)";
+  
+  const formattedItems = rfq.items && rfq.items.length > 0
+    ? rfq.items.map((item: any, idx: number) => {
+        return `<tr>
+          <td style="padding: 10px; border-bottom: 1px solid #e2e8f0; font-family: sans-serif; font-size: 14px; color: #1e293b;">${idx + 1}. <strong>${item.name}</strong></td>
+          <td style="padding: 10px; border-bottom: 1px solid #e2e8f0; font-family: sans-serif; font-size: 14px; color: #1e293b; text-align: center;">${item.quantity} unit</td>
+          <td style="padding: 10px; border-bottom: 1px solid #e2e8f0; font-family: sans-serif; font-size: 14px; color: #64748b;">${item.description || "-"}</td>
+        </tr>`;
+      }).join("")
+    : `<tr><td colspan="3" style="padding: 15px; text-align: center; color: #64748b; font-family: sans-serif; font-size: 14px;">Tidak ada item perangkat yang ditambahkan</td></tr>`;
+
+  const emailSubject = `[BBS Pengadaan IT] Konfirmasi Permintaan Penawaran - ${rfq.rfqNumber}`;
+  
+  const emailHtml = `
+    <div style="background-color: #f8fafc; padding: 40px 20px; font-family: sans-serif; color: #1e293b;">
+      <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05);">
+        <!-- Header -->
+        <div style="background: linear-gradient(135deg, #4f46e5 0%, #312e81 100%); padding: 30px; text-align: center; color: #ffffff;">
+          <h1 style="margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -0.025em; font-family: sans-serif;">${companyName}</h1>
+          <p style="margin: 5px 0 0 0; font-size: 14px; color: #c7d2fe; font-family: sans-serif;">Solusi IT & Pengadaan Terpercaya</p>
+        </div>
+        
+        <!-- Body -->
+        <div style="padding: 30px;">
+          <p style="font-size: 16px; line-height: 1.6; font-family: sans-serif;">Halo <strong>${rfq.clientName}</strong>,</p>
+          <p style="font-size: 14px; line-height: 1.6; color: #475569; font-family: sans-serif;">
+            Terima kasih telah mengajukan Permintaan Penawaran (RFQ) kepada kami. Kami sangat menghargai minat Anda terhadap solusi teknologi dari <strong>${companyName}</strong>.
+          </p>
+          
+          <div style="background-color: #f1f5f9; border-radius: 12px; padding: 20px; margin: 25px 0; border-left: 4px solid #4f46e5;">
+            <h3 style="margin: 0 0 12px 0; font-size: 15px; font-weight: 700; color: #1e293b; font-family: sans-serif; text-transform: uppercase; letter-spacing: 0.05em;">Detail Pengajuan RFQ</h3>
+            <table style="width: 100%; border-collapse: collapse; font-family: sans-serif; font-size: 13px;">
+              <tr>
+                <td style="padding: 4px 0; color: #64748b; width: 140px;"><strong>Nomor RFQ:</strong></td>
+                <td style="padding: 4px 0; color: #1e293b; font-family: monospace; font-size: 14px; font-weight: bold;">${rfq.rfqNumber}</td>
+              </tr>
+              <tr>
+                <td style="padding: 4px 0; color: #64748b;"><strong>Tanggal Pengajuan:</strong></td>
+                <td style="padding: 4px 0; color: #1e293b;">${rfq.date}</td>
+              </tr>
+              <tr>
+                <td style="padding: 4px 0; color: #64748b;"><strong>Nama Klien:</strong></td>
+                <td style="padding: 4px 0; color: #1e293b;">${rfq.clientName}</td>
+              </tr>
+              ${rfq.companyName ? `
+              <tr>
+                <td style="padding: 4px 0; color: #64748b;"><strong>Perusahaan/Instansi:</strong></td>
+                <td style="padding: 4px 0; color: #1e293b;">${rfq.companyName}</td>
+              </tr>` : ''}
+              <tr>
+                <td style="padding: 4px 0; color: #64748b;"><strong>WhatsApp:</strong></td>
+                <td style="padding: 4px 0; color: #1e293b;">${rfq.whatsapp}</td>
+              </tr>
+              <tr>
+                <td style="padding: 4px 0; color: #64748b;"><strong>Alamat Pengiriman:</strong></td>
+                <td style="padding: 4px 0; color: #1e293b;">${rfq.address}</td>
+              </tr>
+            </table>
+          </div>
+          
+          <h4 style="margin: 20px 0 10px 0; font-size: 15px; font-weight: 700; color: #1e293b; font-family: sans-serif;">Daftar Kebutuhan Perangkat / Layanan</h4>
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 25px;">
+            <thead>
+              <tr style="background-color: #f8fafc;">
+                <th style="padding: 10px; border-bottom: 2px solid #e2e8f0; text-align: left; font-family: sans-serif; font-size: 12px; color: #475569; text-transform: uppercase;">Nama Barang</th>
+                <th style="padding: 10px; border-bottom: 2px solid #e2e8f0; text-align: center; font-family: sans-serif; font-size: 12px; color: #475569; text-transform: uppercase; width: 80px;">Jumlah</th>
+                <th style="padding: 10px; border-bottom: 2px solid #e2e8f0; text-align: left; font-family: sans-serif; font-size: 12px; color: #475569; text-transform: uppercase;">Spesifikasi Kebutuhan</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${formattedItems}
+            </tbody>
+          </table>
+
+          ${rfq.customRequirements ? `
+          <div style="background-color: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; padding: 15px; margin-bottom: 25px;">
+            <p style="margin: 0 0 5px 0; font-size: 13px; font-weight: 700; color: #b45309; font-family: sans-serif;">Catatan / Persyaratan Khusus Klien:</p>
+            <p style="margin: 0; font-size: 13px; line-height: 1.5; color: #78350f; font-family: sans-serif; font-style: italic;">"${rfq.customRequirements}"</p>
+          </div>` : ''}
+
+          <div style="border-top: 1px solid #e2e8f0; padding-top: 25px; margin-top: 25px;">
+            <h4 style="margin: 0 0 8px 0; font-size: 14px; font-weight: 700; color: #1e293b; font-family: sans-serif;">Apa Langkah Selanjutnya?</h4>
+            <ol style="margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.6; color: #475569; font-family: sans-serif;">
+              <li style="margin-bottom: 6px;">Tim internal kami bersama asisten AI (Gemini) akan meninjau ketersediaan stok & spesifikasi teknis.</li>
+              <li style="margin-bottom: 6px;">Kami akan menerbitkan Surat Penawaran Harga resmi (Quotation) lengkap dengan rincian harga, pajak (PPN), opsi diskon, serta syarat & ketentuan pembayaran.</li>
+              <li style="margin-bottom: 6px;">Quotation resmi akan segera diunggah ke platform dan kami juga akan mem-follow up Anda melalui nomor WhatsApp <strong>${rfq.whatsapp}</strong> dalam 1x24 jam kerja.</li>
+            </ol>
+          </div>
+
+          <p style="font-size: 13px; line-height: 1.6; color: #64748b; margin-top: 30px; font-family: sans-serif;">
+            Jika Anda memiliki pertanyaan mendesak, silakan langsung menghubungi sales representatif kami via WhatsApp di nomor resmi kami <a href="https://wa.me/${settings.whatsapp.replace(/[^0-9]/g, '')}" style="color: #4f46e5; font-weight: bold; text-decoration: none;">${settings.whatsapp}</a> atau membalas pesan ini.
+          </p>
+        </div>
+        
+        <!-- Footer -->
+        <div style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 25px 30px; text-align: center; color: #64748b; font-size: 12px; line-height: 1.5;">
+          <p style="margin: 0 0 5px 0; font-weight: 700; color: #475569; font-family: sans-serif;">${companyName}</p>
+          <p style="margin: 0 0 10px 0; font-family: sans-serif;">${settings.address}</p>
+          <p style="margin: 0; font-family: sans-serif;">
+            Email: <a href="mailto:${companyEmail}" style="color: #4f46e5; text-decoration: none;">${companyEmail}</a> | 
+            Website: <a href="http://${settings.website}" style="color: #4f46e5; text-decoration: none;">${settings.website}</a>
+          </p>
+          <p style="margin: 15px 0 0 0; font-size: 10px; color: #94a3b8; font-family: sans-serif;">
+            Ini adalah email simulasi otomatis yang dipicu langsung setelah pengiriman RFQ sukses.
+          </p>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const newEmail = {
+    id: "email_" + Date.now(),
+    to: rfq.email,
+    from: companyEmail,
+    subject: emailSubject,
+    body: emailHtml,
+    sentAt: new Date().toISOString(),
+    rfqNumber: rfq.rfqNumber,
+    clientName: rfq.clientName,
+    companyName: rfq.companyName,
+    status: "sent"
+  };
+
+  db.emails.unshift(newEmail);
+}
+
+function triggerSimulatedReminderEmail(reminder: any, rfq: any, settings: any, db: any) {
+  if (!db.emails) {
+    db.emails = [];
+  }
+
+  const companyEmail = settings.email || "noreply@berkahbintangsolusindo.com";
+  const companyName = settings.companyName || "Berkah Bintang Solusindo (BBS)";
+  
+  const emailSubject = reminder.subject || `[PENGINGAT] Follow-up Permintaan Penawaran - ${rfq.rfqNumber}`;
+  
+  const emailHtml = `
+    <div style="background-color: #f8fafc; padding: 40px 20px; font-family: sans-serif; color: #1e293b;">
+      <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05);">
+        <!-- Header -->
+        <div style="background: linear-gradient(135deg, #f43f5e 0%, #be123c 100%); padding: 30px; text-align: center; color: #ffffff;">
+          <h1 style="margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -0.025em; font-family: sans-serif;">${companyName}</h1>
+          <p style="margin: 5px 0 0 0; font-size: 14px; color: #fecdd3; font-family: sans-serif;">Pengingat Permintaan Penawaran (Follow-Up)</p>
+        </div>
+        
+        <!-- Body -->
+        <div style="padding: 30px;">
+          <p style="font-size: 16px; line-height: 1.6; font-family: sans-serif;">Halo <strong>${rfq.clientName}</strong>,</p>
+          <div style="font-size: 14px; line-height: 1.6; color: #475569; font-family: sans-serif; white-space: pre-line; margin-bottom: 25px;">
+            ${reminder.body.replace(/{rfqNumber}/g, rfq.rfqNumber).replace(/{clientName}/g, rfq.clientName).replace(/{companyName}/g, companyName)}
+          </div>
+          
+          <div style="background-color: #fff1f2; border-radius: 12px; padding: 20px; margin: 25px 0; border-left: 4px solid #f43f5e;">
+            <h3 style="margin: 0 0 12px 0; font-size: 15px; font-weight: 700; color: #be123c; font-family: sans-serif; text-transform: uppercase; letter-spacing: 0.05em;">Informasi RFQ Anda</h3>
+            <table style="width: 100%; border-collapse: collapse; font-family: sans-serif; font-size: 13px;">
+              <tr>
+                <td style="padding: 4px 0; color: #64748b; width: 140px;"><strong>Nomor RFQ:</strong></td>
+                <td style="padding: 4px 0; color: #1e293b; font-family: monospace; font-size: 14px; font-weight: bold;">${rfq.rfqNumber}</td>
+              </tr>
+              <tr>
+                <td style="padding: 4px 0; color: #64748b;"><strong>Tanggal Pengajuan:</strong></td>
+                <td style="padding: 4px 0; color: #1e293b;">${rfq.date}</td>
+              </tr>
+              <tr>
+                <td style="padding: 4px 0; color: #64748b;"><strong>Status Saat Ini:</strong></td>
+                <td style="padding: 4px 0;"><span style="background-color: #fecdd3; color: #be123c; padding: 2px 8px; border-radius: 9999px; font-weight: bold; font-size: 11px; text-transform: uppercase;">${rfq.status}</span></td>
+              </tr>
+            </table>
+          </div>
+
+          <div style="border-top: 1px solid #e2e8f0; padding-top: 25px; margin-top: 25px;">
+            <h4 style="margin: 0 0 8px 0; font-size: 14px; font-weight: 700; color: #1e293b; font-family: sans-serif;">Butuh Bantuan Segera?</h4>
+            <p style="margin: 0; font-size: 13px; line-height: 1.6; color: #475569; font-family: sans-serif;">
+              Silakan hubungi sales manager kami secara langsung via WhatsApp di <a href="https://wa.me/${settings.whatsapp.replace(/[^0-9]/g, '')}" style="color: #f43f5e; font-weight: bold; text-decoration: none;">${settings.whatsapp}</a> atau balas email ini untuk mendiskusikan penawaran harga Anda secara prioritas.
+            </p>
+          </div>
+        </div>
+        
+        <!-- Footer -->
+        <div style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 25px 30px; text-align: center; color: #64748b; font-size: 12px; line-height: 1.5;">
+          <p style="margin: 0 0 5px 0; font-weight: 700; color: #475569; font-family: sans-serif;">${companyName}</p>
+          <p style="margin: 0 0 10px 0; font-family: sans-serif;">${settings.address}</p>
+          <p style="margin: 0; font-family: sans-serif;">
+            Email: <a href="mailto:${companyEmail}" style="color: #f43f5e; text-decoration: none;">${companyEmail}</a> | 
+            Website: <a href="http://${settings.website}" style="color: #f43f5e; text-decoration: none;">${settings.website}</a>
+          </p>
+          <p style="margin: 15px 0 0 0; font-size: 10px; color: #94a3b8; font-family: sans-serif;">
+            Ini adalah email pengingat simulasi otomatis yang dikirimkan karena status RFQ masih memerlukan tindak lanjut.
+          </p>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const newEmail = {
+    id: "email_" + Date.now(),
+    to: rfq.email,
+    from: companyEmail,
+    subject: emailSubject,
+    body: emailHtml,
+    sentAt: new Date().toISOString(),
+    rfqNumber: rfq.rfqNumber,
+    clientName: rfq.clientName,
+    companyName: rfq.companyName,
+    status: "sent"
+  };
+
+  db.emails.unshift(newEmail);
+}
+
 // API: RFQs
 app.get("/api/rfqs", (req, res) => {
   const db = readDB();
@@ -160,8 +409,181 @@ app.post("/api/rfqs", (req, res) => {
     ...req.body
   };
   db.rfqs.unshift(newRfq);
+  
+  // Trigger simulated email confirmation immediately
+  try {
+    triggerSimulatedEmail(newRfq, db.settings, db);
+  } catch (err) {
+    console.error("Error sending simulated email:", err);
+  }
+
+  // Auto-schedule follow-up reminder if enabled
+  try {
+    const config = db.reminderConfig || {
+      autoSchedule: true,
+      delayHours: 48,
+      subjectTemplate: "[PENGINGAT] Menunggu Tindak Lanjut Permintaan Penawaran - {rfqNumber}",
+      bodyTemplate: "Halo {clientName},\n\nKami ingin mengonfirmasi bahwa kami sedang menyusun penawaran terbaik untuk RFQ {rfqNumber} Anda.\n\nTim sales kami akan segera menghubungi Anda untuk mendiskusikan spesifikasi perangkat berkualitas tinggi yang Anda butuhkan.\n\nTerima kasih,\n{companyName}"
+    };
+
+    if (config.autoSchedule) {
+      const delay = parseFloat(config.delayHours) || 48;
+      const scheduledTime = new Date(Date.now() + delay * 60 * 60 * 1000).toISOString();
+      const companyName = db.settings.companyName || "Berkah Bintang Solusindo (BBS)";
+
+      const subject = config.subjectTemplate
+        .replace(/{rfqNumber}/g, newRfq.rfqNumber)
+        .replace(/{clientName}/g, newRfq.clientName)
+        .replace(/{companyName}/g, companyName);
+
+      const body = config.bodyTemplate
+        .replace(/{rfqNumber}/g, newRfq.rfqNumber)
+        .replace(/{clientName}/g, newRfq.clientName)
+        .replace(/{companyName}/g, companyName);
+
+      const autoReminder = {
+        id: "reminder_" + (Date.now() + 10),
+        rfqId: newRfq.id,
+        rfqNumber: newRfq.rfqNumber,
+        clientName: newRfq.clientName,
+        email: newRfq.email,
+        scheduledTime,
+        delayHours: delay,
+        subject,
+        body,
+        status: "scheduled"
+      };
+
+      if (!db.reminders) {
+        db.reminders = [];
+      }
+      db.reminders.unshift(autoReminder);
+    }
+  } catch (err) {
+    console.error("Error scheduling auto follow-up reminder:", err);
+  }
+  
   writeDB(db);
   res.status(201).json(newRfq);
+});
+
+// API: Simulated Emails
+app.get("/api/emails", (req, res) => {
+  const db = readDB();
+  res.json(db.emails || []);
+});
+
+app.delete("/api/emails/:id", (req, res) => {
+  const db = readDB();
+  const index = db.emails ? db.emails.findIndex((e: any) => e.id === req.params.id) : -1;
+  if (index !== -1) {
+    db.emails.splice(index, 1);
+    writeDB(db);
+    res.json({ success: true });
+  } else {
+    res.status(404).json({ error: "Email not found" });
+  }
+});
+
+app.delete("/api/emails", (req, res) => {
+  const db = readDB();
+  db.emails = [];
+  writeDB(db);
+  res.json({ success: true });
+});
+
+// API: Reminders
+app.get("/api/reminders", (req, res) => {
+  const db = readDB();
+  res.json(db.reminders || []);
+});
+
+app.get("/api/reminders/config", (req, res) => {
+  const db = readDB();
+  res.json(db.reminderConfig || {
+    autoSchedule: true,
+    delayHours: 48,
+    subjectTemplate: "[PENGINGAT] Menunggu Tindak Lanjut Permintaan Penawaran - {rfqNumber}",
+    bodyTemplate: "Halo {clientName},\n\nKami ingin mengonfirmasi bahwa kami sedang menyusun penawaran terbaik untuk RFQ {rfqNumber} Anda.\n\nTim sales kami akan segera menghubungi Anda untuk mendiskusikan spesifikasi perangkat berkualitas tinggi yang Anda butuhkan.\n\nTerima kasih,\n{companyName}"
+  });
+});
+
+app.post("/api/reminders/config", (req, res) => {
+  const db = readDB();
+  db.reminderConfig = {
+    ...db.reminderConfig,
+    ...req.body
+  };
+  writeDB(db);
+  res.json(db.reminderConfig);
+});
+
+app.post("/api/reminders", (req, res) => {
+  const db = readDB();
+  const { rfqId, delayHours, subject, body } = req.body;
+  const rfq = db.rfqs.find((r: any) => r.id === rfqId);
+  if (!rfq) {
+    return res.status(404).json({ error: "RFQ tidak ditemukan" });
+  }
+
+  const hours = parseFloat(delayHours) || 48;
+  const scheduledTime = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
+
+  const newReminder = {
+    id: "reminder_" + Date.now(),
+    rfqId,
+    rfqNumber: rfq.rfqNumber,
+    clientName: rfq.clientName,
+    email: rfq.email,
+    scheduledTime,
+    delayHours: hours,
+    subject: subject || `[PENGINGAT] Tindak Lanjut Permintaan Penawaran - ${rfq.rfqNumber}`,
+    body: body || `Halo ${rfq.clientName},\n\nKami ingin menginformasikan bahwa RFQ ${rfq.rfqNumber} Anda sedang kami proses.`,
+    status: "scheduled"
+  };
+
+  if (!db.reminders) {
+    db.reminders = [];
+  }
+  db.reminders.unshift(newReminder);
+  writeDB(db);
+  res.status(201).json(newReminder);
+});
+
+app.post("/api/reminders/:id/trigger", (req, res) => {
+  const db = readDB();
+  const reminderIndex = db.reminders ? db.reminders.findIndex((r: any) => r.id === req.params.id) : -1;
+  if (reminderIndex === -1) {
+    return res.status(404).json({ error: "Reminder tidak ditemukan" });
+  }
+
+  const reminder = db.reminders[reminderIndex];
+  const rfq = db.rfqs.find((r: any) => r.id === reminder.rfqId);
+  if (!rfq) {
+    return res.status(404).json({ error: "RFQ pendukung tidak ditemukan" });
+  }
+
+  try {
+    triggerSimulatedReminderEmail(reminder, rfq, db.settings, db);
+    reminder.status = "sent";
+    reminder.sentAt = new Date().toISOString();
+    writeDB(db);
+    res.json(reminder);
+  } catch (err: any) {
+    res.status(500).json({ error: "Gagal mengirimkan email reminder", details: err.message });
+  }
+});
+
+app.delete("/api/reminders/:id", (req, res) => {
+  const db = readDB();
+  const index = db.reminders ? db.reminders.findIndex((r: any) => r.id === req.params.id) : -1;
+  if (index !== -1) {
+    db.reminders.splice(index, 1);
+    writeDB(db);
+    res.json({ success: true });
+  } else {
+    res.status(404).json({ error: "Reminder tidak ditemukan" });
+  }
 });
 
 app.put("/api/rfqs/:id", (req, res) => {
@@ -435,6 +857,64 @@ Anda harus mengembalikan respons dalam format JSON murni yang sesuai dengan skem
     res.status(201).json(fallbackQuote);
   }
 });
+
+// Background Service: Periodically check and trigger scheduled follow-up reminders
+setInterval(() => {
+  try {
+    const db = readDB();
+    if (!db.reminders || db.reminders.length === 0) {
+      return;
+    }
+
+    let changed = false;
+    const now = new Date();
+
+    db.reminders.forEach((reminder: any) => {
+      if (reminder.status === "scheduled") {
+        const scheduledTime = new Date(reminder.scheduledTime);
+        if (now >= scheduledTime) {
+          // Find the corresponding RFQ to check if it's still unquoted
+          const rfq = db.rfqs.find((r: any) => r.id === reminder.rfqId);
+
+          if (!rfq) {
+            reminder.status = "failed";
+            reminder.error = "RFQ pendukung tidak ditemukan.";
+            changed = true;
+            return;
+          }
+
+          // If the RFQ is already quoted, completed, or cancelled, do not remind
+          if (rfq.status === "quoted" || rfq.status === "completed" || rfq.status === "cancelled") {
+            reminder.status = "cancelled";
+            reminder.note = `Dibatalkan otomatis karena RFQ berstatus "${rfq.status}"`;
+            changed = true;
+            return;
+          }
+
+          // Otherwise, send the reminder email!
+          try {
+            triggerSimulatedReminderEmail(reminder, rfq, db.settings, db);
+            reminder.status = "sent";
+            reminder.sentAt = new Date().toISOString();
+            changed = true;
+            console.log(`[Follow-up Scheduler] Sent reminder for RFQ ${rfq.rfqNumber} to ${rfq.email}`);
+          } catch (err: any) {
+            console.error(`[Follow-up Scheduler] Failed to send reminder for RFQ ${rfq.rfqNumber}:`, err);
+            reminder.status = "failed";
+            reminder.error = err.message || "Gagal mengirimkan email.";
+            changed = true;
+          }
+        }
+      }
+    });
+
+    if (changed) {
+      writeDB(db);
+    }
+  } catch (err) {
+    console.error("[Follow-up Scheduler] Background check error:", err);
+  }
+}, 10000);
 
 // Main full-stack integration handler
 async function startServer() {

@@ -80,6 +80,8 @@ export interface CompanySettings {
   website: string;
   workingHours: string;
   logoText: string;
+  headerLogoType?: 'text' | 'image';
+  logoImageUrl?: string;
   bankAccount: {
     bankName: string;
     accountNumber: string;

@@ -25,7 +25,6 @@ export default function Navbar({ currentTab, setCurrentTab, rfqCartCount, settin
     { id: "landing", label: "Beranda", icon: Home },
     { id: "consult", label: "Asisten AI", icon: Sparkles },
     { id: "rfq", label: "Buat RFQ", icon: ShoppingCart, badge: rfqCartCount > 0 ? rfqCartCount : undefined },
-    { id: "admin", label: "Portal Admin", icon: Settings },
   ];
 
   const handleNavClick = (tabId: string) => {
@@ -44,7 +43,7 @@ export default function Navbar({ currentTab, setCurrentTab, rfqCartCount, settin
                 <Laptop className="h-6 w-6 animate-pulse" id="logo_icon" />
               </div>
               <div>
-                <span className="font-sans font-extrabold text-lg tracking-tight text-white block leading-tight">
+                <span className="font-sans font-extrabold text-lg tracking-tight text-white block leading-tight border border-[#f32323] px-2 py-0.5 rounded-lg">
                   Berkah Bintang <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-cyan-400">Solusindo</span>
                 </span>
                 <span className="font-mono text-[9px] text-slate-400 block uppercase tracking-[0.15em] font-medium mt-0.5">

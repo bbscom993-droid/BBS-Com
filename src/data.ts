@@ -12,7 +12,7 @@ export const SERVICE_OFFERINGS: ServiceOffering[] = [
   {
     id: "srv_1",
     name: "Pengadaan Komputer & Laptop",
-    description: "Pengadaan komputer workstation, PC All-in-One, laptop bisnis, serta mini PC bergaransi resmi untuk operasional kantor, instansi pemerintah, pendidikan, dan laboratorium computer.",
+    description: "Pengadaan komputer workstation, PC All-in-One, laptop bisnis, serta mini PC bergaransi resmi untuk operasional kantor, lembaga pendidikan, swasta, dan laboratorium computer.",
     category: "Hardware",
     icon: "Laptop",
     features: [

@@ -1,0 +1,87 @@
+{
+  "settings": {
+    "companyName": "Berkah Bintang Solusindo",
+    "tagline": "Solusi Teknologi Informasi dan Pengadaan Terpercaya",
+    "description": "Melayani kebutuhan pengadaan perangkat IT, infrastruktur jaringan, server, CCTV, software, maintenance, serta konsultasi teknologi informasi untuk perusahaan, lembaga pendidikan, bisnis, dan UMKM.",
+    "address": "Jl. Cempaka Putih Barat 21 No. 10 Jakarta Pusat 10520",
+    "whatsapp": "+628131852419",
+    "email": "bbscom993@gmail.com",
+    "website": "www.berkahbintangsolusindo.com",
+    "workingHours": "Senin - Jumat: 08:30 - 17:30 WIB",
+    "logoText": "BBS",
+    "bankAccount": {
+      "bankName": "Bank Mandiri",
+      "accountNumber": "123-45-67890-1",
+      "accountHolder": "PT Berkah Bintang Solusindo"
+    }
+  },
+  "rfqs": [
+    {
+      "id": "rfq_1",
+      "rfqNumber": "RFQ-2026-0001",
+      "date": "2026-06-25",
+      "status": "quoted",
+      "companyName": "PT Maju Bersama Sejahtera",
+      "clientName": "Budi Santoso",
+      "whatsapp": "081298765432",
+      "email": "budi.santoso@majubersama.com",
+      "address": "Jl. Sudirman No. 45, Jakarta Pusat",
+      "clientCategory": "perusahaan",
+      "items": [
+        {
+          "name": "Laptop Kantor Core i5",
+          "quantity": 5,
+          "description": "RAM minimal 8GB, SSD 512GB, Windows 11 Home"
+        },
+        {
+          "name": "Printer Laserjet Monokrom",
+          "quantity": 2,
+          "description": "Bisa print, scan, copy. Kecepatan minimal 20ppm"
+        }
+      ],
+      "customRequirements": "Butuh pengiriman cepat dalam 5 hari kerja karena kantor baru akan dibuka.",
+      "notes": "Sudah dihubungi via WA, tertarik dengan garansi purna jual.",
+      "generatedQuotationId": "q_1"
+    }
+  ],
+  "quotations": [
+    {
+      "id": "q_1",
+      "rfqId": "rfq_1",
+      "quotationNumber": "Q-BBS-2026-0001",
+      "date": "2026-06-25",
+      "expiryDate": "2026-07-25",
+      "introductoryText": "Menunjuk permintaan penawaran harga (RFQ) dari PT Maju Bersama Sejahtera tanggal 25 Juni 2026, bersama ini kami dari Berkah Bintang Solusindo menyampaikan penawaran harga terbaik untuk pengadaan perangkat IT pendukung operasional kantor Anda.",
+      "items": [
+        {
+          "name": "Laptop Lenovo ThinkBook 14 G6 Core i5",
+          "quantity": 5,
+          "unitPrice": 10500000,
+          "totalPrice": 52500000,
+          "specification": "Intel Core i5-1335U, RAM 8GB DDR5, SSD 512GB NVMe, Screen 14\" FHD, Windows 11 Home, Garansi Resmi Lenovo Indonesia 1 Tahun"
+        },
+        {
+          "name": "Printer HP LaserJet MFP M141a",
+          "quantity": 2,
+          "unitPrice": 2200000,
+          "totalPrice": 4400000,
+          "specification": "Print, Scan, Copy. Up to 20 ppm, USB 2.0 connection, Toner HP 150A, Garansi Resmi HP Indonesia 1 Tahun"
+        }
+      ],
+      "subtotal": 56900000,
+      "tax": 6259000,
+      "discount": 1000000,
+      "total": 62159000,
+      "termsAndConditions": [
+        "Harga di atas sudah termasuk PPN 11%.",
+        "Waktu pengiriman barang berkisar 3-5 hari kerja setelah kami menerima Purchase Order (PO) resmi.",
+        "Pembayaran dilakukan dengan ketentuan DP 30%, sisanya pelunasan dalam waktu 7 hari setelah seluruh barang diterima dengan baik.",
+        "Garansi produk merujuk pada syarat dan ketentuan garansi resmi masing-masing distributor pabrikan (Lenovo & HP).",
+        "Penawaran harga ini bersifat mengikat dan berlaku sampai tanggal 25 Juli 2026."
+      ],
+      "status": "sent",
+      "adminSignature": "Direktur Pengadaan BBS"
+    }
+  ],
+  "emails": []
+}
