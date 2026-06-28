@@ -2781,7 +2781,7 @@ export default function App() {
                     </div>
 
                     {/* D3 Visual Comparison Section for Sales */}
-                    <RfqAnalytics rfqs={rfqs} catalogProducts={catalogProducts} />
+                    <RfqAnalytics rfqs={rfqs} catalogProducts={catalogProducts} quotations={quotations} />
 
                     {/* Main RFQ Table Card */}
                     <div className="bg-slate-900/40 border border-white/10 backdrop-blur-xl rounded-2xl overflow-hidden shadow-2xl">

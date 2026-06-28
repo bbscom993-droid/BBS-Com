@@ -1,12 +1,22 @@
 import React, { useState, useEffect, useRef } from "react";
 import * as d3 from "d3";
-import { RFQ, ProductItem } from "../types";
+import { RFQ, ProductItem, Quotation } from "../types";
 import { PRODUCT_CATALOG } from "../data";
-import { BarChart3, TrendingUp, Info, Shield, Layers, HelpCircle, Briefcase, Building, GraduationCap, Store } from "lucide-react";
+import { BarChart3, TrendingUp, Info, Shield, Layers, HelpCircle, Briefcase, Building, GraduationCap, Store, Activity } from "lucide-react";
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip
+} from "recharts";
 
 interface RfqAnalyticsProps {
   rfqs: RFQ[];
   catalogProducts?: ProductItem[];
+  quotations?: Quotation[];
 }
 
 interface GroupedData {
@@ -75,7 +85,25 @@ const formatFullRupiah = (value: number): string => {
   }).format(value);
 };
 
-export default function RfqAnalytics({ rfqs, catalogProducts }: RfqAnalyticsProps) {
+const getLast6MonthsList = () => {
+  const result = [];
+  const monthNames = [
+    "Jan", "Feb", "Mar", "Apr", "Mei", "Jun", 
+    "Jul", "Agt", "Sep", "Okt", "Nov", "Des"
+  ];
+  const today = new Date();
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+    const monthIndex = d.getMonth();
+    const year = d.getFullYear();
+    const label = `${monthNames[monthIndex]} ${year}`;
+    const key = `${year}-${String(monthIndex + 1).padStart(2, "0")}`; // YYYY-MM
+    result.push({ label, key, total: 0, count: 0 });
+  }
+  return result;
+};
+
+export default function RfqAnalytics({ rfqs, catalogProducts, quotations }: RfqAnalyticsProps) {
   const activeCatalog = catalogProducts || PRODUCT_CATALOG;
   const [dimension, setDimension] = useState<"client" | "product" | "vendor">("client");
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -224,6 +252,74 @@ export default function RfqAnalytics({ rfqs, catalogProducts }: RfqAnalyticsProp
   };
 
   const data = getGroupedData();
+
+  // Process monthly sales trend data for Recharts
+  const getMonthlySalesData = () => {
+    const monthlyList = getLast6MonthsList();
+    const processedQuotations = quotations || [];
+
+    processedQuotations.forEach((q) => {
+      if (!q.date) return;
+      let yearMonth = ""; // YYYY-MM
+      if (q.date.includes("-")) {
+        const parts = q.date.split("-");
+        if (parts[0].length === 4) {
+          yearMonth = `${parts[0]}-${parts[1].padStart(2, "0")}`;
+        } else if (parts[2]?.length === 4) {
+          yearMonth = `${parts[2]}-${parts[1].padStart(2, "0")}`;
+        }
+      } else if (q.date.includes("/")) {
+        const parts = q.date.split("/");
+        if (parts[2]?.length === 4) {
+          yearMonth = `${parts[2]}-${parts[1].padStart(2, "0")}`;
+        }
+      }
+      
+      if (!yearMonth) {
+        try {
+          const d = new Date(q.date);
+          if (!isNaN(d.getTime())) {
+            yearMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      const matched = monthlyList.find(m => m.key === yearMonth);
+      if (matched) {
+        matched.total += q.total || 0;
+        matched.count += 1;
+      }
+    });
+
+    return monthlyList;
+  };
+
+  const monthlySalesData = getMonthlySalesData();
+  const totalSalesOverall = monthlySalesData.reduce((acc, d) => acc + d.total, 0);
+  const averageSales = totalSalesOverall / 6;
+
+  const CustomRechartsTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      const dataPoint = payload[0].payload;
+      return (
+        <div className="bg-slate-950/95 border border-indigo-500/30 rounded-xl p-3 shadow-xl backdrop-blur-md text-xs space-y-1.5 text-left font-sans">
+          <p className="font-extrabold text-white">{label}</p>
+          <div className="h-px bg-white/10 my-1"></div>
+          <div className="flex justify-between items-center gap-6 text-slate-400">
+            <span>Total Quoted:</span>
+            <span className="font-mono font-bold text-emerald-400">{formatFullRupiah(dataPoint.total)}</span>
+          </div>
+          <div className="flex justify-between items-center gap-6 text-slate-400">
+            <span>Volume Proposal:</span>
+            <span className="font-mono font-bold text-indigo-400">{dataPoint.count} Proposal</span>
+          </div>
+        </div>
+      );
+    }
+    return null;
+  };
 
   // D3 Code for rendering the horizontal bar chart
   useEffect(() => {
@@ -422,151 +518,262 @@ export default function RfqAnalytics({ rfqs, catalogProducts }: RfqAnalyticsProp
   };
 
   return (
-    <div className="bg-slate-900/40 border border-white/10 backdrop-blur-xl rounded-2xl p-6 shadow-2xl relative space-y-6">
-      
-      {/* Visual Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/5 pb-5">
-        <div className="flex items-center space-x-3">
-          <div className="p-2.5 bg-indigo-500/10 rounded-xl border border-indigo-500/20 text-indigo-400">
-            <BarChart3 className="h-5 w-5" />
-          </div>
-          <div>
-            <h3 className="font-extrabold text-white text-base">Analitik Distribusi Nilai RFQ (D3 Engine)</h3>
-            <p className="text-xs text-slate-400">
-              Visualisasi perbandingan total nilai penawaran proyek secara real-time berdasarkan berbagai dimensi penawaran.
-            </p>
-          </div>
-        </div>
-
-        {/* Dynamic Controls */}
-        <div className="flex flex-wrap gap-1.5 bg-slate-950 p-1 rounded-xl border border-white/5 self-start md:self-center">
-          <button
-            onClick={() => setDimension("client")}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
-              dimension === "client"
-                ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/10"
-                : "text-slate-400 hover:text-white"
-            }`}
-          >
-            <Building className="h-3.5 w-3.5" />
-            <span>Kategori Klien</span>
-          </button>
-          <button
-            onClick={() => setDimension("product")}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
-              dimension === "product"
-                ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/10"
-                : "text-slate-400 hover:text-white"
-            }`}
-          >
-            <Layers className="h-3.5 w-3.5" />
-            <span>Kategori Produk</span>
-          </button>
-          <button
-            onClick={() => setDimension("vendor")}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
-              dimension === "vendor"
-                ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/10"
-                : "text-slate-400 hover:text-white"
-            }`}
-          >
-            <Briefcase className="h-3.5 w-3.5" />
-            <span>Brand / Vendor</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Main Grid: Chart + Details Table */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+    <div className="space-y-6">
+      {/* CARD 1: D3 Analytics Card */}
+      <div className="bg-slate-900/40 border border-white/10 backdrop-blur-xl rounded-2xl p-6 shadow-2xl relative space-y-6">
         
-        {/* D3 Chart container */}
-        <div ref={containerRef} className="lg:col-span-7 bg-slate-950/40 border border-white/5 rounded-2xl p-4 relative overflow-x-auto select-none min-h-[250px]">
-          {rfqs.length === 0 ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 py-12">
-              <HelpCircle className="h-10 w-10 text-slate-700 animate-pulse mb-2" />
-              <p className="text-sm">Tidak ada data RFQ untuk divisualisasikan</p>
+        {/* Visual Header */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/5 pb-5">
+          <div className="flex items-center space-x-3">
+            <div className="p-2.5 bg-indigo-500/10 rounded-xl border border-indigo-500/20 text-indigo-400">
+              <BarChart3 className="h-5 w-5" />
             </div>
-          ) : (
-            <svg ref={svgRef} className="mx-auto block" />
-          )}
-
-          {/* Floating Tooltip styled with Tailwind */}
-          {tooltip.show && (
-            <div 
-              style={{ top: tooltip.y, left: tooltip.x }}
-              className="absolute pointer-events-none bg-slate-900/95 border border-indigo-500/30 rounded-xl p-3 shadow-xl backdrop-blur-md z-50 text-xs text-left max-w-[240px] space-y-1.5 animate-fadeIn duration-100"
-            >
-              <p className="font-extrabold text-white">{tooltip.label}</p>
-              <div className="h-px bg-white/10 my-1"></div>
-              <div className="flex justify-between items-center gap-4 text-slate-400 font-mono">
-                <span>Nilai Est:</span>
-                <span className="font-bold text-emerald-400">{formatFullRupiah(tooltip.value)}</span>
-              </div>
-              <div className="flex justify-between items-center gap-4 text-slate-400 font-mono">
-                <span>Volume:</span>
-                <span className="font-bold text-slate-200">{tooltip.count} {dimension === "client" ? "RFQ" : "Unit"}</span>
-              </div>
-              <div className="flex justify-between items-center gap-4 text-slate-400 font-mono">
-                <span>Persentase:</span>
-                <span className="font-bold text-indigo-400">{tooltip.percentage}%</span>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Summary Table & Legend */}
-        <div className="lg:col-span-5 space-y-4">
-          <div className="bg-slate-950/40 border border-white/5 rounded-2xl p-4 space-y-3">
-            <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-              <TrendingUp className="h-3.5 w-3.5 text-indigo-400" />
-              <span>Peringkat Kontribusi ({dimension === "client" ? "Sektor" : dimension === "product" ? "Kategori" : "Vendor"})</span>
-            </h4>
-            
-            <div className="divide-y divide-white/5 max-h-[220px] overflow-y-auto pr-1">
-              {data.map((item, index) => (
-                <div key={item.key} className="py-2.5 flex items-center justify-between text-xs gap-3">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="w-5 h-5 rounded-md bg-white/5 border border-white/5 flex items-center justify-center font-mono font-bold text-[10px] text-slate-400">
-                      {index + 1}
-                    </span>
-                    <span className="text-slate-200 font-semibold truncate" title={item.key}>{item.key}</span>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-white font-bold font-mono">{formatShortRupiah(item.value)}</p>
-                    <p className="text-[10px] text-slate-500 mt-0.5">
-                      {item.count} {dimension === "client" ? "RFQ" : "Unit"} &middot; <span className="text-indigo-400 font-bold">{item.percentage}%</span>
-                    </p>
-                  </div>
-                </div>
-              ))}
-              {data.length === 0 && (
-                <p className="text-xs text-slate-500 py-4 text-center">Data kosong</p>
-              )}
+            <div>
+              <h3 className="font-extrabold text-white text-base">Analitik Distribusi Nilai RFQ (D3 Engine)</h3>
+              <p className="text-xs text-slate-400">
+                Visualisasi perbandingan total nilai penawaran proyek secara real-time berdasarkan berbagai dimensi penawaran.
+              </p>
             </div>
           </div>
 
-          {/* Strategic Insight Block */}
-          <div className="bg-gradient-to-r from-indigo-950/30 to-purple-950/20 border border-indigo-500/20 rounded-2xl p-4 flex gap-3 relative overflow-hidden">
-            <div className="absolute top-0 right-0 w-20 h-20 bg-indigo-500/5 rounded-full blur-xl"></div>
-            <div className="p-2 bg-indigo-500/10 rounded-xl border border-indigo-500/20 text-indigo-400 h-fit shrink-0">
-              <Info className="h-4 w-4" />
+          {/* Dynamic Controls */}
+          <div className="flex flex-wrap gap-1.5 bg-slate-950 p-1 rounded-xl border border-white/5 self-start md:self-center">
+            <button
+              onClick={() => setDimension("client")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                dimension === "client"
+                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/10"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              <Building className="h-3.5 w-3.5" />
+              <span>Kategori Klien</span>
+            </button>
+            <button
+              onClick={() => setDimension("product")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                dimension === "product"
+                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/10"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              <Layers className="h-3.5 w-3.5" />
+              <span>Kategori Produk</span>
+            </button>
+            <button
+              onClick={() => setDimension("vendor")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                dimension === "vendor"
+                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/10"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              <Briefcase className="h-3.5 w-3.5" />
+              <span>Brand / Vendor</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Main Grid: Chart + Details Table */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          
+          {/* D3 Chart container */}
+          <div ref={containerRef} className="lg:col-span-7 bg-slate-950/40 border border-white/5 rounded-2xl p-4 relative overflow-x-auto select-none min-h-[250px]">
+            {rfqs.length === 0 ? (
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 py-12">
+                <HelpCircle className="h-10 w-10 text-slate-700 animate-pulse mb-2" />
+                <p className="text-sm">Tidak ada data RFQ untuk divisualisasikan</p>
+              </div>
+            ) : (
+              <svg ref={svgRef} className="mx-auto block" />
+            )}
+
+            {/* Floating Tooltip styled with Tailwind */}
+            {tooltip.show && (
+              <div 
+                style={{ top: tooltip.y, left: tooltip.x }}
+                className="absolute pointer-events-none bg-slate-900/95 border border-indigo-500/30 rounded-xl p-3 shadow-xl backdrop-blur-md z-50 text-xs text-left max-w-[240px] space-y-1.5 animate-fadeIn duration-100"
+              >
+                <p className="font-extrabold text-white">{tooltip.label}</p>
+                <div className="h-px bg-white/10 my-1"></div>
+                <div className="flex justify-between items-center gap-4 text-slate-400 font-mono">
+                  <span>Nilai Est:</span>
+                  <span className="font-bold text-emerald-400">{formatFullRupiah(tooltip.value)}</span>
+                </div>
+                <div className="flex justify-between items-center gap-4 text-slate-400 font-mono">
+                  <span>Volume:</span>
+                  <span className="font-bold text-slate-200">{tooltip.count} {dimension === "client" ? "RFQ" : "Unit"}</span>
+                </div>
+                <div className="flex justify-between items-center gap-4 text-slate-400 font-mono">
+                  <span>Persentase:</span>
+                  <span className="font-bold text-indigo-400">{tooltip.percentage}%</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Summary Table & Legend */}
+          <div className="lg:col-span-5 space-y-4">
+            <div className="bg-slate-950/40 border border-white/5 rounded-2xl p-4 space-y-3">
+              <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                <TrendingUp className="h-3.5 w-3.5 text-indigo-400" />
+                <span>Peringkat Kontribusi ({dimension === "client" ? "Sektor" : dimension === "product" ? "Kategori" : "Vendor"})</span>
+              </h4>
+              
+              <div className="divide-y divide-white/5 max-h-[220px] overflow-y-auto pr-1">
+                {data.map((item, index) => (
+                  <div key={item.key} className="py-2.5 flex items-center justify-between text-xs gap-3">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="w-5 h-5 rounded-md bg-white/5 border border-white/5 flex items-center justify-center font-mono font-bold text-[10px] text-slate-400">
+                        {index + 1}
+                      </span>
+                      <span className="text-slate-200 font-semibold truncate" title={item.key}>{item.key}</span>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-white font-bold font-mono">{formatShortRupiah(item.value)}</p>
+                      <p className="text-[10px] text-slate-500 mt-0.5">
+                        {item.count} {dimension === "client" ? "RFQ" : "Unit"} &middot; <span className="text-indigo-400 font-bold">{item.percentage}%</span>
+                      </p>
+                    </div>
+                  </div>
+                ))}
+                {data.length === 0 && (
+                  <p className="text-xs text-slate-500 py-4 text-center">Data kosong</p>
+                )}
+              </div>
             </div>
-            <div className="space-y-1">
-              <h5 className="text-xs font-extrabold text-indigo-300">Rekomendasi Strategis Sales & Bid</h5>
-              <p 
-                className="text-[11px] text-slate-300 leading-relaxed"
-                dangerouslySetInnerHTML={{
-                  __html: getInsights()
-                    .replace(/\*\*(.*?)\*\*/g, '<strong class="text-indigo-200 font-bold">$1</strong>')
-                }}
-              />
+
+            {/* Strategic Insight Block */}
+            <div className="bg-gradient-to-r from-indigo-950/30 to-purple-950/20 border border-indigo-500/20 rounded-2xl p-4 flex gap-3 relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-20 h-20 bg-indigo-500/5 rounded-full blur-xl"></div>
+              <div className="p-2 bg-indigo-500/10 rounded-xl border border-indigo-500/20 text-indigo-400 h-fit shrink-0">
+                <Info className="h-4 w-4" />
+              </div>
+              <div className="space-y-1">
+                <h5 className="text-xs font-extrabold text-indigo-300">Rekomendasi Strategis Sales & Bid</h5>
+                <p 
+                  className="text-[11px] text-slate-300 leading-relaxed"
+                  dangerouslySetInnerHTML={{
+                    __html: getInsights()
+                      .replace(/\*\*(.*?)\*\*/g, '<strong class="text-indigo-200 font-bold">$1</strong>')
+                  }}
+                />
+              </div>
             </div>
+
           </div>
 
         </div>
 
       </div>
 
+      {/* CARD 2: Recharts Monthly Sales Performance Card */}
+      <div className="bg-slate-900/40 border border-white/10 backdrop-blur-xl rounded-2xl p-6 shadow-2xl relative space-y-6">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/5 pb-5">
+          <div className="flex items-center space-x-3">
+            <div className="p-2.5 bg-indigo-500/10 rounded-xl border border-indigo-500/20 text-indigo-400">
+              <TrendingUp className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="font-extrabold text-white text-base">Monthly Sales Performance (Recharts Engine)</h3>
+              <p className="text-xs text-slate-400">
+                Visualisasi dan akumulasi total nilai penawaran (Quoted Value) resmi yang diajukan ke klien selama 6 bulan terakhir.
+              </p>
+            </div>
+          </div>
+
+          {/* Quick Metrics Badge */}
+          <div className="flex items-center gap-3">
+            <div className="px-3 py-1.5 bg-slate-950 border border-white/5 rounded-xl text-xs text-slate-400">
+              Total Quoted: <span className="font-mono font-bold text-emerald-400">{formatShortRupiah(totalSalesOverall)}</span>
+            </div>
+            <div className="px-3 py-1.5 bg-slate-950 border border-white/5 rounded-xl text-xs text-slate-400">
+              Avg/Bulan: <span className="font-mono font-bold text-indigo-400">{formatShortRupiah(averageSales)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Recharts Container */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+          
+          <div className="lg:col-span-8 bg-slate-950/30 border border-white/5 rounded-2xl p-4 min-h-[300px]">
+            {monthlySalesData.length === 0 ? (
+              <div className="h-[268px] flex flex-col items-center justify-center text-slate-500">
+                <HelpCircle className="h-10 w-10 text-slate-700 animate-pulse mb-2" />
+                <p className="text-sm">Tidak ada data penawaran harga (Quotation) untuk divisualisasikan</p>
+              </div>
+            ) : (
+              <div className="w-full h-[268px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart
+                    data={monthlySalesData}
+                    margin={{ top: 10, right: 10, left: 10, bottom: 0 }}
+                  >
+                    <defs>
+                      <linearGradient id="salesColor" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#6366f1" stopOpacity={0.4}/>
+                        <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+                      </linearGradient>
+                      <linearGradient id="salesStroke" x1="0" y1="0" x2="1" y2="0">
+                        <stop offset="0%" stopColor="#6366f1"/>
+                        <stop offset="100%" stopColor="#a855f7"/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.05)" />
+                    <XAxis 
+                      dataKey="label" 
+                      stroke="#94a3b8" 
+                      fontSize={11} 
+                      tickLine={false}
+                      axisLine={false}
+                      dy={10}
+                    />
+                    <YAxis 
+                      stroke="#94a3b8" 
+                      fontSize={11} 
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(val) => formatShortRupiah(val)}
+                      dx={-10}
+                    />
+                    <RechartsTooltip content={<CustomRechartsTooltip />} />
+                    <Area 
+                      type="monotone" 
+                      dataKey="total" 
+                      stroke="url(#salesStroke)" 
+                      strokeWidth={3}
+                      fillOpacity={1} 
+                      fill="url(#salesColor)" 
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+
+          <div className="lg:col-span-4 space-y-4">
+            <div className="bg-slate-950/40 border border-white/5 rounded-2xl p-4 space-y-3.5">
+              <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                <Activity className="h-3.5 w-3.5 text-indigo-400" />
+                <span>Rincian Omset Proposal Bulanan</span>
+              </h4>
+
+              <div className="space-y-3">
+                {monthlySalesData.map((item) => (
+                  <div key={item.key} className="flex items-center justify-between text-xs border-b border-white/5 pb-2 last:border-0 last:pb-0">
+                    <span className="text-slate-300 font-semibold">{item.label}</span>
+                    <div className="text-right">
+                      <span className="text-white font-mono font-bold block">{formatFullRupiah(item.total)}</span>
+                      <span className="text-[10px] text-slate-500 block mt-0.5">{item.count} Proposal Terbit</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
     </div>
   );
 }

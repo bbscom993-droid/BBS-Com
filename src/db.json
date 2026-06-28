@@ -42,6 +42,106 @@
       "customRequirements": "Butuh pengiriman cepat dalam 5 hari kerja karena kantor baru akan dibuka.",
       "notes": "Sudah dihubungi via WA, tertarik dengan garansi purna jual.",
       "generatedQuotationId": "q_1"
+    },
+    {
+      "id": "rfq_jan",
+      "rfqNumber": "RFQ-2026-0010",
+      "date": "2026-01-15",
+      "status": "completed",
+      "companyName": "Karya Abadi Corp",
+      "clientName": "Andi Wijaya",
+      "whatsapp": "08111222333",
+      "email": "andi@karyaabadi.com",
+      "address": "Gedung Cyber, Jakarta Selatan",
+      "clientCategory": "perusahaan",
+      "items": [
+        {
+          "name": "Server Tower Intel Xeon",
+          "quantity": 1,
+          "description": "RAM 32GB, 2TB HDD x2"
+        }
+      ],
+      "generatedQuotationId": "q_jan"
+    },
+    {
+      "id": "rfq_feb",
+      "rfqNumber": "RFQ-2026-0011",
+      "date": "2026-02-18",
+      "status": "completed",
+      "companyName": "SDN Cempaka 05",
+      "clientName": "Ibu Sri",
+      "whatsapp": "081233334444",
+      "email": "sdncempaka@edu.id",
+      "address": "Jl. Cempaka Putih Raya, Jakarta Pusat",
+      "clientCategory": "pendidikan",
+      "items": [
+        {
+          "name": "Komputer PC Intel Core i3",
+          "quantity": 10,
+          "description": "RAM 8GB, SSD 256GB"
+        }
+      ],
+      "generatedQuotationId": "q_feb"
+    },
+    {
+      "id": "rfq_mar",
+      "rfqNumber": "RFQ-2026-0012",
+      "date": "2026-03-10",
+      "status": "completed",
+      "companyName": "Dinas Kesehatan Prov",
+      "clientName": "Rahmat Hidayat",
+      "whatsapp": "081344445555",
+      "email": "rahmat@dinkes.go.id",
+      "address": "Salemba, Jakarta Pusat",
+      "clientCategory": "pemerintah",
+      "items": [
+        {
+          "name": "Paket CCTV Hikvision 8 Channel",
+          "quantity": 3,
+          "description": "Full HD, DVR 2TB"
+        }
+      ],
+      "generatedQuotationId": "q_mar"
+    },
+    {
+      "id": "rfq_apr",
+      "rfqNumber": "RFQ-2026-0013",
+      "date": "2026-04-22",
+      "status": "completed",
+      "companyName": "Klinik Pratama Husada",
+      "clientName": "dr. Shinta",
+      "whatsapp": "081155556666",
+      "email": "shinta@klinikhusada.com",
+      "address": "Rawamangun, Jakarta Timur",
+      "clientCategory": "umkm",
+      "items": [
+        {
+          "name": "Access Point Ruijie",
+          "quantity": 5,
+          "description": "Dual-Band Gigabit POE"
+        }
+      ],
+      "generatedQuotationId": "q_apr"
+    },
+    {
+      "id": "rfq_may",
+      "rfqNumber": "RFQ-2026-0014",
+      "date": "2026-05-05",
+      "status": "completed",
+      "companyName": "PT Solusi Prima Mandiri",
+      "clientName": "Denny",
+      "whatsapp": "081266667777",
+      "email": "denny@solusiprima.com",
+      "address": "Kuningan, Jakarta Selatan",
+      "clientCategory": "perusahaan",
+      "items": [
+        {
+          "name": "Laptop ASUS ExpertBook B1",
+          "quantity": 8,
+          "description": "Intel Core i5, 16GB, 512GB SSD"
+        }
+      ],
+      "generatedQuotationId": "q_may"
     }
   ],
   "quotations": [
@@ -80,6 +180,141 @@
         "Penawaran harga ini bersifat mengikat dan berlaku sampai tanggal 25 Juli 2026."
       ],
       "status": "sent",
+      "adminSignature": "Direktur Pengadaan BBS"
+    },
+    {
+      "id": "q_jan",
+      "rfqId": "rfq_jan",
+      "quotationNumber": "Q-BBS-2026-0002",
+      "date": "2026-01-15",
+      "expiryDate": "2026-02-15",
+      "introductoryText": "Menunjuk permintaan penawaran harga server Karya Abadi Corp, bersama ini kami sampaikan penawaran terbaik.",
+      "items": [
+        {
+          "name": "Server Tower ASUS TS300 Intel Xeon",
+          "quantity": 1,
+          "unitPrice": 38500000,
+          "totalPrice": 38500000,
+          "specification": "Intel Xeon, RAM 32GB ECC, HDD 2TB x2 SATA, Windows Server 2022"
+        }
+      ],
+      "subtotal": 38500000,
+      "tax": 4235000,
+      "discount": 1000000,
+      "total": 41735000,
+      "termsAndConditions": [
+        "Harga di atas sudah termasuk PPN 11%.",
+        "Penawaran berlaku 30 hari."
+      ],
+      "status": "accepted",
+      "adminSignature": "Direktur Pengadaan BBS"
+    },
+    {
+      "id": "q_feb",
+      "rfqId": "rfq_feb",
+      "quotationNumber": "Q-BBS-2026-0003",
+      "date": "2026-02-18",
+      "expiryDate": "2026-03-18",
+      "introductoryText": "Berikut penawaran harga pengadaan komputer PC laboratorium SDN Cempaka 05.",
+      "items": [
+        {
+          "name": "PC ASUS ExpertCenter D5 Intel Core i3",
+          "quantity": 10,
+          "unitPrice": 4500000,
+          "totalPrice": 45000000,
+          "specification": "Intel Core i3, 8GB DDR4, SSD 256GB, Monitor 19.5\""
+        }
+      ],
+      "subtotal": 45000000,
+      "tax": 4950000,
+      "discount": 1500000,
+      "total": 48450000,
+      "termsAndConditions": [
+        "Harga sudah termasuk PPN 11%.",
+        "Garansi resmi 1 tahun."
+      ],
+      "status": "accepted",
+      "adminSignature": "Direktur Pengadaan BBS"
+    },
+    {
+      "id": "q_mar",
+      "rfqId": "rfq_mar",
+      "quotationNumber": "Q-BBS-2026-0004",
+      "date": "2026-03-10",
+      "expiryDate": "2026-04-10",
+      "introductoryText": "Berikut penawaran harga instalasi CCTV Dinas Kesehatan Prov.",
+      "items": [
+        {
+          "name": "Paket CCTV Hikvision 8 Channel",
+          "quantity": 3,
+          "unitPrice": 19500000,
+          "totalPrice": 58500000,
+          "specification": "Hikvision 2MP Camera x24, DVR 8CH x3, HDD 2TB x3, Kabel & Aksesoris"
+        }
+      ],
+      "subtotal": 58500000,
+      "tax": 6435000,
+      "discount": 2000000,
+      "total": 62935000,
+      "termsAndConditions": [
+        "Termasuk jasa instalasi dan penarikan kabel.",
+        "Garansi produk dan pasang 1 tahun."
+      ],
+      "status": "accepted",
+      "adminSignature": "Direktur Pengadaan BBS"
+    },
+    {
+      "id": "q_apr",
+      "rfqId": "rfq_apr",
+      "quotationNumber": "Q-BBS-2026-0005",
+      "date": "2026-04-22",
+      "expiryDate": "2026-05-22",
+      "introductoryText": "Berikut penawaran harga perangkat jaringan WiFi untuk Klinik Pratama Husada.",
+      "items": [
+        {
+          "name": "Ruijie RG-RAP2200(F) Dual-Band Access Point",
+          "quantity": 5,
+          "unitPrice": 1450000,
+          "totalPrice": 7250000,
+          "specification": "Dual-Band Gigabit, PoE support, Ruijie Cloud Management"
+        }
+      ],
+      "subtotal": 7250000,
+      "tax": 797500,
+      "discount": 300000,
+      "total": 7747500,
+      "termsAndConditions": [
+        "Harga mengikat.",
+        "Free setup cloud selama 1 tahun."
+      ],
+      "status": "accepted",
+      "adminSignature": "Direktur Pengadaan BBS"
+    },
+    {
+      "id": "q_may",
+      "rfqId": "rfq_may",
+      "quotationNumber": "Q-BBS-2026-0006",
+      "date": "2026-05-05",
+      "expiryDate": "2026-06-05",
+      "introductoryText": "Berikut penawaran harga pengadaan Laptop ASUS ExpertBook PT Solusi Prima Mandiri.",
+      "items": [
+        {
+          "name": "ASUS ExpertBook B1400 Core i5",
+          "quantity": 8,
+          "unitPrice": 11150000,
+          "totalPrice": 89200000,
+          "specification": "Intel Core i5, RAM 16GB, SSD 512GB, Screen 14\", Windows 11 Pro"
+        }
+      ],
+      "subtotal": 89200000,
+      "tax": 9812000,
+      "discount": 3000000,
+      "total": 96012000,
+      "termsAndConditions": [
+        "Harga termasuk PPN 11%.",
+        "Waktu inden barang maksimal 7 hari kerja."
+      ],
+      "status": "accepted",
       "adminSignature": "Direktur Pengadaan BBS"
     }
   ],
