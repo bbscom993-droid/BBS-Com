@@ -1,9 +1,9 @@
 import express from "express";
 import path from "path";
-import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import { adminDb } from "./src/lib/firebase-admin.ts";
 
 // Load environment variables
 dotenv.config();
@@ -32,16 +32,13 @@ const getGeminiClient = () => {
 
 const ai = getGeminiClient();
 
-// Database Path
-const DB_PATH = path.join(process.cwd(), "src", "db.json");
-
-// Default Database State
+// Default Database State for Seeding
 const DEFAULT_DB = {
   settings: {
     companyName: "Berkah Bintang Solusindo",
     tagline: "Solusi Teknologi Informasi dan Pengadaan Terpercaya",
     description: "Melayani kebutuhan pengadaan perangkat IT, infrastruktur jaringan, server, CCTV, software, maintenance, serta konsultasi teknologi informasi untuk perusahaan, instansi pemerintah, pendidikan, dan UMKM.",
-    address: "Grand Slipi Tower Lt. 18, Jl. S. Parman Kav 22, Slipi, Palmerah, Jakarta Barat, DKI Jakarta 11480",
+    address: "Jl.Cempaka putih barat 21 no.10",
     whatsapp: "+6281234567890",
     email: "bbscom993@gmail.com",
     website: "www.berkahbintangsolusindo.com",
@@ -101,87 +98,93 @@ const DEFAULT_DB = {
       status: "sent",
       adminSignature: "Direktur Pengadaan BBS"
     }
-  ],
-  emails: []
+  ]
 };
 
-// Database Helpers
-const readDB = () => {
+// Seeding routine to populate Firestore on boot if empty
+async function seedFirestoreIfNeeded() {
   try {
-    if (!fs.existsSync(DB_PATH)) {
-      // Create directories if they don't exist
-      const dir = path.dirname(DB_PATH);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
+    const configRef = adminDb.collection("settings").doc("config");
+    const doc = await configRef.get();
+    if (!doc.exists) {
+      console.log("[Firebase Seeding] Seeding default configurations...");
+      await configRef.set(DEFAULT_DB.settings);
+
+      const reminderConfig = {
+        autoSchedule: true,
+        delayHours: 48,
+        subjectTemplate: "[PENGINGAT] Menunggu Tindak Lanjut Permintaan Penawaran - {rfqNumber}",
+        bodyTemplate: "Halo {clientName},\n\nKami ingin mengonfirmasi bahwa kami sedang menyusun penawaran terbaik untuk RFQ {rfqNumber} Anda.\n\nTim sales kami akan segera menghubungi Anda untuk mendiskusikan spesifikasi perangkat berkualitas tinggi yang Anda butuhkan.\n\nTerima kasih,\n{companyName}"
+      };
+      await adminDb.collection("settings").doc("reminderConfig").set(reminderConfig);
+
+      for (const rfq of DEFAULT_DB.rfqs) {
+        await adminDb.collection("rfqs").doc(rfq.id).set(rfq);
       }
-      fs.writeFileSync(DB_PATH, JSON.stringify(DEFAULT_DB, null, 2), "utf-8");
-      return DEFAULT_DB;
-    }
-    const data = fs.readFileSync(DB_PATH, "utf-8");
-    const db = JSON.parse(data);
-    if (!db.emails) {
-      db.emails = [];
-    }
-    if (!db.reminders) {
-      db.reminders = [];
-    }
-    if (!db.reminderConfig) {
-      db.reminderConfig = {
-        autoSchedule: true,
-        delayHours: 48,
-        subjectTemplate: "[PENGINGAT] Menunggu Tindak Lanjut Permintaan Penawaran - {rfqNumber}",
-        bodyTemplate: "Halo {clientName},\n\nKami ingin mengonfirmasi bahwa kami sedang menyusun penawaran terbaik untuk RFQ {rfqNumber} Anda.\n\nTim sales kami akan segera menghubungi Anda untuk mendiskusikan spesifikasi perangkat berkualitas tinggi yang Anda butuhkan.\n\nTerima kasih,\n{companyName}"
-      };
-    }
-    return db;
-  } catch (error) {
-    console.error("Error reading DB, returning defaults:", error);
-    const db = { ...DEFAULT_DB } as any;
-    if (!db.emails) {
-      db.emails = [];
-    }
-    if (!db.reminders) {
-      db.reminders = [];
-    }
-    if (!db.reminderConfig) {
-      db.reminderConfig = {
-        autoSchedule: true,
-        delayHours: 48,
-        subjectTemplate: "[PENGINGAT] Menunggu Tindak Lanjut Permintaan Penawaran - {rfqNumber}",
-        bodyTemplate: "Halo {clientName},\n\nKami ingin mengonfirmasi bahwa kami sedang menyusun penawaran terbaik untuk RFQ {rfqNumber} Anda.\n\nTim sales kami akan segera menghubungi Anda untuk mendiskusikan spesifikasi perangkat berkualitas tinggi yang Anda butuhkan.\n\nTerima kasih,\n{companyName}"
-      };
-    }
-    return db;
-  }
-};
 
-const writeDB = (data: any) => {
-  try {
-    fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2), "utf-8");
+      for (const q of DEFAULT_DB.quotations) {
+        await adminDb.collection("quotations").doc(q.id).set(q);
+      }
+      console.log("[Firebase Seeding] Default data seeded successfully!");
+    } else {
+      // If document exists, migrate the address if it contains the old Slipi value
+      const data = doc.data();
+      if (data && data.address && (data.address.includes("Grand Slipi") || data.address.includes("Slipi"))) {
+        console.log("[Firebase Seeding] Migrating old Grand Slipi address to: Jl.Cempaka putih barat 21 no.10");
+        await configRef.update({
+          address: "Jl.Cempaka putih barat 21 no.10"
+        });
+      }
+    }
   } catch (error) {
-    console.error("Error writing to DB:", error);
+    console.error("[Firebase Seeding] Error seeding data:", error);
   }
-};
+}
+
+// Helpers for reading settings and configuration
+async function getCompanySettings() {
+  try {
+    const doc = await adminDb.collection("settings").doc("config").get();
+    if (doc.exists) return doc.data();
+  } catch (error) {
+    console.error("Error reading company settings:", error);
+  }
+  return DEFAULT_DB.settings;
+}
+
+async function getReminderConfig() {
+  try {
+    const doc = await adminDb.collection("settings").doc("reminderConfig").get();
+    if (doc.exists) return doc.data();
+  } catch (error) {
+    console.error("Error reading reminder config:", error);
+  }
+  return {
+    autoSchedule: true,
+    delayHours: 48,
+    subjectTemplate: "[PENGINGAT] Menunggu Tindak Lanjut Permintaan Penawaran - {rfqNumber}",
+    bodyTemplate: "Halo {clientName},\n\nKami ingin mengonfirmasi bahwa kami sedang menyusun penawaran terbaik untuk RFQ {rfqNumber} Anda.\n\nTim sales kami akan segera menghubungi Anda untuk mendiskusikan spesifikasi perangkat berkualitas tinggi yang Anda butuhkan.\n\nTerima kasih,\n{companyName}"
+  };
+}
 
 // API: Company Settings
-app.get("/api/settings", (req, res) => {
-  const db = readDB();
-  res.json(db.settings);
+app.get("/api/settings", async (req, res) => {
+  const settings = await getCompanySettings();
+  res.json(settings);
 });
 
-app.post("/api/settings", (req, res) => {
-  const db = readDB();
-  db.settings = { ...db.settings, ...req.body };
-  writeDB(db);
-  res.json(db.settings);
+app.post("/api/settings", async (req, res) => {
+  try {
+    await adminDb.collection("settings").doc("config").set(req.body, { merge: true });
+    const settings = await getCompanySettings();
+    res.json(settings);
+  } catch (error: any) {
+    res.status(500).json({ error: "Gagal menyimpan konfigurasi", details: error.message });
+  }
 });
 
 // Helper to send simulated email
-function triggerSimulatedEmail(rfq: any, settings: any, db: any) {
-  if (!db.emails) {
-    db.emails = [];
-  }
-
+async function triggerSimulatedEmail(rfq: any, settings: any) {
   const companyEmail = settings.email || "noreply@berkahbintangsolusindo.com";
   const companyName = settings.companyName || "Berkah Bintang Solusindo (BBS)";
   
@@ -307,14 +310,10 @@ function triggerSimulatedEmail(rfq: any, settings: any, db: any) {
     status: "sent"
   };
 
-  db.emails.unshift(newEmail);
+  await adminDb.collection("emails").doc(newEmail.id).set(newEmail);
 }
 
-function triggerSimulatedReminderEmail(reminder: any, rfq: any, settings: any, db: any) {
-  if (!db.emails) {
-    db.emails = [];
-  }
-
+async function triggerSimulatedReminderEmail(reminder: any, rfq: any, settings: any) {
   const companyEmail = settings.email || "noreply@berkahbintangsolusindo.com";
   const companyName = settings.companyName || "Berkah Bintang Solusindo (BBS)";
   
@@ -353,7 +352,7 @@ function triggerSimulatedReminderEmail(reminder: any, rfq: any, settings: any, d
               </tr>
             </table>
           </div>
-
+ 
           <div style="border-top: 1px solid #e2e8f0; padding-top: 25px; margin-top: 25px;">
             <h4 style="margin: 0 0 8px 0; font-size: 14px; font-weight: 700; color: #1e293b; font-family: sans-serif;">Butuh Bantuan Segera?</h4>
             <p style="margin: 0; font-size: 13px; line-height: 1.6; color: #475569; font-family: sans-serif;">
@@ -391,256 +390,307 @@ function triggerSimulatedReminderEmail(reminder: any, rfq: any, settings: any, d
     status: "sent"
   };
 
-  db.emails.unshift(newEmail);
+  await adminDb.collection("emails").doc(newEmail.id).set(newEmail);
 }
 
 // API: RFQs
-app.get("/api/rfqs", (req, res) => {
-  const db = readDB();
-  res.json(db.rfqs);
+app.get("/api/rfqs", async (req, res) => {
+  try {
+    const snapshot = await adminDb.collection("rfqs").get();
+    const rfqs = snapshot.docs.map(doc => doc.data());
+    // Robust in-memory sorting to avoid requiring Firestore composite index on startup
+    rfqs.sort((a: any, b: any) => {
+      const dateA = a.date || "";
+      const dateB = b.date || "";
+      if (dateA !== dateB) return dateB.localeCompare(dateA);
+      return (b.id || "").localeCompare(a.id || "");
+    });
+    res.json(rfqs);
+  } catch (error: any) {
+    console.error("Error fetching rfqs:", error);
+    res.status(500).json({ error: "Gagal mengambil data RFQ", details: error.message });
+  }
 });
 
-app.post("/api/rfqs", (req, res) => {
-  const db = readDB();
-  const newRfq = {
-    id: "rfq_" + Date.now(),
-    rfqNumber: `RFQ-${new Date().getFullYear()}-${String(db.rfqs.length + 1).padStart(4, "0")}`,
-    date: new Date().toISOString().split("T")[0],
-    status: "pending",
-    ...req.body
-  };
-  db.rfqs.unshift(newRfq);
-  
-  // Trigger simulated email confirmation immediately
+app.post("/api/rfqs", async (req, res) => {
   try {
-    triggerSimulatedEmail(newRfq, db.settings, db);
-  } catch (err) {
-    console.error("Error sending simulated email:", err);
-  }
+    const settings = await getCompanySettings();
+    const rfqSnapshot = await adminDb.collection("rfqs").get();
+    const totalCount = rfqSnapshot.size;
 
-  // Auto-schedule follow-up reminder if enabled
-  try {
-    const config = db.reminderConfig || {
-      autoSchedule: true,
-      delayHours: 48,
-      subjectTemplate: "[PENGINGAT] Menunggu Tindak Lanjut Permintaan Penawaran - {rfqNumber}",
-      bodyTemplate: "Halo {clientName},\n\nKami ingin mengonfirmasi bahwa kami sedang menyusun penawaran terbaik untuk RFQ {rfqNumber} Anda.\n\nTim sales kami akan segera menghubungi Anda untuk mendiskusikan spesifikasi perangkat berkualitas tinggi yang Anda butuhkan.\n\nTerima kasih,\n{companyName}"
+    const id = "rfq_" + Date.now();
+    const newRfq = {
+      id,
+      rfqNumber: `RFQ-${new Date().getFullYear()}-${String(totalCount + 1).padStart(4, "0")}`,
+      date: new Date().toISOString().split("T")[0],
+      status: "pending",
+      ...req.body
     };
 
-    if (config.autoSchedule) {
-      const delay = parseFloat(config.delayHours) || 48;
-      const scheduledTime = new Date(Date.now() + delay * 60 * 60 * 1000).toISOString();
-      const companyName = db.settings.companyName || "Berkah Bintang Solusindo (BBS)";
-
-      const subject = config.subjectTemplate
-        .replace(/{rfqNumber}/g, newRfq.rfqNumber)
-        .replace(/{clientName}/g, newRfq.clientName)
-        .replace(/{companyName}/g, companyName);
-
-      const body = config.bodyTemplate
-        .replace(/{rfqNumber}/g, newRfq.rfqNumber)
-        .replace(/{clientName}/g, newRfq.clientName)
-        .replace(/{companyName}/g, companyName);
-
-      const autoReminder = {
-        id: "reminder_" + (Date.now() + 10),
-        rfqId: newRfq.id,
-        rfqNumber: newRfq.rfqNumber,
-        clientName: newRfq.clientName,
-        email: newRfq.email,
-        scheduledTime,
-        delayHours: delay,
-        subject,
-        body,
-        status: "scheduled"
-      };
-
-      if (!db.reminders) {
-        db.reminders = [];
-      }
-      db.reminders.unshift(autoReminder);
+    await adminDb.collection("rfqs").doc(id).set(newRfq);
+    
+    // Trigger simulated email confirmation immediately
+    try {
+      await triggerSimulatedEmail(newRfq, settings);
+    } catch (err) {
+      console.error("Error sending simulated email:", err);
     }
-  } catch (err) {
-    console.error("Error scheduling auto follow-up reminder:", err);
+
+    // Auto-schedule follow-up reminder if enabled
+    try {
+      const config = await getReminderConfig();
+
+      if (config.autoSchedule) {
+        const delay = parseFloat(config.delayHours) || 48;
+        const scheduledTime = new Date(Date.now() + delay * 60 * 60 * 1000).toISOString();
+        const companyName = settings.companyName || "Berkah Bintang Solusindo (BBS)";
+
+        const subject = config.subjectTemplate
+          .replace(/{rfqNumber}/g, newRfq.rfqNumber)
+          .replace(/{clientName}/g, newRfq.clientName)
+          .replace(/{companyName}/g, companyName);
+
+        const body = config.bodyTemplate
+          .replace(/{rfqNumber}/g, newRfq.rfqNumber)
+          .replace(/{clientName}/g, newRfq.clientName)
+          .replace(/{companyName}/g, companyName);
+
+        const autoReminder = {
+          id: "reminder_" + (Date.now() + 10),
+          rfqId: newRfq.id,
+          rfqNumber: newRfq.rfqNumber,
+          clientName: newRfq.clientName,
+          email: newRfq.email,
+          scheduledTime,
+          delayHours: delay,
+          subject,
+          body,
+          status: "scheduled"
+        };
+
+        await adminDb.collection("reminders").doc(autoReminder.id).set(autoReminder);
+      }
+    } catch (err) {
+      console.error("Error scheduling auto follow-up reminder:", err);
+    }
+    
+    res.status(201).json(newRfq);
+  } catch (error: any) {
+    console.error("Error creating rfq:", error);
+    res.status(500).json({ error: "Gagal menyimpan RFQ baru", details: error.message });
   }
-  
-  writeDB(db);
-  res.status(201).json(newRfq);
 });
 
 // API: Simulated Emails
-app.get("/api/emails", (req, res) => {
-  const db = readDB();
-  res.json(db.emails || []);
-});
-
-app.delete("/api/emails/:id", (req, res) => {
-  const db = readDB();
-  const index = db.emails ? db.emails.findIndex((e: any) => e.id === req.params.id) : -1;
-  if (index !== -1) {
-    db.emails.splice(index, 1);
-    writeDB(db);
-    res.json({ success: true });
-  } else {
-    res.status(404).json({ error: "Email not found" });
+app.get("/api/emails", async (req, res) => {
+  try {
+    const snapshot = await adminDb.collection("emails").get();
+    const emails = snapshot.docs.map(doc => doc.data());
+    emails.sort((a: any, b: any) => (b.sentAt || "").localeCompare(a.sentAt || ""));
+    res.json(emails);
+  } catch (error: any) {
+    res.status(500).json({ error: "Gagal mengambil log email", details: error.message });
   }
 });
 
-app.delete("/api/emails", (req, res) => {
-  const db = readDB();
-  db.emails = [];
-  writeDB(db);
-  res.json({ success: true });
+app.delete("/api/emails/:id", async (req, res) => {
+  try {
+    await adminDb.collection("emails").doc(req.params.id).delete();
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: "Gagal menghapus email", details: error.message });
+  }
+});
+
+app.delete("/api/emails", async (req, res) => {
+  try {
+    const snapshot = await adminDb.collection("emails").get();
+    const batch = adminDb.batch();
+    snapshot.docs.forEach(doc => {
+      batch.delete(doc.ref);
+    });
+    await batch.commit();
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: "Gagal mengosongkan log email", details: error.message });
+  }
 });
 
 // API: Reminders
-app.get("/api/reminders", (req, res) => {
-  const db = readDB();
-  res.json(db.reminders || []);
-});
-
-app.get("/api/reminders/config", (req, res) => {
-  const db = readDB();
-  res.json(db.reminderConfig || {
-    autoSchedule: true,
-    delayHours: 48,
-    subjectTemplate: "[PENGINGAT] Menunggu Tindak Lanjut Permintaan Penawaran - {rfqNumber}",
-    bodyTemplate: "Halo {clientName},\n\nKami ingin mengonfirmasi bahwa kami sedang menyusun penawaran terbaik untuk RFQ {rfqNumber} Anda.\n\nTim sales kami akan segera menghubungi Anda untuk mendiskusikan spesifikasi perangkat berkualitas tinggi yang Anda butuhkan.\n\nTerima kasih,\n{companyName}"
-  });
-});
-
-app.post("/api/reminders/config", (req, res) => {
-  const db = readDB();
-  db.reminderConfig = {
-    ...db.reminderConfig,
-    ...req.body
-  };
-  writeDB(db);
-  res.json(db.reminderConfig);
-});
-
-app.post("/api/reminders", (req, res) => {
-  const db = readDB();
-  const { rfqId, delayHours, subject, body } = req.body;
-  const rfq = db.rfqs.find((r: any) => r.id === rfqId);
-  if (!rfq) {
-    return res.status(404).json({ error: "RFQ tidak ditemukan" });
-  }
-
-  const hours = parseFloat(delayHours) || 48;
-  const scheduledTime = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
-
-  const newReminder = {
-    id: "reminder_" + Date.now(),
-    rfqId,
-    rfqNumber: rfq.rfqNumber,
-    clientName: rfq.clientName,
-    email: rfq.email,
-    scheduledTime,
-    delayHours: hours,
-    subject: subject || `[PENGINGAT] Tindak Lanjut Permintaan Penawaran - ${rfq.rfqNumber}`,
-    body: body || `Halo ${rfq.clientName},\n\nKami ingin menginformasikan bahwa RFQ ${rfq.rfqNumber} Anda sedang kami proses.`,
-    status: "scheduled"
-  };
-
-  if (!db.reminders) {
-    db.reminders = [];
-  }
-  db.reminders.unshift(newReminder);
-  writeDB(db);
-  res.status(201).json(newReminder);
-});
-
-app.post("/api/reminders/:id/trigger", (req, res) => {
-  const db = readDB();
-  const reminderIndex = db.reminders ? db.reminders.findIndex((r: any) => r.id === req.params.id) : -1;
-  if (reminderIndex === -1) {
-    return res.status(404).json({ error: "Reminder tidak ditemukan" });
-  }
-
-  const reminder = db.reminders[reminderIndex];
-  const rfq = db.rfqs.find((r: any) => r.id === reminder.rfqId);
-  if (!rfq) {
-    return res.status(404).json({ error: "RFQ pendukung tidak ditemukan" });
-  }
-
+app.get("/api/reminders", async (req, res) => {
   try {
-    triggerSimulatedReminderEmail(reminder, rfq, db.settings, db);
-    reminder.status = "sent";
-    reminder.sentAt = new Date().toISOString();
-    writeDB(db);
-    res.json(reminder);
+    const snapshot = await adminDb.collection("reminders").get();
+    const reminders = snapshot.docs.map(doc => doc.data());
+    reminders.sort((a: any, b: any) => (b.scheduledTime || "").localeCompare(a.scheduledTime || ""));
+    res.json(reminders);
+  } catch (error: any) {
+    res.status(500).json({ error: "Gagal mengambil data reminder", details: error.message });
+  }
+});
+
+app.get("/api/reminders/config", async (req, res) => {
+  const config = await getReminderConfig();
+  res.json(config);
+});
+
+app.post("/api/reminders/config", async (req, res) => {
+  try {
+    await adminDb.collection("settings").doc("reminderConfig").set(req.body, { merge: true });
+    const config = await getReminderConfig();
+    res.json(config);
+  } catch (error: any) {
+    res.status(500).json({ error: "Gagal menyimpan konfigurasi reminder", details: error.message });
+  }
+});
+
+app.post("/api/reminders", async (req, res) => {
+  try {
+    const { rfqId, delayHours, subject, body } = req.body;
+    const rfqDoc = await adminDb.collection("rfqs").doc(rfqId).get();
+    if (!rfqDoc.exists) {
+      return res.status(404).json({ error: "RFQ tidak ditemukan" });
+    }
+    const rfq = rfqDoc.data() as any;
+
+    const hours = parseFloat(delayHours) || 48;
+    const scheduledTime = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
+
+    const newReminder = {
+      id: "reminder_" + Date.now(),
+      rfqId,
+      rfqNumber: rfq.rfqNumber,
+      clientName: rfq.clientName,
+      email: rfq.email,
+      scheduledTime,
+      delayHours: hours,
+      subject: subject || `[PENGINGAT] Tindak Lanjut Permintaan Penawaran - ${rfq.rfqNumber}`,
+      body: body || `Halo ${rfq.clientName},\n\nKami ingin menginformasikan bahwa RFQ ${rfq.rfqNumber} Anda sedang kami proses.`,
+      status: "scheduled"
+    };
+
+    await adminDb.collection("reminders").doc(newReminder.id).set(newReminder);
+    res.status(201).json(newReminder);
+  } catch (error: any) {
+    res.status(500).json({ error: "Gagal membuat pengingat", details: error.message });
+  }
+});
+
+app.post("/api/reminders/:id/trigger", async (req, res) => {
+  try {
+    const reminderDoc = await adminDb.collection("reminders").doc(req.params.id).get();
+    if (!reminderDoc.exists) {
+      return res.status(404).json({ error: "Reminder tidak ditemukan" });
+    }
+    const reminder = reminderDoc.data() as any;
+
+    const rfqDoc = await adminDb.collection("rfqs").doc(reminder.rfqId).get();
+    if (!rfqDoc.exists) {
+      return res.status(404).json({ error: "RFQ pendukung tidak ditemukan" });
+    }
+    const rfq = rfqDoc.data() as any;
+
+    const settings = await getCompanySettings();
+
+    await triggerSimulatedReminderEmail(reminder, rfq, settings);
+    
+    const updatedReminder = {
+      ...reminder,
+      status: "sent",
+      sentAt: new Date().toISOString()
+    };
+    await adminDb.collection("reminders").doc(req.params.id).set(updatedReminder);
+    res.json(updatedReminder);
   } catch (err: any) {
     res.status(500).json({ error: "Gagal mengirimkan email reminder", details: err.message });
   }
 });
 
-app.delete("/api/reminders/:id", (req, res) => {
-  const db = readDB();
-  const index = db.reminders ? db.reminders.findIndex((r: any) => r.id === req.params.id) : -1;
-  if (index !== -1) {
-    db.reminders.splice(index, 1);
-    writeDB(db);
+app.delete("/api/reminders/:id", async (req, res) => {
+  try {
+    await adminDb.collection("reminders").doc(req.params.id).delete();
     res.json({ success: true });
-  } else {
-    res.status(404).json({ error: "Reminder tidak ditemukan" });
+  } catch (error: any) {
+    res.status(500).json({ error: "Gagal menghapus pengingat", details: error.message });
   }
 });
 
-app.put("/api/rfqs/:id", (req, res) => {
-  const db = readDB();
-  const index = db.rfqs.findIndex((r: any) => r.id === req.params.id);
-  if (index !== -1) {
-    db.rfqs[index] = { ...db.rfqs[index], ...req.body };
-    writeDB(db);
-    res.json(db.rfqs[index]);
-  } else {
-    res.status(404).json({ error: "RFQ not found" });
+app.put("/api/rfqs/:id", async (req, res) => {
+  try {
+    const rfqRef = adminDb.collection("rfqs").doc(req.params.id);
+    const doc = await rfqRef.get();
+    if (doc.exists) {
+      const updated = { ...doc.data(), ...req.body };
+      await rfqRef.set(updated);
+      res.json(updated);
+    } else {
+      res.status(404).json({ error: "RFQ tidak ditemukan" });
+    }
+  } catch (error: any) {
+    res.status(500).json({ error: "Gagal memperbarui RFQ", details: error.message });
   }
 });
 
 // API: Quotations
-app.get("/api/quotations", (req, res) => {
-  const db = readDB();
-  res.json(db.quotations);
-});
-
-app.post("/api/quotations", (req, res) => {
-  const db = readDB();
-  const newQuotation = {
-    id: "q_" + Date.now(),
-    quotationNumber: `Q-BBS-${new Date().getFullYear()}-${String(db.quotations.length + 1).padStart(4, "0")}`,
-    date: new Date().toISOString().split("T")[0],
-    expiryDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0], // 30 days
-    status: "draft",
-    adminSignature: "Direktur Pengadaan BBS",
-    ...req.body
-  };
-  
-  db.quotations.unshift(newQuotation);
-  
-  // Link to RFQ if exists
-  if (newQuotation.rfqId) {
-    const rfqIndex = db.rfqs.findIndex((r: any) => r.id === newQuotation.rfqId);
-    if (rfqIndex !== -1) {
-      db.rfqs[rfqIndex].generatedQuotationId = newQuotation.id;
-      db.rfqs[rfqIndex].status = "quoted";
-    }
+app.get("/api/quotations", async (req, res) => {
+  try {
+    const snapshot = await adminDb.collection("quotations").get();
+    const quotations = snapshot.docs.map(doc => doc.data());
+    quotations.sort((a: any, b: any) => (b.date || "").localeCompare(a.date || ""));
+    res.json(quotations);
+  } catch (error: any) {
+    res.status(500).json({ error: "Gagal mengambil data Quotation", details: error.message });
   }
-
-  writeDB(db);
-  res.status(201).json(newQuotation);
 });
 
-app.put("/api/quotations/:id", (req, res) => {
-  const db = readDB();
-  const index = db.quotations.findIndex((q: any) => q.id === req.params.id);
-  if (index !== -1) {
-    db.quotations[index] = { ...db.quotations[index], ...req.body };
-    writeDB(db);
-    res.json(db.quotations[index]);
-  } else {
-    res.status(404).json({ error: "Quotation not found" });
+app.post("/api/quotations", async (req, res) => {
+  try {
+    const quoteSnapshot = await adminDb.collection("quotations").get();
+    const count = quoteSnapshot.size;
+
+    const id = "q_" + Date.now();
+    const newQuotation = {
+      id,
+      quotationNumber: `Q-BBS-${new Date().getFullYear()}-${String(count + 1).padStart(4, "0")}`,
+      date: new Date().toISOString().split("T")[0],
+      expiryDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0], // 30 days
+      status: "draft",
+      adminSignature: "Direktur Pengadaan BBS",
+      ...req.body
+    };
+    
+    await adminDb.collection("quotations").doc(id).set(newQuotation);
+    
+    // Link to RFQ if exists
+    if (newQuotation.rfqId) {
+      const rfqRef = adminDb.collection("rfqs").doc(newQuotation.rfqId);
+      const rfqDoc = await rfqRef.get();
+      if (rfqDoc.exists) {
+        await rfqRef.update({
+          generatedQuotationId: id,
+          status: "quoted"
+        });
+      }
+    }
+
+    res.status(201).json(newQuotation);
+  } catch (error: any) {
+    res.status(500).json({ error: "Gagal menyimpan Quotation baru", details: error.message });
+  }
+});
+
+app.put("/api/quotations/:id", async (req, res) => {
+  try {
+    const quoteRef = adminDb.collection("quotations").doc(req.params.id);
+    const doc = await quoteRef.get();
+    if (doc.exists) {
+      const updated = { ...doc.data(), ...req.body };
+      await quoteRef.set(updated);
+      res.json(updated);
+    } else {
+      res.status(404).json({ error: "Quotation tidak ditemukan" });
+    }
+  } catch (error: any) {
+    res.status(500).json({ error: "Gagal memperbarui Quotation", details: error.message });
   }
 });
 
@@ -698,67 +748,72 @@ app.post("/api/generate-quotation", async (req, res) => {
     return res.status(400).json({ error: "rfqId is required." });
   }
 
-  const db = readDB();
-  const rfq = db.rfqs.find((r: any) => r.id === rfqId);
-  if (!rfq) {
-    return res.status(404).json({ error: "RFQ not found." });
-  }
-
-  // Helper to generate a dummy/fallback quotation if Gemini is offline
-  const generateFallbackQuotation = (rfqData: any) => {
-    const items = rfqData.items.map((item: any, idx: number) => {
-      const estimatedUnitPrice = (idx + 1) * 3500000; // Mock calculation
-      return {
-        name: `${item.name} - Standard Edition`,
-        quantity: item.quantity,
-        unitPrice: estimatedUnitPrice,
-        totalPrice: estimatedUnitPrice * item.quantity,
-        specification: item.description || "Spesifikasi standar industri bergaransi resmi 1 tahun."
-      };
-    });
-
-    const subtotal = items.reduce((acc: number, curr: any) => acc + curr.totalPrice, 0);
-    const tax = Math.round(subtotal * 0.11); // PPN 11%
-    const discount = 0;
-    const total = subtotal + tax;
-
-    return {
-      id: "q_" + Date.now(),
-      rfqId: rfqData.id,
-      quotationNumber: `Q-BBS-AUTO-${new Date().getFullYear()}-${String(db.quotations.length + 1).padStart(4, "0")}`,
-      date: new Date().toISOString().split("T")[0],
-      expiryDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
-      introductoryText: `Menunjuk Request for Quote (RFQ) dari ${rfqData.clientName} (${rfqData.companyName || "UMKM"}) pada tanggal ${rfqData.date}, kami dari Berkah Bintang Solusindo mengajukan penawaran harga komprehensif untuk pengadaan barang dan jasa IT sesuai kebutuhan Anda.`,
-      items,
-      subtotal,
-      tax,
-      discount,
-      total,
-      termsAndConditions: [
-        "Harga di atas sudah termasuk PPN 11%.",
-        "Waktu pengiriman maksimal 7 hari kerja setelah PO resmi kami terima.",
-        "Ketentuan pembayaran: DP 50%, sisa pembayaran 50% setelah barang dikirim dan dites.",
-        "Seluruh perangkat keras mendapatkan garansi resmi distributor selama 1 tahun.",
-        "Penawaran harga ini berlaku selama 14 hari kalender sejak diterbitkan."
-      ],
-      status: "draft",
-      adminSignature: "Direktur Pengadaan BBS"
-    };
-  };
-
-  if (!ai) {
-    const fallbackQuote = generateFallbackQuotation(rfq);
-    db.quotations.unshift(fallbackQuote);
-    rfq.generatedQuotationId = fallbackQuote.id;
-    rfq.status = "quoted";
-    writeDB(db);
-    return res.status(201).json(fallbackQuote);
-  }
-
   try {
-    const itemsText = rfq.items.map((it: any) => `- ${it.name} (Jumlah: ${it.quantity} unit) | Deskripsi user: ${it.description || 'Tidak ada'}`).join("\n");
-    
-    const prompt = `Anda adalah Senior Sales & Estimator Officer untuk Berkah Bintang Solusindo.
+    const rfqDoc = await adminDb.collection("rfqs").doc(rfqId).get();
+    if (!rfqDoc.exists) {
+      return res.status(404).json({ error: "RFQ not found." });
+    }
+    const rfq = rfqDoc.data() as any;
+
+    const quoteSnapshot = await adminDb.collection("quotations").get();
+    const count = quoteSnapshot.size;
+
+    // Helper to generate a dummy/fallback quotation if Gemini is offline
+    const generateFallbackQuotation = (rfqData: any) => {
+      const items = rfqData.items.map((item: any, idx: number) => {
+        const estimatedUnitPrice = (idx + 1) * 3500000; // Mock calculation
+        return {
+          name: `${item.name} - Standard Edition`,
+          quantity: item.quantity,
+          unitPrice: estimatedUnitPrice,
+          totalPrice: estimatedUnitPrice * item.quantity,
+          specification: item.description || "Spesifikasi standar industri bergaransi resmi 1 tahun."
+        };
+      });
+
+      const subtotal = items.reduce((acc: number, curr: any) => acc + curr.totalPrice, 0);
+      const tax = Math.round(subtotal * 0.11); // PPN 11%
+      const discount = 0;
+      const total = subtotal + tax;
+
+      return {
+        id: "q_" + Date.now(),
+        rfqId: rfqData.id,
+        quotationNumber: `Q-BBS-AUTO-${new Date().getFullYear()}-${String(count + 1).padStart(4, "0")}`,
+        date: new Date().toISOString().split("T")[0],
+        expiryDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+        introductoryText: `Menunjuk Request for Quote (RFQ) dari ${rfqData.clientName} (${rfqData.companyName || "UMKM"}) pada tanggal ${rfqData.date}, kami dari Berkah Bintang Solusindo mengajukan penawaran harga komprehensif untuk pengadaan barang dan jasa IT sesuai kebutuhan Anda.`,
+        items,
+        subtotal,
+        tax,
+        discount,
+        total,
+        termsAndConditions: [
+          "Harga di atas sudah termasuk PPN 11%.",
+          "Waktu pengiriman maksimal 7 hari kerja setelah PO resmi kami terima.",
+          "Ketentuan pembayaran: DP 50%, sisa pembayaran 50% setelah barang dikirim dan dites.",
+          "Seluruh perangkat keras mendapatkan garansi resmi distributor selama 1 tahun.",
+          "Penawaran harga ini berlaku selama 14 hari kalender sejak diterbitkan."
+        ],
+        status: "draft",
+        adminSignature: "Direktur Pengadaan BBS"
+      };
+    };
+
+    if (!ai) {
+      const fallbackQuote = generateFallbackQuotation(rfq);
+      await adminDb.collection("quotations").doc(fallbackQuote.id).set(fallbackQuote);
+      await adminDb.collection("rfqs").doc(rfq.id).update({
+        generatedQuotationId: fallbackQuote.id,
+        status: "quoted"
+      });
+      return res.status(201).json(fallbackQuote);
+    }
+
+    try {
+      const itemsText = rfq.items.map((it: any) => `- ${it.name} (Jumlah: ${it.quantity} unit) | Deskripsi user: ${it.description || 'Tidak ada'}`).join("\n");
+      
+      const prompt = `Anda adalah Senior Sales & Estimator Officer untuk Berkah Bintang Solusindo.
 Kami baru saja menerima Request for Quote (RFQ) resmi dari klien berikut:
 Klien: ${rfq.clientName}
 Instansi/Perusahaan: ${rfq.companyName || 'UMKM / Individu'}
@@ -790,135 +845,141 @@ Anda harus mengembalikan respons dalam format JSON murni yang sesuai dengan skem
   "termsAndConditions": ["string (daftar syarat & ketentuan lengkap, minimal 4 butir)"]
 }`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            introductoryText: { type: Type.STRING },
-            items: {
-              type: Type.ARRAY,
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              introductoryText: { type: Type.STRING },
               items: {
-                type: Type.OBJECT,
-                properties: {
-                  name: { type: Type.STRING },
-                  quantity: { type: Type.INTEGER },
-                  unitPrice: { type: Type.INTEGER },
-                  totalPrice: { type: Type.INTEGER },
-                  specification: { type: Type.STRING }
-                },
-                required: ["name", "quantity", "unitPrice", "totalPrice", "specification"]
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    name: { type: Type.STRING },
+                    quantity: { type: Type.INTEGER },
+                    unitPrice: { type: Type.INTEGER },
+                    totalPrice: { type: Type.INTEGER },
+                    specification: { type: Type.STRING }
+                  },
+                  required: ["name", "quantity", "unitPrice", "totalPrice", "specification"]
+                }
+              },
+              subtotal: { type: Type.INTEGER },
+              discount: { type: Type.INTEGER },
+              tax: { type: Type.INTEGER },
+              total: { type: Type.INTEGER },
+              termsAndConditions: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING }
               }
             },
-            subtotal: { type: Type.INTEGER },
-            discount: { type: Type.INTEGER },
-            tax: { type: Type.INTEGER },
-            total: { type: Type.INTEGER },
-            termsAndConditions: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING }
-            }
-          },
-          required: ["introductoryText", "items", "subtotal", "discount", "tax", "total", "termsAndConditions"]
+            required: ["introductoryText", "items", "subtotal", "discount", "tax", "total", "termsAndConditions"]
+          }
         }
-      }
-    });
+      });
 
-    const parsedData = JSON.parse(response.text.trim());
+      const parsedData = JSON.parse(response.text.trim());
 
-    // Setup and save the quotation document
-    const newQuotation = {
-      id: "q_" + Date.now(),
-      rfqId: rfq.id,
-      quotationNumber: `Q-BBS-${new Date().getFullYear()}-${String(db.quotations.length + 1).padStart(4, "0")}`,
-      date: new Date().toISOString().split("T")[0],
-      expiryDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
-      status: "draft",
-      adminSignature: "Direktur Pengadaan BBS",
-      ...parsedData
-    };
+      const newQuotation = {
+        id: "q_" + Date.now(),
+        rfqId: rfq.id,
+        quotationNumber: `Q-BBS-${new Date().getFullYear()}-${String(count + 1).padStart(4, "0")}`,
+        date: new Date().toISOString().split("T")[0],
+        expiryDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+        status: "draft",
+        adminSignature: "Direktur Pengadaan BBS",
+        ...parsedData
+      };
 
-    db.quotations.unshift(newQuotation);
-    rfq.generatedQuotationId = newQuotation.id;
-    rfq.status = "quoted";
-    writeDB(db);
+      await adminDb.collection("quotations").doc(newQuotation.id).set(newQuotation);
+      await adminDb.collection("rfqs").doc(rfq.id).update({
+        generatedQuotationId: newQuotation.id,
+        status: "quoted"
+      });
 
-    res.status(201).json(newQuotation);
-  } catch (err: any) {
-    console.error("AI Quotation Generation Error:", err);
-    // If Gemini fails, fallback gracefully so that the app works seamlessly
-    const fallbackQuote = generateFallbackQuotation(rfq);
-    db.quotations.unshift(fallbackQuote);
-    rfq.generatedQuotationId = fallbackQuote.id;
-    rfq.status = "quoted";
-    writeDB(db);
-    res.status(201).json(fallbackQuote);
+      res.status(201).json(newQuotation);
+    } catch (err: any) {
+      console.error("AI Quotation Generation Error:", err);
+      const fallbackQuote = generateFallbackQuotation(rfq);
+      await adminDb.collection("quotations").doc(fallbackQuote.id).set(fallbackQuote);
+      await adminDb.collection("rfqs").doc(rfq.id).update({
+        generatedQuotationId: fallbackQuote.id,
+        status: "quoted"
+      });
+      res.status(201).json(fallbackQuote);
+    }
+  } catch (error: any) {
+    res.status(500).json({ error: "Gagal memproses dokumen quotation", details: error.message });
   }
 });
 
 // Background Service: Periodically check and trigger scheduled follow-up reminders
-setInterval(() => {
+setInterval(async () => {
   try {
-    const db = readDB();
-    if (!db.reminders || db.reminders.length === 0) {
-      return;
-    }
+    const remindersSnapshot = await adminDb.collection("reminders").get();
+    const reminders = remindersSnapshot.docs.map(doc => doc.data() as any);
+    if (reminders.length === 0) return;
 
-    let changed = false;
     const now = new Date();
+    const settings = await getCompanySettings();
 
-    db.reminders.forEach((reminder: any) => {
+    for (const reminder of reminders) {
       if (reminder.status === "scheduled") {
         const scheduledTime = new Date(reminder.scheduledTime);
         if (now >= scheduledTime) {
-          // Find the corresponding RFQ to check if it's still unquoted
-          const rfq = db.rfqs.find((r: any) => r.id === reminder.rfqId);
+          const rfqDoc = await adminDb.collection("rfqs").doc(reminder.rfqId).get();
 
-          if (!rfq) {
-            reminder.status = "failed";
-            reminder.error = "RFQ pendukung tidak ditemukan.";
-            changed = true;
-            return;
+          if (!rfqDoc.exists) {
+            await adminDb.collection("reminders").doc(reminder.id).update({
+              status: "failed",
+              error: "RFQ pendukung tidak ditemukan."
+            });
+            continue;
           }
+
+          const rfq = rfqDoc.data() as any;
 
           // If the RFQ is already quoted, completed, or cancelled, do not remind
           if (rfq.status === "quoted" || rfq.status === "completed" || rfq.status === "cancelled") {
-            reminder.status = "cancelled";
-            reminder.note = `Dibatalkan otomatis karena RFQ berstatus "${rfq.status}"`;
-            changed = true;
-            return;
+            await adminDb.collection("reminders").doc(reminder.id).update({
+              status: "cancelled",
+              note: `Dibatalkan otomatis karena RFQ berstatus "${rfq.status}"`
+            });
+            continue;
           }
 
           // Otherwise, send the reminder email!
           try {
-            triggerSimulatedReminderEmail(reminder, rfq, db.settings, db);
-            reminder.status = "sent";
-            reminder.sentAt = new Date().toISOString();
-            changed = true;
+            await triggerSimulatedReminderEmail(reminder, rfq, settings);
+            await adminDb.collection("reminders").doc(reminder.id).update({
+              status: "sent",
+              sentAt: new Date().toISOString()
+            });
             console.log(`[Follow-up Scheduler] Sent reminder for RFQ ${rfq.rfqNumber} to ${rfq.email}`);
           } catch (err: any) {
             console.error(`[Follow-up Scheduler] Failed to send reminder for RFQ ${rfq.rfqNumber}:`, err);
-            reminder.status = "failed";
-            reminder.error = err.message || "Gagal mengirimkan email.";
-            changed = true;
+            await adminDb.collection("reminders").doc(reminder.id).update({
+              status: "failed",
+              error: err.message || "Gagal mengirimkan email."
+            });
           }
         }
       }
-    });
-
-    if (changed) {
-      writeDB(db);
     }
   } catch (err) {
     console.error("[Follow-up Scheduler] Background check error:", err);
   }
-}, 10000);
+}, 30000);
 
 // Main full-stack integration handler
 async function startServer() {
+  // Ensure default data is present on boot
+  await seedFirestoreIfNeeded();
+
   // Vite integration in development mode
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

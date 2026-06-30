@@ -152,7 +152,8 @@ export default function RfqAnalytics({ rfqs, catalogProducts, quotations }: RfqA
         perusahaan: { val: 0, cnt: 0 },
         pemerintah: { val: 0, cnt: 0 },
         pendidikan: { val: 0, cnt: 0 },
-        umkm: { val: 0, cnt: 0 }
+        umkm: { val: 0, cnt: 0 },
+        retail: { val: 0, cnt: 0 }
       };
 
       rfqs.forEach((rfq) => {
@@ -167,7 +168,8 @@ export default function RfqAnalytics({ rfqs, catalogProducts, quotations }: RfqA
         perusahaan: "Korporat & Perusahaan",
         pemerintah: "Lembaga & Sektor Umum",
         pendidikan: "Lembaga Pendidikan",
-        umkm: "UMKM & Ritel"
+        umkm: "UMKM & Individu",
+        retail: "Retail & Toko"
       };
 
       return Object.entries(map).map(([key, item]) => ({

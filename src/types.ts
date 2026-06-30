@@ -36,7 +36,7 @@ export interface RFQ {
   whatsapp: string;
   email: string;
   address: string;
-  clientCategory: 'perusahaan' | 'pemerintah' | 'pendidikan' | 'umkm';
+  clientCategory: 'perusahaan' | 'pemerintah' | 'pendidikan' | 'umkm' | 'retail';
   items: RFQItem[];
   customRequirements?: string;
   notes?: string;
@@ -95,3 +95,13 @@ export interface ConsultMessage {
   text: string;
   timestamp: string;
 }
+
+export interface QuickTopic {
+  id: string;
+  emoji: string;
+  title: string;
+  prompt: string;
+  description: string;
+  isCustom?: boolean;
+}
+

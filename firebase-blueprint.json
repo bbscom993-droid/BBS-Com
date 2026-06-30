@@ -1,0 +1,190 @@
+{
+  "entities": {
+    "CompanySettings": {
+      "title": "CompanySettings",
+      "description": "Company settings and branding configuration for BBS Procurement",
+      "type": "object",
+      "properties": {
+        "companyName": { "type": "string" },
+        "tagline": { "type": "string" },
+        "description": { "type": "string" },
+        "address": { "type": "string" },
+        "whatsapp": { "type": "string" },
+        "email": { "type": "string" },
+        "website": { "type": "string" },
+        "workingHours": { "type": "string" },
+        "logoText": { "type": "string" },
+        "motto": { "type": "string" },
+        "bankAccount": {
+          "type": "object",
+          "properties": {
+            "bankName": { "type": "string" },
+            "accountNumber": { "type": "string" },
+            "accountHolder": { "type": "string" }
+          }
+        }
+      },
+      "required": ["companyName", "whatsapp", "email"]
+    },
+    "RFQ": {
+      "title": "RFQ",
+      "description": "Request for Quotation submitted by a client",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "rfqNumber": { "type": "string" },
+        "date": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "quoted", "rejected"] },
+        "companyName": { "type": "string" },
+        "clientName": { "type": "string" },
+        "whatsapp": { "type": "string" },
+        "email": { "type": "string" },
+        "address": { "type": "string" },
+        "clientCategory": { "type": "string" },
+        "customRequirements": { "type": "string" },
+        "notes": { "type": "string" },
+        "generatedQuotationId": { "type": "string" },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "quantity": { "type": "number" },
+              "description": { "type": "string" }
+            }
+          }
+        }
+      },
+      "required": ["id", "rfqNumber", "date", "status", "clientName", "whatsapp", "email"]
+    },
+    "Quotation": {
+      "title": "Quotation",
+      "description": "Official price offer generated in response to an RFQ",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "rfqId": { "type": "string" },
+        "quotationNumber": { "type": "string" },
+        "date": { "type": "string" },
+        "expiryDate": { "type": "string" },
+        "introductoryText": { "type": "string" },
+        "subtotal": { "type": "number" },
+        "tax": { "type": "number" },
+        "discount": { "type": "number" },
+        "total": { "type": "number" },
+        "status": { "type": "string", "enum": ["draft", "sent", "accepted", "expired"] },
+        "adminSignature": { "type": "string" },
+        "termsAndConditions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "quantity": { "type": "number" },
+              "unitPrice": { "type": "number" },
+              "totalPrice": { "type": "number" },
+              "specification": { "type": "string" }
+            }
+          }
+        }
+      },
+      "required": ["id", "rfqId", "quotationNumber", "date", "status", "subtotal", "total"]
+    },
+    "CatalogProduct": {
+      "title": "CatalogProduct",
+      "description": "A product available in the BBS Procurement catalog",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "description": { "type": "string" },
+        "estimatedPriceRange": { "type": "string" },
+        "icon": { "type": "string" },
+        "image": { "type": "string" },
+        "specifications": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["id", "name", "category", "description", "estimatedPriceRange"]
+    },
+    "SimulatedEmail": {
+      "title": "SimulatedEmail",
+      "description": "A record of an email notification simulated/sent to a client",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "rfqId": { "type": "string" },
+        "recipient": { "type": "string" },
+        "subject": { "type": "string" },
+        "body": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "recipient", "subject", "body", "timestamp"]
+    },
+    "SimulatedReminder": {
+      "title": "SimulatedReminder",
+      "description": "A scheduled or sent RFQ reminder",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "rfqId": { "type": "string" },
+        "rfqNumber": { "type": "string" },
+        "clientName": { "type": "string" },
+        "whatsapp": { "type": "string" },
+        "email": { "type": "string" },
+        "scheduledTime": { "type": "string" },
+        "status": { "type": "string", "enum": ["scheduled", "sent", "cancelled"] }
+      },
+      "required": ["id", "rfqId", "rfqNumber", "clientName", "status"]
+    },
+    "ReminderConfig": {
+      "title": "ReminderConfig",
+      "description": "Configuration settings for sending reminders",
+      "type": "object",
+      "properties": {
+        "autoSchedule": { "type": "boolean" },
+        "delayHours": { "type": "number" },
+        "subjectTemplate": { "type": "string" },
+        "bodyTemplate": { "type": "string" }
+      },
+      "required": ["autoSchedule", "delayHours", "subjectTemplate", "bodyTemplate"]
+    }
+  },
+  "firestore": {
+    "/settings/config": {
+      "schema": "CompanySettings",
+      "description": "The master configurations and company profile info for BBS"
+    },
+    "/settings/reminderConfig": {
+      "schema": "ReminderConfig",
+      "description": "Global settings for reminders"
+    },
+    "/rfqs/{rfqId}": {
+      "schema": "RFQ",
+      "description": "Requests for Quotations collection"
+    },
+    "/quotations/{quotationId}": {
+      "schema": "Quotation",
+      "description": "Quotations issued in response to RFQs"
+    },
+    "/catalog/{productId}": {
+      "schema": "CatalogProduct",
+      "description": "Products list in the procurement catalog"
+    },
+    "/emails/{emailId}": {
+      "schema": "SimulatedEmail",
+      "description": "Logs of emails sent to users"
+    },
+    "/reminders/{reminderId}": {
+      "schema": "SimulatedReminder",
+      "description": "List of scheduled/sent reminders"
+    }
+  }
+}

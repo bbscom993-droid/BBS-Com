@@ -23,7 +23,7 @@ export default function Navbar({ currentTab, setCurrentTab, rfqCartCount, settin
 
   const navItems = [
     { id: "landing", label: "Beranda", icon: Home },
-    { id: "consult", label: "Asisten AI", icon: Sparkles },
+    { id: "consult", label: "BBS Asisten AI", icon: Sparkles },
     { id: "rfq", label: "Buat RFQ", icon: ShoppingCart, badge: rfqCartCount > 0 ? rfqCartCount : undefined },
   ];
 

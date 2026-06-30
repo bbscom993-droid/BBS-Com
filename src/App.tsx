@@ -27,12 +27,15 @@ import {
   User,
   Filter,
   RefreshCw,
-  Award
+  Award,
+  ChevronDown,
+  QrCode
 } from "lucide-react";
 import Navbar from "./components/Navbar";
 import ManualScheduleForm from "./components/ManualScheduleForm";
 import RfqAnalytics from "./components/RfqAnalytics";
 import BarcodeScanner from "./components/BarcodeScanner";
+import ProductDetailModal from "./components/ProductDetailModal";
 import { SERVICE_OFFERINGS, PRODUCT_CATALOG } from "./data";
 import { 
   CompanySettings, 
@@ -40,13 +43,71 @@ import {
   Quotation, 
   ProductItem, 
   RFQItem, 
-  ConsultMessage 
+  ConsultMessage,
+  QuickTopic
 } from "./types";
 
 // Dynamic Icon Component for rendering dynamic icons from data safely
 function DynamicIcon({ name, className }: { name: string; className?: string }) {
   const IconComponent = (Icons as any)[name] || Icons.HelpCircle;
   return <IconComponent className={className} />;
+}
+
+// Get numeric barcode simulation mapping for products
+function getBarcodeValue(productId: string) {
+  const mockBarcodes: Record<string, string> = {
+    "prod_1": "8895431201",
+    "prod_2": "1928471048",
+    "prod_3": "3049182740",
+    "prod_4": "4095817263",
+    "prod_5": "5120394857",
+    "prod_6": "6238475910",
+    "prod_7": "7349581023",
+    "prod_8": "8450192837",
+  };
+  return mockBarcodes[productId] || `BBS-${productId.toUpperCase()}`;
+}
+
+// Barcode rendering component for printing and previewing
+function BarcodeSVG({ value }: { value: string }) {
+  const bars: number[] = [];
+  for (let i = 0; i < value.length; i++) {
+    const charCode = value.charCodeAt(i);
+    // Determine bar and space widths based on character code
+    const barWidth = (charCode % 3) + 1; // 1, 2, or 3
+    const spaceWidth = ((charCode >> 1) % 2) + 1; // 1 or 2
+    bars.push(barWidth);
+    bars.push(spaceWidth);
+  }
+  
+  // Guard bars at start and end
+  const finalBars = [1, 1, 1, ...bars, 1, 1, 1];
+  const totalWidth = finalBars.reduce((acc, w) => acc + w, 0);
+  
+  let currentX = 0;
+  return (
+    <svg className="w-full h-12" viewBox={`0 0 ${totalWidth} 40`} preserveAspectRatio="none">
+      <g fill="currentColor">
+        {finalBars.map((width, idx) => {
+          const x = currentX;
+          currentX += width;
+          // Alternate black and white bars (idx % 2 === 0 are black bars, odd are white spaces)
+          if (idx % 2 === 0) {
+            return (
+              <rect
+                key={idx}
+                x={x}
+                y="0"
+                width={width}
+                height="40"
+              />
+            );
+          }
+          return null;
+        })}
+      </g>
+    </svg>
+  );
 }
 
 export default function App() {
@@ -102,6 +163,37 @@ export default function App() {
     } else {
       window.history.replaceState(null, "", `#${currentTab}`);
     }
+  }, [currentTab]);
+
+  // Keyboard shortcut 'S' / 's' to focus and trigger BarcodeScanner modal when catalog is active
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Trigger only if current tab is landing (where catalog section is active)
+      if (currentTab !== "landing") return;
+
+      // Avoid triggering when user is typing inside input/textarea/select or contenteditable elements
+      const activeEl = document.activeElement;
+      if (
+        activeEl &&
+        (activeEl.tagName === "INPUT" ||
+          activeEl.tagName === "TEXTAREA" ||
+          activeEl.tagName === "SELECT" ||
+          activeEl.hasAttribute("contenteditable"))
+      ) {
+        return;
+      }
+
+      // Check if 's' or 'S' is pressed
+      if (e.key === "s" || e.key === "S") {
+        e.preventDefault();
+        setIsScannerOpen(true);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
   }, [currentTab]);
 
   const [settings, setSettings] = useState<CompanySettings>({
@@ -167,6 +259,8 @@ export default function App() {
   const [rfqCart, setRfqCart] = useState<{ product: ProductItem; quantity: number }[]>([]);
   const [customCartItems, setCustomCartItems] = useState<RFQItem[]>([]);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [selectedDetailProduct, setSelectedDetailProduct] = useState<ProductItem | null>(null);
+  const [showSubtotalBreakdown, setShowSubtotalBreakdown] = useState(false);
   
   // Custom item adding inputs
   const [customItemName, setCustomItemName] = useState("");
@@ -193,9 +287,10 @@ export default function App() {
     whatsapp: "",
     email: "",
     address: "",
-    clientCategory: "perusahaan" as "perusahaan" | "pemerintah" | "pendidikan" | "umkm",
+    clientCategory: "perusahaan" as "perusahaan" | "pemerintah" | "pendidikan" | "umkm" | "retail",
     customRequirements: ""
   });
+  const [emailError, setEmailError] = useState("");
 
   // Admin Portal Auth (just a simple lock to simulate security)
   const [adminAuthenticated, setAdminAuthenticated] = useState(false);
@@ -249,10 +344,27 @@ export default function App() {
   }, [selectedQuotation]);
 
   const [printDate, setPrintDate] = useState<string>("");
+  const [showPrintQrCode, setShowPrintQrCode] = useState(true);
   const [successRfqNumber, setSuccessRfqNumber] = useState<string | null>(null);
   const [selectedCatalogPdf, setSelectedCatalogPdf] = useState(false);
+  const [isCatalogMenuOpen, setIsCatalogMenuOpen] = useState(false);
+  const [showQrCodeModal, setShowQrCodeModal] = useState(false);
+  const [showPdfPreviewModal, setShowPdfPreviewModal] = useState(false);
+  const [pdfPreviewPage, setPdfPreviewPage] = useState(1);
+  const [pdfPreviewZoom, setPdfPreviewZoom] = useState(100);
+  const catalogMenuRef = useRef<HTMLDivElement>(null);
   const [selectedCompareIds, setSelectedCompareIds] = useState<string[]>([]);
   const [showComparisonModal, setShowComparisonModal] = useState(false);
+  const [showBarcodePrintModal, setShowBarcodePrintModal] = useState(false);
+  const [showPrintConfirmation, setShowPrintConfirmation] = useState(false);
+  const [barcodeSize, setBarcodeSize] = useState<"small" | "medium" | "large">("medium");
+  const [barcodeLayout, setBarcodeLayout] = useState<"grid" | "roll">("grid");
+  const [showCompany, setShowCompany] = useState(true);
+  const [showCategory, setShowCategory] = useState(true);
+  const [showPrice, setShowPrice] = useState(true);
+  const [showId, setShowId] = useState(true);
+  const [printItemsList, setPrintItemsList] = useState<string[]>([]);
+  const [printSearch, setPrintSearch] = useState("");
   const [comparisonDetailMode, setComparisonDetailMode] = useState<"summary" | "detail">("detail");
   const [collapsedCompareProductIds, setCollapsedCompareProductIds] = useState<Record<string, boolean>>({});
 
@@ -267,6 +379,102 @@ export default function App() {
   const [chatInput, setChatInput] = useState("");
   const chatBottomRef = useRef<HTMLDivElement>(null);
 
+  // Quick Topics State & Actions
+  const [quickTopics, setQuickTopics] = useState<QuickTopic[]>(() => {
+    const defaultTopics: QuickTopic[] = [
+      {
+        id: "topic-1",
+        emoji: "💻",
+        title: "Laptop & PC Bisnis",
+        prompt: "Rekomendasikan spesifikasi komputer kantor standar administrasi dan laptop bisnis direktur beserta estimasi budgetnya.",
+        description: "Minta rekomendasi brand, RAM, SSD, & processor.",
+        isCustom: false
+      },
+      {
+        id: "topic-2",
+        emoji: "🌐",
+        title: "Rancangan Jaringan LAN",
+        prompt: "Kami memiliki kantor 2 lantai dengan luas 200m2 dan 35 karyawan. Berapa jumlah Access Point Wifi dan tipe Switch manageable Mikrotik yang paling ideal?",
+        description: "Estimasi AP Wifi Ubiquiti / Router Mikrotik.",
+        isCustom: false
+      },
+      {
+        id: "topic-3",
+        emoji: "🛡️",
+        title: "Kebutuhan CCTV & Security",
+        prompt: "Berapa biaya pengadaan CCTV 8 titik IP camera Hikvision lengkap dengan NVR, Harddisk khusus surveillance, dan instalasi kabel konduit rapi?",
+        description: "Detail IP Cam dome indoor vs outdoor.",
+        isCustom: false
+      },
+      {
+        id: "topic-4",
+        emoji: "🔧",
+        title: "Kontrak Maintenance & SLA",
+        prompt: "Bagaimana skema kontrak SLA Maintenance rutin untuk perawatan 15 PC dan 1 Server kantor? Apa saja layanan purna jual yang didapatkan?",
+        description: "Skema pembersihan fisik, backup, remote support.",
+        isCustom: false
+      }
+    ];
+    try {
+      const stored = localStorage.getItem("bbs_custom_quick_topics");
+      if (stored) {
+        const custom: QuickTopic[] = JSON.parse(stored);
+        return [...defaultTopics, ...custom];
+      }
+      return defaultTopics;
+    } catch (e) {
+      return defaultTopics;
+    }
+  });
+
+  const [isAddingTopic, setIsAddingTopic] = useState(false);
+  const [newTopicEmoji, setNewTopicEmoji] = useState("💡");
+  const [newTopicTitle, setNewTopicTitle] = useState("");
+  const [newTopicPrompt, setNewTopicPrompt] = useState("");
+  const [newTopicDescription, setNewTopicDescription] = useState("");
+
+  const handleAddQuickTopic = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTopicTitle.trim() || !newTopicPrompt.trim()) {
+      showToast("Judul dan isi prompt topik wajib diisi!", "error");
+      return;
+    }
+
+    const newTopic: QuickTopic = {
+      id: `custom-topic-${Date.now()}`,
+      emoji: newTopicEmoji.trim() || "💡",
+      title: newTopicTitle.trim(),
+      prompt: newTopicPrompt.trim(),
+      description: newTopicDescription.trim() || "Topik konsultasi custom.",
+      isCustom: true
+    };
+
+    const updated = [...quickTopics, newTopic];
+    setQuickTopics(updated);
+    
+    // Save only custom ones to localStorage
+    const customOnly = updated.filter(t => t.isCustom);
+    localStorage.setItem("bbs_custom_quick_topics", JSON.stringify(customOnly));
+
+    // Reset fields
+    setNewTopicEmoji("💡");
+    setNewTopicTitle("");
+    setNewTopicPrompt("");
+    setNewTopicDescription("");
+    setIsAddingTopic(false);
+    showToast("Topik cepat custom berhasil ditambahkan!", "success");
+  };
+
+  const handleDeleteQuickTopic = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // prevent triggering select topic click
+    const updated = quickTopics.filter(t => t.id !== id);
+    setQuickTopics(updated);
+
+    const customOnly = updated.filter(t => t.isCustom);
+    localStorage.setItem("bbs_custom_quick_topics", JSON.stringify(customOnly));
+    showToast("Topik cepat berhasil dihapus!", "success");
+  };
+
   // Product Catalog search
   const [catalogSearch, setCatalogSearch] = useState("");
   const [catalogCategory, setCatalogCategory] = useState("Semua");
@@ -278,6 +486,9 @@ export default function App() {
     function handleClickOutside(event: MouseEvent) {
       if (sortDropdownRef.current && !sortDropdownRef.current.contains(event.target as Node)) {
         setIsSortDropdownOpen(false);
+      }
+      if (catalogMenuRef.current && !catalogMenuRef.current.contains(event.target as Node)) {
+        setIsCatalogMenuOpen(false);
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
@@ -501,6 +712,31 @@ export default function App() {
     showToast(`"${product.name}" berhasil ditambahkan ke keranjang RFQ!`, "success");
   };
 
+  // Add all compared products to RFQ cart
+  const addAllComparedToCart = () => {
+    let updatedCart = [...rfqCart];
+    const comparedProducts = selectedCompareIds
+      .map(id => catalogProducts.find(p => p.id === id))
+      .filter((p): p is ProductItem => !!p);
+
+    if (comparedProducts.length === 0) return;
+
+    comparedProducts.forEach(product => {
+      const existingIdx = updatedCart.findIndex(item => item.product.id === product.id);
+      if (existingIdx > -1) {
+        updatedCart[existingIdx] = {
+          ...updatedCart[existingIdx],
+          quantity: updatedCart[existingIdx].quantity + 1
+        };
+      } else {
+        updatedCart.push({ product, quantity: 1 });
+      }
+    });
+
+    setRfqCart(updatedCart);
+    showToast(`${comparedProducts.length} perangkat berhasil ditambahkan ke keranjang RFQ!`, "success");
+  };
+
   // Adjust standard cart quantity
   const updateCartQty = (productId: string, delta: number) => {
     setRfqCart(rfqCart.map(item => {
@@ -554,6 +790,16 @@ export default function App() {
     if (!rfqForm.clientName.trim() || !rfqForm.whatsapp.trim() || !rfqForm.email.trim() || !rfqForm.address.trim()) {
       showToast("Mohon isi lengkap Nama Klien, No WhatsApp, Email, dan Alamat Pengiriman.", "error");
       return;
+    }
+
+    // Email regex validation
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!emailRegex.test(rfqForm.email.trim())) {
+      setEmailError("Format email tidak valid (contoh: nama@domain.com)");
+      showToast("Format Alamat Email tidak valid. Silakan periksa kembali.", "error");
+      return;
+    } else {
+      setEmailError("");
     }
 
     setSubmittingRfq(true);
@@ -1119,7 +1365,7 @@ export default function App() {
               <div className="lg:col-span-5 space-y-6">
                 <div className="inline-flex items-center space-x-2 px-3 py-1 bg-indigo-500/10 border border-indigo-500/20 rounded-full text-indigo-300 text-[11px] font-semibold uppercase tracking-wider">
                   <Award className="h-3 w-3 text-indigo-400" />
-                  <span>Mitra Solusi IT Terpercaya & Legal</span>
+                  <span>Mitra Solusi IT Terpercaya & Handal</span>
                 </div>
                 
                 <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold leading-[1.1] tracking-tight">
@@ -1163,7 +1409,7 @@ export default function App() {
                     className="px-8 py-4 bg-white/5 border border-white/10 hover:bg-white/10 text-slate-200 rounded-xl font-bold backdrop-blur-sm transition-all duration-300 flex items-center justify-center space-x-2 text-base cursor-pointer transform hover:-translate-y-0.5"
                   >
                     <Sparkles className="h-5 w-5 text-indigo-400" />
-                    <span>Konsultasi Asisten AI</span>
+                    <span>Konsultasi BBS Asisten AI</span>
                   </button>
                 </div>
               </div>
@@ -1192,7 +1438,7 @@ export default function App() {
                     <div className="p-4 bg-white/5 border border-white/5 rounded-xl flex items-center justify-between hover:border-white/10 transition-colors">
                       <div>
                         <p className="text-[10px] text-slate-400 uppercase font-mono tracking-wider font-semibold">Estimasi Penawaran AI</p>
-                        <h3 className="text-2xl font-bold mt-1 text-white">Instant <span className="text-xs text-indigo-400 font-medium">via Gemini</span></h3>
+                        <h3 className="text-2xl font-bold mt-1 text-white">Instant <span className="text-xs text-indigo-400 font-medium">via BBS ENGINE LIVE AI</span></h3>
                       </div>
                       <div className="p-2.5 bg-indigo-500/10 rounded-lg border border-indigo-500/20"><Sparkles className="h-5 w-5 text-indigo-400" /></div>
                     </div>
@@ -1221,7 +1467,7 @@ export default function App() {
                     <div className="flex items-start gap-3 p-3 bg-white/5 border border-white/5 rounded-xl">
                       <div className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center text-slate-300 font-bold text-xs">2</div>
                       <div className="flex-1">
-                        <p className="text-xs font-bold text-slate-200">Gemini AI Memproses & Merancang Quotation</p>
+                        <p className="text-xs font-bold text-slate-200">BBS AI Memproses & Merancang Quotation</p>
                         <p className="text-[10px] text-slate-400 mt-0.5">Sistem secara instan menganalisis, memilih model brand terbaik, dan menyusun harga.</p>
                       </div>
                     </div>
@@ -1246,7 +1492,7 @@ export default function App() {
                 </div>
                 <h2 className="text-3xl sm:text-4xl font-extrabold text-white">Layanan Utama Kami</h2>
                 <p className="text-slate-400 text-sm">
-                  Menawarkan portofolio solusi teknologi informasi dan pengadaan komprehensif yang dirancang khusus untuk memajukan instansi Anda.
+                  Menawarkan portofolio solusi teknologi informasi dan pengadaan komprehensif yang dirancang khusus untuk memajukan bisnis Anda.
                 </p>
               </div>
 
@@ -1300,13 +1546,90 @@ export default function App() {
 
                 {/* Filter and Search controls */}
                 <div className="flex flex-wrap items-center justify-center gap-3 w-full">
+                  {/* Quick Download Shortcut Button */}
                   <button
                     onClick={() => setSelectedCatalogPdf(true)}
-                    className="flex items-center justify-center space-x-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white border border-indigo-500/30 rounded-xl text-xs font-bold transition-all shadow-lg hover:shadow-indigo-600/20 active:scale-95 cursor-pointer whitespace-nowrap"
-                    id="download_catalog_pdf_btn"
+                    className="flex items-center justify-center space-x-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white border border-indigo-500/30 rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 cursor-pointer whitespace-nowrap"
+                    title="Unduh PDF Katalog Langsung"
                   >
                     <Download className="h-3.5 w-3.5" />
-                    <span>Unduh PDF Katalog</span>
+                    <span>Download Now</span>
+                  </button>
+
+                  <div className="relative flex items-center gap-2" ref={catalogMenuRef}>
+                    <button
+                      onClick={() => setIsCatalogMenuOpen(!isCatalogMenuOpen)}
+                      className="flex items-center justify-center space-x-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-white/10 rounded-xl text-xs font-bold transition-all shadow-lg active:scale-95 cursor-pointer whitespace-nowrap"
+                      id="download_catalog_pdf_btn"
+                    >
+                      <QrCode className="h-3.5 w-3.5 text-indigo-400" />
+                      <span>Katalog Akses</span>
+                      <ChevronDown className="h-3 w-3 opacity-80" />
+                    </button>
+
+                    <button
+                      onClick={() => setIsScannerOpen(true)}
+                      className="flex items-center justify-center space-x-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-white/10 rounded-xl text-xs font-bold transition-all shadow-lg active:scale-95 cursor-pointer whitespace-nowrap"
+                      id="scan_barcode_from_catalog_btn"
+                      title="Pindai QR / Barcode Produk"
+                    >
+                      <Icons.Scan className="h-3.5 w-3.5 text-indigo-400" />
+                      <span>Scan</span>
+                    </button>
+
+                    {isCatalogMenuOpen && (
+                      <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 w-56 bg-slate-900 border border-white/10 rounded-xl shadow-2xl z-50 py-1.5 overflow-hidden backdrop-blur-xl animate-scaleUp">
+                        <button
+                          onClick={() => {
+                            setSelectedCatalogPdf(true);
+                            setIsCatalogMenuOpen(false);
+                          }}
+                          className="w-full flex items-center space-x-2.5 px-4 py-2.5 text-left text-xs font-semibold text-slate-200 hover:bg-white/5 hover:text-white transition-colors cursor-pointer"
+                        >
+                          <Download className="h-4 w-4 text-indigo-400" />
+                          <span>Unduh PDF Katalog</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            setShowQrCodeModal(true);
+                            setIsCatalogMenuOpen(false);
+                          }}
+                          className="w-full flex items-center space-x-2.5 px-4 py-2.5 text-left text-xs font-semibold text-slate-200 hover:bg-white/5 hover:text-white transition-colors border-t border-white/5 cursor-pointer"
+                        >
+                          <QrCode className="h-4 w-4 text-indigo-400" />
+                          <span>Generate QR Code Katalog</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            setShowPdfPreviewModal(true);
+                            setPdfPreviewPage(1);
+                            setIsCatalogMenuOpen(false);
+                          }}
+                          className="w-full flex items-center space-x-2.5 px-4 py-2.5 text-left text-xs font-semibold text-slate-200 hover:bg-white/5 hover:text-white transition-colors border-t border-white/5 cursor-pointer"
+                        >
+                          <Icons.Eye className="h-4 w-4 text-indigo-400" />
+                          <span>Preview PDF Katalog</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Print Barcode Labels Button */}
+                  <button
+                    onClick={() => {
+                      if (selectedCompareIds.length > 0) {
+                        setPrintItemsList(selectedCompareIds);
+                      } else {
+                        setPrintItemsList(catalogProducts.map(p => p.id));
+                      }
+                      setShowBarcodePrintModal(true);
+                    }}
+                    className="flex items-center justify-center space-x-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-white/10 rounded-xl text-xs font-bold transition-all shadow-lg active:scale-95 cursor-pointer whitespace-nowrap"
+                    id="print_barcode_labels_btn"
+                    title="Cetak Label Barcode Produk"
+                  >
+                    <Printer className="h-3.5 w-3.5 text-emerald-400" />
+                    <span>Print Barcodes</span>
                   </button>
 
                   <div className="relative">
@@ -1479,6 +1802,23 @@ export default function App() {
                       </button>
                     ))}
                   </div>
+
+                  {(catalogSearch !== "" || catalogCategory !== "Semua" || catalogSort !== "none") && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCatalogSearch("");
+                        setCatalogCategory("Semua");
+                        setCatalogSort("none");
+                        showToast("Filter dan pencarian katalog telah di-reset ke default.", "success");
+                      }}
+                      className="flex items-center space-x-1.5 px-3 py-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/20 hover:border-rose-500/30 rounded-xl text-xs font-semibold transition-all duration-300 active:scale-95 shadow-lg shadow-rose-950/10 cursor-pointer animate-fade-in"
+                      title="Reset Semua Filter"
+                    >
+                      <Icons.FilterX className="h-3.5 w-3.5" />
+                      <span>Clear All Filters</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1489,14 +1829,18 @@ export default function App() {
                     key={prod.id} 
                     className="bg-white/10 border border-white/20 shadow-[0_8px_32px_0_rgba(31,38,135,0.37)] hover:border-indigo-500/40 rounded-2xl p-5 backdrop-blur-md flex flex-col justify-between transition-all duration-300 hover:shadow-xl hover:shadow-indigo-500/5 group"
                   >
-                    <div>
+                    <div 
+                      onClick={() => setSelectedDetailProduct(prod)} 
+                      className="cursor-pointer group/card"
+                      title="Klik untuk melihat spesifikasi teknis lengkap"
+                    >
                       {/* Product Image */}
                       {prod.image && (
                         <div className="w-full h-36 rounded-xl overflow-hidden mb-4 relative bg-slate-950 border border-white/5">
                           <img 
                             src={prod.image} 
                             alt={prod.name} 
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" 
+                            className="w-full h-full object-cover group-hover/card:scale-105 transition-transform duration-500" 
                             referrerPolicy="no-referrer"
                           />
                         </div>
@@ -1504,15 +1848,36 @@ export default function App() {
 
                       {/* Product Card Top */}
                       <div className="flex justify-between items-start mb-4">
-                        <span className="text-[10px] bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 px-2.5 py-1 rounded-full font-semibold">
-                          {prod.category}
-                        </span>
+                        <div className="flex items-center space-x-2">
+                          <input 
+                            type="checkbox" 
+                            checked={selectedCompareIds.includes(prod.id)}
+                            onClick={(e) => e.stopPropagation()} // Prevent triggering details modal on click
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              if (selectedCompareIds.includes(prod.id)) {
+                                setSelectedCompareIds(prev => prev.filter(id => id !== prod.id));
+                              } else {
+                                if (selectedCompareIds.length >= 3) {
+                                  showToast("Maksimal 3 produk dapat dibandingkan sekaligus", "error");
+                                  return;
+                                }
+                                setSelectedCompareIds(prev => [...prev, prod.id]);
+                              }
+                            }}
+                            className="h-4 w-4 rounded border-white/20 bg-slate-900/50 text-indigo-500 focus:ring-indigo-500 cursor-pointer shrink-0"
+                            title="Pilih untuk perbandingan teknis"
+                          />
+                          <span className="text-[10px] bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 px-2.5 py-1 rounded-full font-semibold">
+                            {prod.category}
+                          </span>
+                        </div>
                         <div className="p-2 bg-white/5 rounded-lg text-slate-400 border border-white/5">
                           <DynamicIcon name={prod.icon} className="h-5 w-5" />
                         </div>
                       </div>
 
-                      <h4 className="font-bold text-white text-base line-clamp-1 group-hover:text-indigo-400 transition-colors">{prod.name}</h4>
+                      <h4 className="font-bold text-white text-base line-clamp-1 group-hover/card:text-indigo-400 transition-colors">{prod.name}</h4>
                       <p className="text-xs text-slate-400 mt-2 line-clamp-2 leading-relaxed">{prod.description}</p>
                       
                       <div className="mt-3 py-1 px-2 rounded bg-indigo-500/5 border border-indigo-500/10 inline-block">
@@ -1522,7 +1887,10 @@ export default function App() {
 
                       {/* Specs snippet */}
                       <div className="mt-4 space-y-1">
-                        <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Spesifikasi Utama:</p>
+                        <div className="flex justify-between items-center">
+                          <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Spesifikasi Utama:</p>
+                          <span className="text-[9px] text-indigo-400 font-bold group-hover/card:underline">Lihat Semua →</span>
+                        </div>
                         {prod.specifications.slice(0, 3).map((spec, i) => (
                           <div key={i} className="flex items-center gap-1.5 text-[11px] text-slate-300">
                             <span className="w-1 h-1 rounded-full bg-indigo-400"></span>
@@ -1532,14 +1900,28 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Add to RFQ Button */}
-                    <button 
-                      onClick={() => addToCart(prod)}
-                      className="mt-6 w-full py-2.5 bg-white/5 border border-white/10 hover:bg-indigo-600 hover:border-indigo-500 text-white hover:text-white rounded-xl text-xs font-bold transition-all duration-300 cursor-pointer flex items-center justify-center space-x-2"
-                    >
-                      <Plus className="h-4 w-4" />
-                      <span>Masukkan Keranjang RFQ</span>
-                    </button>
+                    {/* Actions Area */}
+                    <div className="mt-6 space-y-2">
+                      {selectedCompareIds.length > 1 && (
+                        <button
+                          onClick={() => {
+                            setShowComparisonModal(true);
+                          }}
+                          className="w-full py-2 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white rounded-xl text-xs font-extrabold transition-all duration-300 cursor-pointer flex items-center justify-center space-x-1.5 shadow-md shadow-indigo-600/10 animate-fadeIn"
+                        >
+                          <Icons.GitCompare className="h-3.5 w-3.5" />
+                          <span>Bandingkan ({selectedCompareIds.length})</span>
+                        </button>
+                      )}
+
+                      <button 
+                        onClick={() => addToCart(prod)}
+                        className="w-full py-2.5 bg-white/5 border border-white/10 hover:bg-indigo-600 hover:border-indigo-500 text-white hover:text-white rounded-xl text-xs font-bold transition-all duration-300 cursor-pointer flex items-center justify-center space-x-2"
+                      >
+                        <Plus className="h-4 w-4" />
+                        <span>Masukkan Keranjang RFQ</span>
+                      </button>
+                    </div>
                   </div>
                 ))}
 
@@ -1645,7 +2027,7 @@ export default function App() {
             <div>
               <div className="inline-flex items-center space-x-2 px-3 py-1 bg-indigo-500/10 border border-indigo-500/20 rounded-full text-indigo-300 text-[11px] font-semibold uppercase tracking-wider mb-2">
                 <Sparkles className="h-3 w-3 text-indigo-400" />
-                <span>Teknologi Gemini Generative AI</span>
+                <span>Teknologi BBS Generative AI</span>
               </div>
               <h2 className="text-3xl font-extrabold text-white">Asisten Konsultan Procurement IT</h2>
               <p className="text-slate-400 text-sm mt-1">
@@ -1658,45 +2040,137 @@ export default function App() {
               {/* Left Column: Quick Prompts List */}
               <div className="lg:col-span-4 bg-slate-900/40 border border-white/10 backdrop-blur-xl rounded-2xl p-5 flex flex-col justify-between space-y-6">
                 <div className="space-y-4">
-                  <h4 className="text-sm font-bold text-slate-200 uppercase tracking-wider border-b border-white/10 pb-2 flex items-center space-x-2">
-                    <Sparkles className="h-4 w-4 text-indigo-400" />
-                    <span>Inspirasi Konsultasi</span>
-                  </h4>
-                  <p className="text-xs text-slate-400 leading-relaxed">Pilih topik cepat di bawah ini untuk didiskusikan langsung dengan AI:</p>
-                  
-                  <div className="space-y-2.5">
-                    <button 
-                      onClick={() => sendChatSuggestion("Rekomendasikan spesifikasi komputer kantor standar administrasi dan laptop bisnis direktur beserta estimasi budgetnya.")}
-                      className="w-full p-3 bg-white/5 hover:bg-indigo-500/10 border border-white/5 hover:border-indigo-500/30 rounded-xl text-left text-xs text-slate-300 hover:text-white transition-all duration-200 leading-relaxed"
-                    >
-                      💻 <strong>Laptop & PC Bisnis</strong>
-                      <span className="block text-[10px] text-slate-500 mt-1">Minta rekomendasi brand, RAM, SSD, & processor.</span>
-                    </button>
-
-                    <button 
-                      onClick={() => sendChatSuggestion("Kami memiliki kantor 2 lantai dengan luas 200m2 dan 35 karyawan. Berapa jumlah Access Point Wifi dan tipe Switch manageable Mikrotik yang paling ideal?")}
-                      className="w-full p-3 bg-white/5 hover:bg-indigo-500/10 border border-white/5 hover:border-indigo-500/30 rounded-xl text-left text-xs text-slate-300 hover:text-white transition-all duration-200 leading-relaxed"
-                    >
-                      🌐 <strong>Rancangan Jaringan LAN</strong>
-                      <span className="block text-[10px] text-slate-500 mt-1">Estimasi AP Wifi Ubiquiti / Router Mikrotik.</span>
-                    </button>
-
-                    <button 
-                      onClick={() => sendChatSuggestion("Berapa biaya pengadaan CCTV 8 titik IP camera Hikvision lengkap dengan NVR, Harddisk khusus surveillance, dan instalasi kabel konduit rapi?")}
-                      className="w-full p-3 bg-white/5 hover:bg-indigo-500/10 border border-white/5 hover:border-indigo-500/30 rounded-xl text-left text-xs text-slate-300 hover:text-white transition-all duration-200 leading-relaxed"
-                    >
-                      🛡️ <strong>Kebutuhan CCTV & Security</strong>
-                      <span className="block text-[10px] text-slate-500 mt-1">Detail IP Cam dome indoor vs outdoor.</span>
-                    </button>
-
-                    <button 
-                      onClick={() => sendChatSuggestion("Bagaimana skema kontrak SLA Maintenance rutin untuk perawatan 15 PC dan 1 Server kantor? Apa saja layanan purna jual yang didapatkan?")}
-                      className="w-full p-3 bg-white/5 hover:bg-indigo-500/10 border border-white/5 hover:border-indigo-500/30 rounded-xl text-left text-xs text-slate-300 hover:text-white transition-all duration-200 leading-relaxed"
-                    >
-                      🔧 <strong>Kontrak Maintenance & SLA</strong>
-                      <span className="block text-[10px] text-slate-500 mt-1">Skema pembersihan fisik, backup, remote support.</span>
-                    </button>
+                  <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                    <h4 className="text-sm font-bold text-slate-200 uppercase tracking-wider flex items-center space-x-2">
+                      <Sparkles className="h-4 w-4 text-indigo-400" />
+                      <span>Inspirasi Konsultasi</span>
+                    </h4>
+                    {!isAddingTopic && (
+                      <button
+                        onClick={() => setIsAddingTopic(true)}
+                        className="text-[10px] font-semibold bg-indigo-500/15 hover:bg-indigo-500/30 border border-indigo-500/30 hover:border-indigo-500/50 text-indigo-300 px-2 py-1 rounded-md transition-all duration-200 flex items-center space-x-1 cursor-pointer"
+                      >
+                        <Plus className="h-3 w-3" />
+                        <span>Tambah Custom</span>
+                      </button>
+                    )}
                   </div>
+
+                  {isAddingTopic ? (
+                    <form onSubmit={handleAddQuickTopic} className="space-y-3 p-3.5 bg-white/5 border border-white/10 rounded-xl">
+                      <div className="flex items-center justify-between border-b border-white/10 pb-1.5 mb-1">
+                        <span className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                          <Plus className="h-3.5 w-3.5 text-indigo-400" />
+                          Tambah Topik Kustom
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setIsAddingTopic(false)}
+                          className="text-slate-400 hover:text-slate-200 cursor-pointer"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-4 gap-2">
+                        <div className="col-span-1">
+                          <label className="block text-[9px] uppercase tracking-wider text-slate-400 font-bold mb-1">Emoji</label>
+                          <input
+                            type="text"
+                            maxLength={2}
+                            value={newTopicEmoji}
+                            onChange={(e) => setNewTopicEmoji(e.target.value)}
+                            className="w-full bg-slate-950/60 border border-white/10 rounded-lg px-2 py-1 text-xs text-center text-white focus:outline-none focus:border-indigo-500"
+                            placeholder="💡"
+                          />
+                        </div>
+                        <div className="col-span-3">
+                          <label className="block text-[9px] uppercase tracking-wider text-slate-400 font-bold mb-1">Judul Topik *</label>
+                          <input
+                            type="text"
+                            required
+                            maxLength={30}
+                            value={newTopicTitle}
+                            onChange={(e) => setNewTopicTitle(e.target.value)}
+                            className="w-full bg-slate-950/60 border border-white/10 rounded-lg px-3 py-1 text-xs text-white focus:outline-none focus:border-indigo-500"
+                            placeholder="e.g. Absensi Sidik Jari"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-[9px] uppercase tracking-wider text-slate-400 font-bold mb-1">Deskripsi Singkat</label>
+                        <input
+                          type="text"
+                          maxLength={60}
+                          value={newTopicDescription}
+                          onChange={(e) => setNewTopicDescription(e.target.value)}
+                          className="w-full bg-slate-950/60 border border-white/10 rounded-lg px-3 py-1 text-xs text-white focus:outline-none focus:border-indigo-500"
+                          placeholder="e.g. Rekomendasi tipe & instalasi"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[9px] uppercase tracking-wider text-slate-400 font-bold mb-1">Isi Prompt Utama (Dikirim ke AI) *</label>
+                        <textarea
+                          required
+                          rows={3}
+                          value={newTopicPrompt}
+                          onChange={(e) => setNewTopicPrompt(e.target.value)}
+                          className="w-full bg-slate-950/60 border border-white/10 rounded-lg px-3 py-1 text-xs text-white focus:outline-none focus:border-indigo-500 resize-none"
+                          placeholder="Tuliskan pertanyaan detail Anda di sini..."
+                        />
+                      </div>
+
+                      <div className="flex items-center gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => setIsAddingTopic(false)}
+                          className="flex-1 py-1 text-[10px] font-semibold text-slate-400 bg-white/5 hover:bg-white/10 border border-white/5 rounded-lg transition-all duration-150 cursor-pointer"
+                        >
+                          Batal
+                        </button>
+                        <button
+                          type="submit"
+                          className="flex-1 py-1 text-[10px] font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-all duration-150 cursor-pointer"
+                        >
+                          Simpan Topik
+                        </button>
+                      </div>
+                    </form>
+                  ) : (
+                    <>
+                      <p className="text-xs text-slate-400 leading-relaxed">Pilih topik cepat di bawah ini untuk didiskusikan langsung dengan AI atau buat sendiri:</p>
+                      
+                      <div className="space-y-2.5 max-h-[350px] overflow-y-auto pr-1">
+                        {quickTopics.map((topic) => (
+                          <div key={topic.id} className="relative group">
+                            <button 
+                              onClick={() => sendChatSuggestion(topic.prompt)}
+                              className="w-full p-3 bg-white/5 hover:bg-indigo-500/10 border border-white/5 hover:border-indigo-500/30 rounded-xl text-left text-xs text-slate-300 hover:text-white transition-all duration-200 leading-relaxed pr-8 cursor-pointer block"
+                            >
+                              <span className="font-semibold">{topic.emoji} {topic.title}</span>
+                              <span className="block text-[10px] text-slate-500 mt-1 line-clamp-2">{topic.description}</span>
+                            </button>
+                            
+                            <button
+                              onClick={(e) => handleDeleteQuickTopic(topic.id, e)}
+                              title="Hapus topik ini"
+                              className="absolute top-2.5 right-2.5 p-1 text-slate-500 hover:text-rose-400 bg-black/40 hover:bg-black/60 rounded-md opacity-0 group-hover:opacity-100 transition-opacity duration-150 cursor-pointer"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ))}
+
+                        {quickTopics.length === 0 && (
+                          <div className="text-center py-6 text-slate-500 text-xs">
+                            Tidak ada topik cepat. Silakan klik tombol di atas untuk membuat topik kustom Anda!
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 <div className="p-4 bg-indigo-500/5 border border-indigo-500/15 rounded-xl space-y-2">
@@ -1912,6 +2386,23 @@ export default function App() {
                       <span>Scan Label Barcode / QR Produk</span>
                     </button>
 
+                    {/* 'Ready to Scan' status indicator when active */}
+                    {isScannerOpen && (
+                      <div className="bg-emerald-500/10 border border-emerald-500/25 rounded-xl p-3 flex items-center justify-between text-xs animate-fadeIn shadow-lg shadow-emerald-500/5">
+                        <div className="flex items-center space-x-2">
+                          <span className="relative flex h-2 w-2">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                          </span>
+                          <span className="font-extrabold text-emerald-400 tracking-wide">Ready to Scan</span>
+                        </div>
+                        <div className="flex items-center space-x-1.5 text-[10px] text-slate-400">
+                          <Icons.Video className="h-3.5 w-3.5 text-emerald-400" />
+                          <span>Kamera Aktif & Pemindai Siap</span>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Standard items catalog list */}
                     {rfqCart.length > 0 || customCartItems.length > 0 ? (
                       <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
@@ -2106,16 +2597,31 @@ export default function App() {
                       <div>
                         <label className="block text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1.5">Alamat Email Resmi <span className="text-red-500">*</span></label>
                         <div className="relative">
-                          <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+                          <Mail className={`absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 ${emailError ? 'text-red-400' : 'text-slate-500'}`} />
                           <input 
                             type="email" 
                             placeholder="Contoh: procurement@instansi.com"
                             value={rfqForm.email}
-                            onChange={(e) => setRfqForm({ ...rfqForm, email: e.target.value })}
-                            className="pl-10 pr-4 py-2.5 bg-slate-950 border border-white/10 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-200 w-full font-medium"
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setRfqForm({ ...rfqForm, email: val });
+                              const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+                              if (val.trim() && !emailRegex.test(val.trim())) {
+                                setEmailError("Format email tidak valid (contoh: nama@domain.com)");
+                              } else {
+                                setEmailError("");
+                              }
+                            }}
+                            className={`pl-10 pr-4 py-2.5 bg-slate-950 border ${emailError ? 'border-red-500/50 focus:ring-red-500' : 'border-white/10 focus:ring-indigo-500'} rounded-xl text-xs focus:outline-none focus:ring-2 text-slate-200 w-full font-medium`}
                             required
                           />
                         </div>
+                        {emailError && (
+                          <p className="mt-1.5 text-[10px] text-red-400 flex items-center gap-1.5 font-semibold">
+                            <span className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0"></span>
+                            {emailError}
+                          </p>
+                        )}
                       </div>
                     </div>
 
@@ -2131,6 +2637,7 @@ export default function App() {
                           <option value="pemerintah">Lembaga & Sektor Umum</option>
                           <option value="pendidikan">Lembaga Pendidikan</option>
                           <option value="umkm">UMKM / Individu</option>
+                          <option value="retail">Retail & Toko</option>
                         </select>
                       </div>
 
@@ -2983,98 +3490,168 @@ export default function App() {
                                 <th className="p-4">Kategori</th>
                                 <th className="p-4">Daftar Barang</th>
                                 <th className="p-4">Status</th>
+                                <th className="p-4 text-center">SLA Response (48j)</th>
                                 <th className="p-4 text-center">Aksi / Penawaran AI</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-white/5">
                               {filteredRfqsForAdmin.length > 0 ? (
-                                filteredRfqsForAdmin.map((rfq) => (
-                                  <tr key={rfq.id} className="hover:bg-white/[0.02] transition-colors">
-                                    <td className="p-4 font-mono font-bold text-indigo-400">{rfq.rfqNumber}</td>
-                                    <td className="p-4 text-slate-300">{rfq.date}</td>
-                                    <td className="p-4">
-                                      <div className="font-extrabold text-white text-xs">{rfq.clientName}</div>
-                                      {rfq.companyName && <div className="text-[10px] text-slate-400 mt-0.5">{rfq.companyName}</div>}
-                                      <div className="text-[10px] text-slate-500 font-mono mt-1">{rfq.whatsapp} | {rfq.email}</div>
-                                    </td>
-                                    <td className="p-4">
-                                      <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${
-                                        rfq.clientCategory === "pemerintah" 
-                                          ? "bg-purple-500/10 border border-purple-500/20 text-purple-300"
-                                          : rfq.clientCategory === "pendidikan"
-                                          ? "bg-cyan-500/10 border border-cyan-500/20 text-cyan-300"
-                                          : rfq.clientCategory === "perusahaan"
-                                          ? "bg-blue-500/10 border border-blue-500/20 text-blue-300"
-                                          : "bg-amber-500/10 border border-amber-500/20 text-amber-300"
-                                      }`}>
-                                        {rfq.clientCategory}
-                                      </span>
-                                    </td>
-                                    <td className="p-4 max-w-xs">
-                                      <div className="space-y-1">
-                                        {rfq.items.map((it, idx) => (
-                                          <div key={idx} className="text-[11px] text-slate-200 flex justify-between gap-2 bg-white/5 px-2 py-1 rounded">
-                                            <span className="font-bold">{it.name}</span>
-                                            <span className="text-amber-400 font-bold font-mono">x{it.quantity}</span>
-                                          </div>
-                                        ))}
-                                        {rfq.customRequirements && (
-                                          <div className="text-[10px] text-amber-300 italic line-clamp-1 mt-1">Req: {rfq.customRequirements}</div>
-                                        )}
-                                      </div>
-                                    </td>
-                                    <td className="p-4">
-                                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
-                                        rfq.status === "quoted" 
-                                          ? "bg-emerald-500/15 border border-emerald-500/30 text-emerald-400" 
-                                          : "bg-amber-500/15 border border-amber-500/30 text-amber-400"
-                                      }`}>
-                                        {rfq.status === "quoted" ? "Sudah Di-Quoted" : "Menunggu Proposal"}
-                                      </span>
-                                    </td>
-                                    <td className="p-4 text-center">
-                                      {rfq.status === "quoted" ? (
-                                        <div className="flex items-center justify-center space-x-2">
-                                          <button
-                                            onClick={() => {
-                                              const quote = quotations.find(q => q.rfqId === rfq.id || q.id === rfq.generatedQuotationId);
-                                              if (quote) {
-                                                setSelectedQuotation(quote);
-                                              } else {
-                                                showToast("File surat penawaran tidak ditemukan", "error");
-                                              }
-                                            }}
-                                            className="px-3 py-1.5 bg-indigo-500/10 hover:bg-indigo-600 border border-indigo-500/25 hover:border-indigo-500 text-indigo-300 hover:text-white rounded-lg font-bold transition-all flex items-center space-x-1 cursor-pointer"
-                                          >
-                                            <FileText className="h-3.5 w-3.5" />
-                                            <span>Buka Surat Penawaran</span>
-                                          </button>
+                                filteredRfqsForAdmin.map((rfq) => {
+                                  // SLA calculation
+                                  const isQuoted = rfq.status === "quoted" || rfq.status === "completed";
+                                  let submitDate = new Date(rfq.date);
+                                  const rfqIdNum = parseInt(rfq.id.replace("rfq_", ""), 10);
+                                  const hasExactTime = rfq.id.startsWith("rfq_") && !isNaN(rfqIdNum) && rfqIdNum > 1000000000000;
+                                  
+                                  if (hasExactTime) {
+                                    submitDate = new Date(rfqIdNum);
+                                  }
+
+                                  const now = new Date();
+                                  const diffMs = now.getTime() - submitDate.getTime();
+                                  const hoursElapsed = diffMs / (1000 * 60 * 60);
+                                  const remainingHours = 48 - hoursElapsed;
+                                  const isOverdue = !isQuoted && remainingHours <= 0;
+                                  const isWarning = !isQuoted && remainingHours > 0 && remainingHours < 12;
+
+                                  let rowClass = "hover:bg-white/[0.02] transition-all duration-200";
+                                  if (isOverdue) {
+                                    rowClass = "bg-red-500/10 hover:bg-red-500/15 border-l-2 border-red-500 text-red-100 transition-all duration-200";
+                                  } else if (isWarning) {
+                                    rowClass = "bg-amber-500/5 hover:bg-amber-500/10 border-l-2 border-amber-500 transition-all duration-200";
+                                  }
+
+                                  return (
+                                    <tr key={rfq.id} className={rowClass}>
+                                      <td className="p-4 font-mono font-bold text-indigo-400">
+                                        <div className="flex items-center space-x-1.5">
+                                          {isOverdue && <Icons.AlertCircle className="h-3.5 w-3.5 text-red-500 shrink-0 animate-pulse animate-duration-1000" />}
+                                          <span>{rfq.rfqNumber}</span>
                                         </div>
-                                      ) : (
-                                        <button
-                                          onClick={() => generateQuotationWithAI(rfq.id)}
-                                          disabled={generatingQuoteId !== null}
-                                          className="px-4 py-2 bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 disabled:from-indigo-950 disabled:to-indigo-950 text-white rounded-xl font-bold transition-all shadow-md flex items-center space-x-1.5 mx-auto cursor-pointer"
-                                        >
-                                          {generatingQuoteId === rfq.id ? (
-                                            <>
-                                              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                                              <span>AI Menyusun...</span>
-                                            </>
-                                          ) : (
-                                            <>
-                                              <Sparkles className="h-3.5 w-3.5 text-amber-300 animate-pulse" />
-                                              <span>Generate Proposal (AI)</span>
-                                            </>
+                                      </td>
+                                      <td className="p-4 text-slate-300">
+                                        <div>{rfq.date}</div>
+                                        {hasExactTime && (
+                                          <div className="text-[9px] text-slate-500 mt-0.5">
+                                            {submitDate.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })} WIB
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td className="p-4">
+                                        <div className="font-extrabold text-white text-xs">{rfq.clientName}</div>
+                                        {rfq.companyName && <div className="text-[10px] text-slate-400 mt-0.5">{rfq.companyName}</div>}
+                                        <div className="text-[10px] text-slate-500 font-mono mt-1">{rfq.whatsapp} | {rfq.email}</div>
+                                      </td>
+                                      <td className="p-4">
+                                        <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${
+                                          rfq.clientCategory === "pemerintah" 
+                                            ? "bg-purple-500/10 border border-purple-500/20 text-purple-300"
+                                            : rfq.clientCategory === "pendidikan"
+                                            ? "bg-cyan-500/10 border border-cyan-500/20 text-cyan-300"
+                                            : rfq.clientCategory === "perusahaan"
+                                            ? "bg-blue-500/10 border border-blue-500/20 text-blue-300"
+                                            : rfq.clientCategory === "retail"
+                                            ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-300"
+                                            : "bg-amber-500/10 border border-amber-500/20 text-amber-300"
+                                        }`}>
+                                          {rfq.clientCategory}
+                                        </span>
+                                      </td>
+                                      <td className="p-4 max-w-xs">
+                                        <div className="space-y-1">
+                                          {rfq.items.map((it, idx) => (
+                                            <div key={idx} className="text-[11px] text-slate-200 flex justify-between gap-2 bg-white/5 px-2 py-1 rounded">
+                                              <span className="font-bold">{it.name}</span>
+                                              <span className="text-amber-400 font-bold font-mono">x{it.quantity}</span>
+                                            </div>
+                                          ))}
+                                          {rfq.customRequirements && (
+                                            <div className="text-[10px] text-amber-300 italic line-clamp-1 mt-1">Req: {rfq.customRequirements}</div>
                                           )}
-                                        </button>
-                                      )}
-                                    </td>
-                                  </tr>
-                                ))
+                                        </div>
+                                      </td>
+                                      <td className="p-4">
+                                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                                          rfq.status === "quoted" 
+                                            ? "bg-emerald-500/15 border border-emerald-500/30 text-emerald-400" 
+                                            : "bg-amber-500/15 border border-amber-500/30 text-amber-400"
+                                        }`}>
+                                          {rfq.status === "quoted" ? "Sudah Di-Quoted" : "Menunggu Proposal"}
+                                        </span>
+                                      </td>
+                                      <td className="p-4 text-center">
+                                        {isQuoted ? (
+                                          <div className="inline-flex items-center space-x-1 px-2 py-1 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+                                            <Icons.CheckCircle className="h-3.5 w-3.5" />
+                                            <span className="font-bold text-[10px] uppercase">Terpenuhi</span>
+                                          </div>
+                                        ) : isOverdue ? (
+                                          <div className="inline-flex flex-col items-center p-1.5 rounded bg-red-500/15 border border-red-500/30 text-red-400">
+                                            <span className="font-extrabold text-[10px] uppercase tracking-wide">⚠️ SLA Lewat</span>
+                                            <span className="text-[9px] font-mono font-bold mt-0.5 text-red-300">
+                                              -{Math.abs(Math.round(remainingHours))} jam
+                                            </span>
+                                          </div>
+                                        ) : isWarning ? (
+                                          <div className="inline-flex flex-col items-center p-1.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-400">
+                                            <span className="font-bold text-[10px] uppercase">⏳ Segera</span>
+                                            <span className="text-[9px] font-mono font-bold mt-0.5 text-amber-300">
+                                              Sisa {Math.round(remainingHours)}j
+                                            </span>
+                                          </div>
+                                        ) : (
+                                          <div className="inline-flex flex-col items-center p-1.5 rounded bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
+                                            <span className="font-bold text-[10px] uppercase">Aman</span>
+                                            <span className="text-[9px] font-mono font-bold mt-0.5 text-indigo-300">
+                                              Sisa {Math.round(remainingHours)}j
+                                            </span>
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td className="p-4 text-center">
+                                        {rfq.status === "quoted" ? (
+                                          <div className="flex items-center justify-center space-x-2">
+                                            <button
+                                              onClick={() => {
+                                                const quote = quotations.find(q => q.rfqId === rfq.id || q.id === rfq.generatedQuotationId);
+                                                if (quote) {
+                                                  setSelectedQuotation(quote);
+                                                } else {
+                                                  showToast("File surat penawaran tidak ditemukan", "error");
+                                                }
+                                              }}
+                                              className="px-3 py-1.5 bg-indigo-500/10 hover:bg-indigo-600 border border-indigo-500/25 hover:border-indigo-500 text-indigo-300 hover:text-white rounded-lg font-bold transition-all flex items-center space-x-1 cursor-pointer"
+                                            >
+                                              <FileText className="h-3.5 w-3.5" />
+                                              <span>Buka Surat Penawaran</span>
+                                            </button>
+                                          </div>
+                                        ) : (
+                                          <button
+                                            onClick={() => generateQuotationWithAI(rfq.id)}
+                                            disabled={generatingQuoteId !== null}
+                                            className="px-4 py-2 bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 disabled:from-indigo-950 disabled:to-indigo-950 text-white rounded-xl font-bold transition-all shadow-md flex items-center space-x-1.5 mx-auto cursor-pointer"
+                                          >
+                                            {generatingQuoteId === rfq.id ? (
+                                              <>
+                                                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                                <span>AI Menyusun...</span>
+                                              </>
+                                            ) : (
+                                              <>
+                                                <Sparkles className="h-3.5 w-3.5 text-amber-300 animate-pulse" />
+                                                <span>Generate Proposal (AI)</span>
+                                              </>
+                                            )}
+                                          </button>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  );
+                                })
                               ) : (
                                 <tr>
-                                  <td colSpan={7} className="p-12 text-center text-slate-500">
+                                  <td colSpan={8} className="p-12 text-center text-slate-500">
                                     <Search className="h-8 w-8 text-slate-600 mx-auto mb-2" />
                                     <h5 className="font-bold text-slate-400">Tidak ada RFQ yang cocok</h5>
                                     <p className="text-xs text-slate-600">Cobalah kata kunci pencarian atau nomor RFQ lainnya.</p>
@@ -4707,7 +5284,7 @@ export default function App() {
               <div className="flex items-start space-x-3 relative z-10">
                 {/* QR Code Verification for Procurement & Print Date */}
                 <div className="flex items-stretch space-x-2">
-                  {(() => {
+                  {showPrintQrCode && (() => {
                     const quotationNumber = selectedQuotation.quotationNumber || "N/A";
                     // Using a high-quality, reliable, free public QR code generator API (qrserver)
                     const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(quotationNumber)}`;
@@ -4730,12 +5307,34 @@ export default function App() {
                   })()}
 
                   {printDate && (
-                    <div className="bg-slate-50 border border-slate-200 p-2.5 px-3 rounded-2xl flex flex-col justify-center shrink-0 text-left min-w-[125px] max-w-[150px] shadow-sm" id="print_date_timestamp_container">
-                      <span className="text-[7px] uppercase tracking-widest text-indigo-600 font-extrabold block">TANGGAL CETAK</span>
-                      <div className="text-[9px] font-mono font-bold text-slate-800 leading-snug mt-1 print-date-text" id="print_date_timestamp_val">
-                        {printDate}
+                    <div className="relative overflow-hidden bg-slate-50 border border-slate-200 border-l-4 border-l-indigo-500/80 p-2.5 px-3 rounded-2xl flex flex-col justify-center shrink-0 text-left min-w-[125px] max-w-[150px] shadow-[0_0_15px_rgba(99,102,241,0.12),0_1px_2px_rgba(0,0,0,0.05)] hover:scale-[1.04] hover:shadow-[0_6px_20px_rgba(99,102,241,0.18),0_2px_4px_rgba(0,0,0,0.06)] transition-all duration-300 ease-out cursor-default animate-shadowPulse" id="print_date_timestamp_container">
+                      {/* Interactive scanning line and subtle glowing overlay */}
+                      <div className="absolute inset-0 bg-gradient-to-b from-indigo-500/[0.01] to-indigo-500/[0.04] pointer-events-none" />
+                      <div className="absolute inset-x-0 h-[1.5px] bg-gradient-to-r from-transparent via-indigo-500/50 to-transparent animate-scanLine pointer-events-none" />
+                      
+                      <div className="flex items-center justify-between relative z-10 w-full mb-0.5">
+                        <span className="text-[7px] uppercase tracking-widest text-indigo-600 font-extrabold block">TANGGAL CETAK</span>
+                        <div className="flex items-center space-x-1.5 print:hidden">
+                          <button
+                            onClick={() => setShowPrintQrCode(!showPrintQrCode)}
+                            title={showPrintQrCode ? "Sembunyikan QR Code Verifikasi" : "Tampilkan QR Code Verifikasi"}
+                            className="p-1 hover:bg-slate-200/80 active:scale-90 rounded-md transition-all duration-150 text-slate-500 hover:text-indigo-600 cursor-pointer flex items-center justify-center border border-transparent hover:border-slate-300/40"
+                          >
+                            {showPrintQrCode ? (
+                              <Icons.Eye className="h-3 w-3" />
+                            ) : (
+                              <Icons.EyeOff className="h-3 w-3 text-slate-400" />
+                            )}
+                          </button>
+                          <Printer className="h-2.5 w-2.5 text-indigo-500/80 shrink-0" />
+                        </div>
+                        <Printer className="h-2.5 w-2.5 text-indigo-500/80 shrink-0 hidden print:block" />
                       </div>
-                      <span className="text-[6px] text-slate-400 font-medium block mt-1 uppercase tracking-wider">E-DOCUMENT SYSTEM</span>
+                      <div className="text-[10.5px] font-mono font-bold text-slate-800 leading-snug mt-1 print-date-text relative z-10 flex items-center gap-1.5" id="print_date_timestamp_val">
+                        <Icons.Calendar className="h-3 w-3 text-slate-400 shrink-0" />
+                        <span>{printDate}</span>
+                      </div>
+                      <span className="text-[6px] text-slate-400 font-medium block mt-1 uppercase tracking-wider relative z-10">E-DOCUMENT SYSTEM</span>
                     </div>
                   )}
                 </div>
@@ -4829,31 +5428,139 @@ export default function App() {
             </div>
 
             {/* Calculations Block */}
-            <div className="flex justify-end pt-3 text-left">
-              <div className="w-full sm:w-72 space-y-2 text-xs sm:text-sm">
-                <div className="flex justify-between items-center text-slate-600 border-b border-slate-100 pb-1.5">
-                  <span>Subtotal Barang:</span>
-                  <span className="font-mono font-bold text-slate-900">{formatRupiah(selectedQuotation.subtotal)}</span>
-                </div>
+            {(() => {
+              const isServiceOrLabor = (name: string) => {
+                const normalized = name.toLowerCase();
+                return (
+                  normalized.includes("jasa") ||
+                  normalized.includes("instalasi") ||
+                  normalized.includes("pemasangan") ||
+                  normalized.includes("lisensi") ||
+                  normalized.includes("software") ||
+                  normalized.includes("maintenance") ||
+                  normalized.includes("setup") ||
+                  normalized.includes("service") ||
+                  normalized.includes("labor") ||
+                  normalized.includes("config") ||
+                  normalized.includes("konsultasi") ||
+                  normalized.includes("biaya") ||
+                  normalized.includes("kirim") ||
+                  normalized.includes("delivery")
+                );
+              };
 
-                {selectedQuotation.discount > 0 && (
-                  <div className="flex justify-between items-center text-emerald-600 border-b border-slate-100 pb-1.5">
-                    <span>Diskon Khusus:</span>
-                    <span className="font-mono font-bold">- {formatRupiah(selectedQuotation.discount)}</span>
+              const hardwareItemsList = selectedQuotation.items.filter(item => !isServiceOrLabor(item.name));
+              const serviceItemsList = selectedQuotation.items.filter(item => isServiceOrLabor(item.name));
+
+              const hardwareSubtotalValue = hardwareItemsList.reduce((acc, item) => acc + item.totalPrice, 0);
+              const serviceSubtotalValue = serviceItemsList.reduce((acc, item) => acc + item.totalPrice, 0);
+
+              return (
+                <div className="flex flex-col items-end pt-3 text-left">
+                  <div className="w-full sm:w-80 space-y-2 text-xs sm:text-sm">
+                    {/* Subtotal Row - Interactive */}
+                    <div 
+                      onClick={() => setShowSubtotalBreakdown(!showSubtotalBreakdown)}
+                      className="group flex flex-col border-b border-slate-100 pb-1.5 cursor-pointer hover:bg-slate-50 p-1.5 rounded-lg -mx-1.5 transition-all select-none"
+                      title="Klik untuk melihat rincian biaya perangkat vs jasa"
+                    >
+                      <div className="flex justify-between items-center text-slate-600">
+                        <div className="flex items-center space-x-1.5">
+                          <span>Subtotal Barang:</span>
+                          <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full font-bold flex items-center space-x-0.5 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors">
+                            <span>Rincian</span>
+                            {showSubtotalBreakdown ? (
+                              <Icons.ChevronUp className="h-2.5 w-2.5" />
+                            ) : (
+                              <Icons.ChevronDown className="h-2.5 w-2.5" />
+                            )}
+                          </span>
+                        </div>
+                        <span className="font-mono font-bold text-slate-900">{formatRupiah(selectedQuotation.subtotal)}</span>
+                      </div>
+                    </div>
+
+                    {/* Expandable Granular Breakdown Panel */}
+                    {showSubtotalBreakdown && (
+                      <div className="bg-slate-50/90 border border-slate-200/60 p-3 rounded-xl space-y-2.5 animate-fadeIn text-[11px] text-slate-600 no-print">
+                        <div className="font-bold text-slate-800 text-xs flex items-center space-x-1.5 border-b border-slate-200 pb-1.5">
+                          <Icons.Layers className="h-3.5 w-3.5 text-indigo-500" />
+                          <span>Rincian Nilai Pengadaan</span>
+                        </div>
+                        
+                        {/* Hardware Section */}
+                        {hardwareItemsList.length > 0 && (
+                          <div className="space-y-1">
+                            <div className="flex justify-between font-bold text-slate-700">
+                              <span className="flex items-center space-x-1">
+                                <Icons.Monitor className="h-3 w-3 text-indigo-500" />
+                                <span>Perangkat & Infrastruktur ({hardwareItemsList.length})</span>
+                              </span>
+                              <span className="font-mono">{formatRupiah(hardwareSubtotalValue)}</span>
+                            </div>
+                            <div className="pl-4 space-y-0.5 text-[10px] text-slate-500">
+                              {hardwareItemsList.map((item, idx) => (
+                                <div key={idx} className="flex justify-between">
+                                  <span className="truncate max-w-[160px]">{item.name} (x{item.quantity})</span>
+                                  <span className="font-mono">{formatRupiah(item.totalPrice)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Services/Labor Section */}
+                        {serviceItemsList.length > 0 && (
+                          <div className="space-y-1 pt-1.5 border-t border-slate-100">
+                            <div className="flex justify-between font-bold text-slate-700">
+                              <span className="flex items-center space-x-1">
+                                <Icons.Wrench className="h-3 w-3 text-indigo-500" />
+                                <span>Jasa, Lisensi & Layanan ({serviceItemsList.length})</span>
+                              </span>
+                              <span className="font-mono">{formatRupiah(serviceSubtotalValue)}</span>
+                            </div>
+                            <div className="pl-4 space-y-0.5 text-[10px] text-slate-500">
+                              {serviceItemsList.map((item, idx) => (
+                                <div key={idx} className="flex justify-between">
+                                  <span className="truncate max-w-[160px]">{item.name} (x{item.quantity})</span>
+                                  <span className="font-mono">{formatRupiah(item.totalPrice)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {hardwareItemsList.length > 0 && serviceItemsList.length > 0 && (
+                          <div className="pt-2 border-t border-slate-200 flex justify-between text-[10px] font-bold text-slate-500">
+                            <span>Rasio Hardware : Jasa</span>
+                            <span className="font-mono">
+                              {Math.round((hardwareSubtotalValue / selectedQuotation.subtotal) * 100)}% : {Math.round((serviceSubtotalValue / selectedQuotation.subtotal) * 100)}%
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {selectedQuotation.discount > 0 && (
+                      <div className="flex justify-between items-center text-emerald-600 border-b border-slate-100 pb-1.5">
+                        <span>Diskon Khusus:</span>
+                        <span className="font-mono font-bold">- {formatRupiah(selectedQuotation.discount)}</span>
+                      </div>
+                    )}
+
+                    <div className="flex justify-between items-center text-slate-600 border-b border-slate-200 pb-1.5">
+                      <span>PPN (11%):</span>
+                      <span className="font-mono font-bold text-slate-900">{formatRupiah(selectedQuotation.tax)}</span>
+                    </div>
+
+                    <div className="flex justify-between items-center text-base font-extrabold text-slate-900 bg-slate-50 p-2 rounded-xl border border-slate-100">
+                      <span>TOTAL BILL:</span>
+                      <span className="font-mono text-indigo-700">{formatRupiah(selectedQuotation.total)}</span>
+                    </div>
                   </div>
-                )}
-
-                <div className="flex justify-between items-center text-slate-600 border-b border-slate-200 pb-1.5">
-                  <span>PPN (11%):</span>
-                  <span className="font-mono font-bold text-slate-900">{formatRupiah(selectedQuotation.tax)}</span>
                 </div>
-
-                <div className="flex justify-between items-center text-base font-extrabold text-slate-900 bg-slate-50 p-2 rounded-xl border border-slate-100">
-                  <span>TOTAL BILL:</span>
-                  <span className="font-mono text-indigo-700">{formatRupiah(selectedQuotation.total)}</span>
-                </div>
-              </div>
-            </div>
+              );
+            })()}
 
             {/* Terms and Conditions */}
             <div className="border-t border-slate-200 pt-5 space-y-2 text-left">
@@ -5223,8 +5930,425 @@ export default function App() {
         </div>
       )}
 
+      {/* ==================================== */}
+      {/* MODAL VIEW: CATALOG QR CODE          */}
+      {/* ==================================== */}
+      {showQrCodeModal && (
+        <div className="fixed inset-0 z-[110] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-fadeIn no-print" id="catalog-qr-modal">
+          <div className="bg-slate-900 border border-white/10 text-white rounded-3xl w-full max-w-md p-6 sm:p-8 shadow-2xl relative font-sans text-center space-y-6 animate-scaleUp">
+            
+            {/* Modal Close */}
+            <button 
+              onClick={() => setShowQrCodeModal(false)}
+              className="absolute top-4 right-4 p-1.5 hover:bg-white/10 rounded-full transition-all text-slate-400 hover:text-white cursor-pointer border border-white/10"
+            >
+              <X className="h-4 w-4" />
+            </button>
+
+            <div className="mx-auto w-12 h-12 bg-indigo-500/10 border border-indigo-500/25 text-indigo-400 rounded-full flex items-center justify-center">
+              <QrCode className="h-6 w-6" />
+            </div>
+
+            <div className="space-y-1">
+              <h3 className="text-lg font-bold text-white">QR Code Akses Katalog</h3>
+              <p className="text-slate-400 text-xs leading-relaxed">Pindai kode QR di bawah ini untuk mengakses atau membagikan e-procurement Berkah Bintang Solusindo langsung di perangkat seluler.</p>
+            </div>
+
+            {/* QR Code Container */}
+            <div className="bg-white p-5 rounded-2xl inline-block shadow-inner mx-auto border border-white/5">
+              <img 
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&color=0f172a&data=${encodeURIComponent(typeof window !== "undefined" ? window.location.origin + window.location.pathname : "https://ais-pre-berlxqagrxrt5v55xbqzsl-42487289899.asia-east1.run.app")}`}
+                alt="QR Code Katalog"
+                className="w-48 h-48 mx-auto"
+                referrerPolicy="no-referrer"
+              />
+            </div>
+
+            <div className="bg-slate-950/50 border border-white/5 rounded-xl p-3.5 space-y-2 text-left">
+              <span className="text-[10px] uppercase font-black tracking-wider text-slate-500">Tautan Aplikasi:</span>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-mono text-indigo-300 truncate select-all flex-1">{typeof window !== "undefined" ? window.location.origin + window.location.pathname : "https://ais-pre-berlxqagrxrt5v55xbqzsl-42487289899.asia-east1.run.app"}</p>
+                <button
+                  onClick={() => {
+                    if (typeof window !== "undefined") {
+                      navigator.clipboard.writeText(window.location.origin + window.location.pathname);
+                      showToast("Tautan berhasil disalin!", "success");
+                    }
+                  }}
+                  className="px-2.5 py-1 bg-white/5 hover:bg-white/10 border border-white/5 text-[10px] font-bold text-indigo-300 hover:text-indigo-200 rounded-md transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  Salin Link
+                </button>
+              </div>
+            </div>
+
+            <div className="pt-2">
+              <button
+                onClick={() => setShowQrCodeModal(false)}
+                className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer"
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================== */}
+      {/* MODAL VIEW: CATALOG PDF PREVIEW      */}
+      {/* ==================================== */}
+      {showPdfPreviewModal && (
+        <div className="fixed inset-0 z-[120] bg-slate-950/90 backdrop-blur-md flex flex-col h-screen no-print" id="catalog-pdf-preview-modal">
+          
+          {/* PDF Viewer Header Toolbar */}
+          <div className="bg-slate-900 border-b border-white/10 px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-3 text-white shrink-0 shadow-lg">
+            
+            {/* File Info */}
+            <div className="flex items-center space-x-3">
+              <div className="p-2 bg-rose-500/15 border border-rose-500/30 rounded-xl text-rose-400">
+                <Icons.FileText className="h-4 w-4" />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold leading-none">BBS_Procurement_Catalog_2026.pdf</h4>
+                <span className="text-[10px] text-slate-400">Pratinjau Dokumen Digital - PT Berkah Bintang Solusindo</span>
+              </div>
+            </div>
+
+            {/* Toolbar Controls */}
+            <div className="flex items-center space-x-4">
+              
+              {/* Page Navigator */}
+              <div className="flex items-center bg-slate-950/50 border border-white/10 rounded-xl p-1 text-xs">
+                <button
+                  disabled={pdfPreviewPage <= 1}
+                  onClick={() => setPdfPreviewPage(prev => Math.max(1, prev - 1))}
+                  className="p-1.5 hover:bg-white/5 rounded-lg disabled:opacity-30 disabled:hover:bg-transparent transition-colors cursor-pointer"
+                  title="Halaman Sebelumnya"
+                >
+                  <Icons.ChevronLeft className="h-4 w-4" />
+                </button>
+                <span className="px-3 font-medium min-w-[70px] text-center">
+                  Hal {pdfPreviewPage} dari 4
+                </span>
+                <button
+                  disabled={pdfPreviewPage >= 4}
+                  onClick={() => setPdfPreviewPage(prev => Math.min(4, prev + 1))}
+                  className="p-1.5 hover:bg-white/5 rounded-lg disabled:opacity-30 disabled:hover:bg-transparent transition-colors cursor-pointer"
+                  title="Halaman Selanjutnya"
+                >
+                  <Icons.ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+
+              {/* Zoom Controls */}
+              <div className="flex items-center bg-slate-950/50 border border-white/10 rounded-xl p-1 text-xs hidden md:flex">
+                <button
+                  disabled={pdfPreviewZoom <= 70}
+                  onClick={() => setPdfPreviewZoom(prev => Math.max(70, prev - 15))}
+                  className="p-1.5 hover:bg-white/5 rounded-lg disabled:opacity-30 disabled:hover:bg-transparent transition-colors cursor-pointer text-[15px] font-bold px-2"
+                  title="Zoom Out"
+                >
+                  -
+                </button>
+                <span className="px-2 font-mono font-medium text-center min-w-[50px]">
+                  {pdfPreviewZoom}%
+                </span>
+                <button
+                  disabled={pdfPreviewZoom >= 130}
+                  onClick={() => setPdfPreviewZoom(prev => Math.min(130, prev + 15))}
+                  className="p-1.5 hover:bg-white/5 rounded-lg disabled:opacity-30 disabled:hover:bg-transparent transition-colors cursor-pointer text-[14px] font-bold px-2"
+                  title="Zoom In"
+                >
+                  +
+                </button>
+              </div>
+
+            </div>
+
+            {/* Quick Actions */}
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={() => {
+                  setSelectedCatalogPdf(true);
+                  setShowPdfPreviewModal(false);
+                }}
+                className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 border border-indigo-500/30 text-[11px] font-extrabold rounded-xl transition-all flex items-center space-x-1.5 cursor-pointer shadow-md"
+              >
+                <Icons.Download className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Unduh PDF</span>
+              </button>
+              <button
+                onClick={() => setShowPdfPreviewModal(false)}
+                className="p-2 hover:bg-white/10 text-slate-400 hover:text-white rounded-xl transition-colors cursor-pointer border border-white/10"
+                title="Tutup Pratinjau"
+              >
+                <Icons.X className="h-4 w-4" />
+              </button>
+            </div>
+
+          </div>
+
+          {/* Interactive Page Canvas with scroll area */}
+          <div className="flex-1 overflow-auto bg-slate-950 p-6 flex justify-center items-start">
+            
+            {/* Dynamic Sized Page Container simulating print layout */}
+            <div 
+              className="bg-white text-slate-900 shadow-2xl rounded-sm p-8 sm:p-12 relative border border-slate-200 transition-all duration-300 origin-top flex flex-col justify-between"
+              style={{ 
+                width: "100%",
+                maxWidth: `${680 * (pdfPreviewZoom / 100)}px`,
+                minHeight: `${880 * (pdfPreviewZoom / 100)}px`
+              }}
+            >
+              
+              {/* PAGE 1: COVER PAGE */}
+              {pdfPreviewPage === 1 && (
+                <div className="flex-1 flex flex-col justify-between h-full space-y-12 animate-fadeIn py-6">
+                  {/* Decorative Header Border */}
+                  <div className="h-2 bg-gradient-to-r from-indigo-600 via-purple-600 to-emerald-600 rounded-full" />
+                  
+                  <div className="space-y-6 text-center">
+                    <span className="px-3.5 py-1 bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] uppercase font-black tracking-widest rounded-full">
+                      E-Catalog Resmi Procurement IT
+                    </span>
+                    
+                    <h1 className="text-3xl sm:text-4xl font-black text-slate-900 tracking-tight leading-tight">
+                      PT BERKAH BINTANG SOLUSINDO
+                    </h1>
+                    
+                    <p className="text-slate-500 text-xs sm:text-sm max-w-lg mx-auto leading-relaxed">
+                      Sistem integrasi penyediaan perangkat keras, server, jaringan, komputer, dan komparasi spesifikasi detail e-procurement enterprise.
+                    </p>
+                  </div>
+
+                  {/* Certified Security Shield Illustration */}
+                  <div className="my-8 flex justify-center">
+                    <div className="relative p-6 bg-slate-50 border border-slate-200/80 rounded-2xl max-w-sm w-full text-center space-y-3">
+                      <div className="mx-auto w-12 h-12 bg-emerald-50 border border-emerald-200 text-emerald-600 rounded-full flex items-center justify-center shadow-sm">
+                        <Icons.Award className="h-6 w-6" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black text-slate-800 tracking-wide uppercase">BBS Verified Security Document</h4>
+                        <p className="text-[10px] text-slate-400">Terdaftar di server e-procurement dengan nomor enkripsi digital terotentikasi.</p>
+                      </div>
+                      <div className="text-[10px] text-indigo-600 font-mono bg-indigo-50/50 py-1.5 rounded-lg border border-indigo-100/60">
+                        HASH-ID: 7FF89C-BBS-2026
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Cover metadata details */}
+                  <div className="grid grid-cols-2 gap-4 border-t border-slate-100 pt-8 text-left text-[11px] text-slate-500">
+                    <div>
+                      <p className="font-bold text-slate-800">Diterbitkan Oleh:</p>
+                      <p className="font-semibold text-indigo-600">PT Berkah Bintang Solusindo</p>
+                      <p>Dept. Procurement & Estimasi Jaringan</p>
+                    </div>
+                    <div>
+                      <p className="font-bold text-slate-800">Detail Validitas:</p>
+                      <p>Rilis: Juni 2026</p>
+                      <p>Status: <span className="text-emerald-600 font-bold">Resmi & Tersertifikasi</span></p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* PAGE 2: INVENTORY OVERVIEW */}
+              {pdfPreviewPage === 2 && (
+                <div className="flex-1 flex flex-col justify-between h-full space-y-6 animate-fadeIn">
+                  
+                  {/* Top Brand Tag */}
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <span className="text-[10px] uppercase font-black tracking-wider text-slate-400">Katalog Perangkat IT & Jaringan</span>
+                    <span className="text-[10px] font-mono text-slate-400">BBS-CAT-P2</span>
+                  </div>
+
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-bold text-slate-900 border-l-4 border-indigo-600 pl-2">
+                      Daftar Kategori Utama Perangkat
+                    </h3>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      Berikut adalah klasifikasi perangkat keras standar industri yang disediakan oleh PT Berkah Bintang Solusindo untuk kebutuhan pengadaan infrastruktur server, jaringan komputer, workstation, dan perangkat terminal klien.
+                    </p>
+
+                    {/* Table of categories */}
+                    <div className="border border-slate-200 rounded-xl overflow-hidden mt-4">
+                      <table className="w-full text-left border-collapse text-[11px]">
+                        <thead>
+                          <tr className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold">
+                            <th className="p-2.5">Kategori</th>
+                            <th className="p-2.5">Deskripsi Singkat</th>
+                            <th className="p-2.5 text-right">Rentang Harga</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 text-slate-600">
+                          {Array.from(new Set(catalogProducts.map(p => p.category))).map((cat, idx) => {
+                            const sample = catalogProducts.find(p => p.category === cat);
+                            return (
+                              <tr key={idx} className="hover:bg-slate-50/50">
+                                <td className="p-2.5 font-bold text-slate-800">{cat}</td>
+                                <td className="p-2.5 truncate max-w-[180px]">{sample?.description || "Infrastruktur penunjang handal"}</td>
+                                <td className="p-2.5 text-right font-mono text-indigo-600">{sample?.estimatedPriceRange || "Kontak Admin"}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="p-3 bg-indigo-50 border border-indigo-100/60 rounded-xl mt-4">
+                      <h5 className="text-[10px] uppercase font-bold text-indigo-800 flex items-center gap-1.5">
+                        <Icons.Award className="h-3.5 w-3.5" />
+                        Garansi Layanan & Spareparts
+                      </h5>
+                      <p className="text-[10px] text-indigo-950 mt-1 leading-relaxed">
+                        Setiap unit perangkat yang tercantum dalam katalog ini dilengkapi dengan garansi resmi distributor minimal selama 12 bulan, yang didukung sepenuhnya oleh tim Technical Support PT Berkah Bintang Solusindo secara on-site maupun remote.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-slate-100 pt-4 flex justify-between items-center text-[9px] text-slate-400">
+                    <span>© {new Date().getFullYear()} PT Berkah Bintang Solusindo</span>
+                    <span>Halaman 2 dari 4</span>
+                  </div>
+                </div>
+              )}
+
+              {/* PAGE 3: FEATURED SPECIFICATIONS */}
+              {pdfPreviewPage === 3 && (
+                <div className="flex-1 flex flex-col justify-between h-full space-y-6 animate-fadeIn">
+                  
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <span className="text-[10px] uppercase font-black tracking-wider text-slate-400">Komparasi Spesifikasi Detail</span>
+                    <span className="text-[10px] font-mono text-slate-400">BBS-CAT-P3</span>
+                  </div>
+
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-bold text-slate-900 border-l-4 border-indigo-600 pl-2">
+                      Spesifikasi Unggulan Perangkat IT
+                    </h3>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      Sistem pengadaan kami didukung oleh berbagai vendor terkemuka dunia dengan standar performa, reliabilitas tinggi, dan sertifikasi TKDN. Berikut rincian contoh spesifikasi teknis unit terlaris:
+                    </p>
+
+                    {/* Specifications grid cards */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2">
+                      {catalogProducts.slice(0, 4).map((prod, idx) => (
+                        <div key={idx} className="border border-slate-200 rounded-xl p-3 space-y-2 text-left bg-slate-50/50">
+                          <span className="px-1.5 py-0.5 bg-indigo-50 border border-indigo-100 rounded-md text-[9px] font-bold text-indigo-600 uppercase">
+                            {prod.category}
+                          </span>
+                          <h4 className="text-[11px] font-bold text-slate-900 line-clamp-1">{prod.name}</h4>
+                          <ul className="text-[9px] text-slate-500 space-y-1 list-disc pl-3">
+                            {prod.specifications.slice(0, 3).map((spec, sIdx) => (
+                              <li key={sIdx} className="truncate">{spec}</li>
+                            ))}
+                          </ul>
+                          <div className="pt-1.5 border-t border-slate-200/60 flex items-center justify-between">
+                            <span className="text-[8px] uppercase tracking-wider text-slate-400">Ref Price:</span>
+                            <span className="text-[10px] font-mono font-bold text-emerald-600">{prod.estimatedPriceRange}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="border-t border-slate-100 pt-4 flex justify-between items-center text-[9px] text-slate-400">
+                    <span>Katalog e-Procurement Berkah Bintang Solusindo</span>
+                    <span>Halaman 3 dari 4</span>
+                  </div>
+                </div>
+              )}
+
+              {/* PAGE 4: PROCUREMENT GUIDELINES & CORPORATE SEAL */}
+              {pdfPreviewPage === 4 && (
+                <div className="flex-1 flex flex-col justify-between h-full space-y-6 animate-fadeIn">
+                  
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <span className="text-[10px] uppercase font-black tracking-wider text-slate-400">Panduan & Legalisasi Procurement</span>
+                    <span className="text-[10px] font-mono text-slate-400">BBS-CAT-P4</span>
+                  </div>
+
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-bold text-slate-900 border-l-4 border-indigo-600 pl-2">
+                      Alur Pengajuan Penawaran (RFQ)
+                    </h3>
+                    
+                    {/* Alur order steps list */}
+                    <div className="space-y-3">
+                      <div className="flex items-start space-x-2.5 text-xs">
+                        <div className="w-5 h-5 bg-indigo-600 text-white rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 mt-0.5">
+                          1
+                        </div>
+                        <div>
+                          <h5 className="font-bold text-slate-800 text-[11px]">Pengisian Keranjang RFQ</h5>
+                          <p className="text-[10px] text-slate-500">Pilih perangkat dari katalog online BBS dan sesuaikan jumlah yang dibutuhkan.</p>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-start space-x-2.5 text-xs">
+                        <div className="w-5 h-5 bg-indigo-600 text-white rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 mt-0.5">
+                          2
+                        </div>
+                        <div>
+                          <h5 className="font-bold text-slate-800 text-[11px]">Kirim Pengajuan RFQ</h5>
+                          <p className="text-[10px] text-slate-500">Lengkapi data profil perusahaan atau institusi Anda lalu kirimkan lewat platform e-procurement.</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-start space-x-2.5 text-xs">
+                        <div className="w-5 h-5 bg-indigo-600 text-white rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 mt-0.5">
+                          3
+                        </div>
+                        <div>
+                          <h5 className="font-bold text-slate-800 text-[11px]">Penerbitan Penawaran Resmi</h5>
+                          <p className="text-[10px] text-slate-500">Tim Sales Estimator BBS akan merilis Surat Penawaran Harga (Quotation) berstempel resmi.</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Signatures & Seal layout */}
+                    <div className="grid grid-cols-2 gap-4 pt-6 border-t border-slate-100 items-end">
+                      <div className="text-[9px] text-slate-400 space-y-1">
+                        <p className="font-bold text-slate-700">Verifikasi Dokumen:</p>
+                        <p>ID Katalog: BBS-CAT-E-PROC</p>
+                        <p>Status: <span className="text-emerald-600 font-bold">AKTIF & SAH</span></p>
+                        <p>Sistem: PT Berkah Bintang Solusindo</p>
+                      </div>
+
+                      <div className="text-center space-y-1 relative w-full max-w-[180px] ml-auto">
+                        {/* Mock BBS official stamp */}
+                        <div className="absolute -top-1 left-2 border-2 border-indigo-500/20 text-indigo-500/20 font-mono text-[8px] font-extrabold uppercase tracking-widest rounded-lg px-2 py-1 transform -rotate-12 select-none pointer-events-none">
+                          BBS VERIFIED
+                        </div>
+                        
+                        <p className="text-slate-500 text-[9px] pb-8">Hormat Kami,<br /><strong>PT Berkah Bintang Solusindo</strong></p>
+                        <p className="font-bold text-slate-800 border-t border-slate-300 pt-1 text-[10px]">Departemen Procurement</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-slate-100 pt-4 flex justify-between items-center text-[9px] text-slate-400">
+                    <span>Dokumen Digital Resmi PT Berkah Bintang Solusindo</span>
+                    <span>Halaman 4 dari 4</span>
+                  </div>
+                </div>
+              )}
+
+            </div>
+
+          </div>
+
+          {/* Bottom page bar controls */}
+          <div className="bg-slate-900 border-t border-white/10 px-4 py-3 text-center text-xs text-slate-400 shrink-0">
+            Gunakan tombol navigasi di bagian atas untuk membalik halaman katalog. Klik <strong className="text-white">Unduh PDF</strong> untuk menyimpan dokumen lengkap.
+          </div>
+
+        </div>
+      )}
+
       {/* Floating Compare indicator bar (only visible when items are selected in catalog view) */}
-      {selectedCatalogPdf && selectedCompareIds.length > 0 && (
+      {selectedCompareIds.length > 0 && (
         <div className="fixed bottom-6 right-6 z-50 flex items-center gap-4 bg-slate-900/95 text-white border border-indigo-500/30 p-4 rounded-2xl shadow-[0_10px_40px_rgba(0,0,0,0.5)] backdrop-blur-xl animate-scaleUp no-print max-w-sm sm:max-w-md">
           <div className="flex items-center space-x-3">
             <div className="h-8 w-8 rounded-xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
@@ -5256,12 +6380,12 @@ export default function App() {
       {/* ==================================== */}
       {/* MODAL VIEW: PRODUCT COMPARISON       */}
       {/* ==================================== */}
-      {selectedCatalogPdf && showComparisonModal && (
+      {showComparisonModal && (
         <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-fadeIn no-print" id="product_comparison_modal">
           <div className="bg-slate-900 border border-white/10 text-white rounded-3xl w-full max-w-5xl p-6 sm:p-8 shadow-2xl relative max-h-[90vh] overflow-y-auto font-sans flex flex-col justify-between">
             <div>
               {/* Header */}
-              <div className="flex items-center justify-between border-b border-white/10 pb-4 mb-6">
+              <div className="flex items-center justify-between border-b border-white/10 pb-4 mb-6 animate-headerFadeScale">
                 <div>
                   <h3 className="text-lg font-bold text-white flex items-center gap-2">
                     <Icons.GitCompare className="h-5 w-5 text-indigo-400 animate-pulse" />
@@ -5269,12 +6393,21 @@ export default function App() {
                   </h3>
                   <p className="text-xs text-slate-400 mt-1">Analisis dan komparasi spesifikasi detail serta rentang harga acuan secara berdampingan.</p>
                 </div>
-                <button 
-                  onClick={() => setShowComparisonModal(false)}
-                  className="p-1.5 hover:bg-white/10 rounded-full transition-all text-slate-400 hover:text-white cursor-pointer border border-white/10"
-                >
-                  <X className="h-5 w-5" />
-                </button>
+                <div className="flex items-center space-x-3">
+                  <button
+                    onClick={addAllComparedToCart}
+                    className="px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-indigo-600 hover:from-emerald-500 hover:to-indigo-500 text-white rounded-xl text-xs font-extrabold transition-all duration-300 cursor-pointer flex items-center justify-center space-x-2 shadow-lg shadow-emerald-500/10 border border-emerald-500/20 active:scale-95"
+                  >
+                    <Icons.ShoppingCart className="h-4 w-4 text-emerald-300 shrink-0" />
+                    <span>Masukkan Semua ke Keranjang ({selectedCompareIds.length})</span>
+                  </button>
+                  <button 
+                    onClick={() => setShowComparisonModal(false)}
+                    className="p-1.5 hover:bg-white/10 rounded-full transition-all text-slate-400 hover:text-white cursor-pointer border border-white/10"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
               </div>
 
               {/* View Mode Controller */}
@@ -5681,6 +6814,19 @@ export default function App() {
             letter-spacing: 0.03em !important;
           }
         }
+        @keyframes headerFadeScale {
+          from {
+            opacity: 0;
+            transform: scale(0.97);
+          }
+          to {
+            opacity: 1;
+            transform: scale(1);
+          }
+        }
+        .animate-headerFadeScale {
+          animation: headerFadeScale 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
       `}</style>
 
       {/* BARCODE / QR SCANNER MODAL */}
@@ -5689,7 +6835,478 @@ export default function App() {
           catalogProducts={catalogProducts}
           onScanSuccess={(product) => addToCart(product)}
           onClose={() => setIsScannerOpen(false)}
+          onAddCustomItem={(item) => {
+            setCustomCartItems((prev) => [...prev, item]);
+            showToast(`"${item.name}" berhasil ditambahkan ke keranjang RFQ!`, "success");
+          }}
         />
+      )}
+
+      {/* CATALOG PRODUCT DETAIL & WAREHOUSE SCANNER MODAL */}
+      {selectedDetailProduct && (
+        <ProductDetailModal
+          product={selectedDetailProduct}
+          isOpen={!!selectedDetailProduct}
+          onClose={() => setSelectedDetailProduct(null)}
+          catalogProducts={catalogProducts}
+          onProductChange={(newProduct) => setSelectedDetailProduct(newProduct)}
+          onAddToCart={(product) => addToCart(product)}
+        />
+      )}
+
+      {/* BARCODE PRINTING MODAL */}
+      {showBarcodePrintModal && (
+        <div className="fixed inset-0 z-[120] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-fadeIn no-print" id="barcode-print-modal">
+          <style>{`
+            @media print {
+              body > * {
+                display: none !important;
+              }
+              #barcode-print-wrapper-for-printing {
+                display: block !important;
+                position: absolute !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 100% !important;
+                height: auto !important;
+                background: white !important;
+                color: black !important;
+                z-index: 99999999 !important;
+              }
+              #barcode-print-wrapper-for-printing svg {
+                display: block !important;
+                color: black !important;
+              }
+            }
+          `}</style>
+          <div className="bg-slate-900 border border-white/10 rounded-2xl w-full max-w-5xl overflow-hidden shadow-2xl flex flex-col md:flex-row h-[85vh]">
+            
+            {/* Left Control Panel */}
+            <div className="w-full md:w-80 bg-slate-950 border-r border-white/5 p-5 flex flex-col justify-between shrink-0 overflow-y-auto">
+              <div className="space-y-5">
+                {/* Header */}
+                <div className="flex items-center space-x-2.5">
+                  <div className="p-2 bg-emerald-500/15 border border-emerald-500/30 rounded-xl text-emerald-400">
+                    <Printer className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-white uppercase tracking-wider">Cetak Label Barcode</h3>
+                    <p className="text-[10px] text-slate-400">Pengaturan label & pencetakan</p>
+                  </div>
+                </div>
+
+                <div className="border-t border-white/5 pt-4 space-y-4">
+                  {/* Label Size */}
+                  <div className="space-y-1.5">
+                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Ukuran Label</label>
+                    <div className="grid grid-cols-3 gap-1 bg-slate-900/50 p-1 border border-white/5 rounded-xl text-[10px] font-bold">
+                      {(["small", "medium", "large"] as const).map((sz) => (
+                        <button
+                          key={sz}
+                          onClick={() => setBarcodeSize(sz)}
+                          className={`py-1.5 rounded-lg transition-all capitalize cursor-pointer ${
+                            barcodeSize === sz
+                              ? "bg-emerald-600 text-white shadow-md"
+                              : "text-slate-400 hover:text-white"
+                          }`}
+                        >
+                          {sz}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Print Layout */}
+                  <div className="space-y-1.5">
+                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Layout Cetak</label>
+                    <div className="grid grid-cols-2 gap-1 bg-slate-900/50 p-1 border border-white/5 rounded-xl text-[10px] font-bold">
+                      <button
+                        onClick={() => setBarcodeLayout("grid")}
+                        className={`py-1.5 rounded-lg transition-all cursor-pointer ${
+                          barcodeLayout === "grid"
+                            ? "bg-emerald-600 text-white shadow-md"
+                            : "text-slate-400 hover:text-white"
+                        }`}
+                      >
+                        Lembar A4 (Grid)
+                      </button>
+                      <button
+                        onClick={() => setBarcodeLayout("roll")}
+                        className={`py-1.5 rounded-lg transition-all cursor-pointer ${
+                          barcodeLayout === "roll"
+                            ? "bg-emerald-600 text-white shadow-md"
+                            : "text-slate-400 hover:text-white"
+                        }`}
+                      >
+                        Roll (Single)
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Options Toggles */}
+                  <div className="space-y-2 bg-slate-900/40 p-3 border border-white/5 rounded-xl">
+                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider mb-1">Konten Label</label>
+                    <div className="space-y-2 text-xs font-semibold">
+                      <label className="flex items-center space-x-2.5 text-slate-300 hover:text-white cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={showCompany}
+                          onChange={(e) => setShowCompany(e.target.checked)}
+                          className="rounded bg-slate-950 border-white/10 text-emerald-500 focus:ring-0"
+                        />
+                        <span>Nama Perusahaan</span>
+                      </label>
+                      <label className="flex items-center space-x-2.5 text-slate-300 hover:text-white cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={showCategory}
+                          onChange={(e) => setShowCategory(e.target.checked)}
+                          className="rounded bg-slate-950 border-white/10 text-emerald-500 focus:ring-0"
+                        />
+                        <span>Kategori Produk</span>
+                      </label>
+                      <label className="flex items-center space-x-2.5 text-slate-300 hover:text-white cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={showPrice}
+                          onChange={(e) => setShowPrice(e.target.checked)}
+                          className="rounded bg-slate-950 border-white/10 text-emerald-500 focus:ring-0"
+                        />
+                        <span>Rentang Estimasi Harga</span>
+                      </label>
+                      <label className="flex items-center space-x-2.5 text-slate-300 hover:text-white cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={showId}
+                          onChange={(e) => setShowId(e.target.checked)}
+                          className="rounded bg-slate-950 border-white/10 text-emerald-500 focus:ring-0"
+                        />
+                        <span>Barcode Alfanumerik (ID)</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Product Search & Selection list */}
+                  <div className="space-y-2 flex flex-col max-h-[220px]">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Item Untuk Dicetak ({printItemsList.length})</label>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setPrintItemsList(catalogProducts.map(p => p.id))}
+                          className="text-[9px] text-indigo-400 hover:text-indigo-300 font-bold hover:underline"
+                        >
+                          Pilih Semua
+                        </button>
+                        <button
+                          onClick={() => setPrintItemsList([])}
+                          className="text-[9px] text-rose-400 hover:text-rose-300 font-bold hover:underline"
+                        >
+                          Reset
+                        </button>
+                      </div>
+                    </div>
+                    <div className="relative">
+                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-500" />
+                      <input
+                        type="text"
+                        placeholder="Filter list produk..."
+                        value={printSearch}
+                        onChange={(e) => setPrintSearch(e.target.value)}
+                        className="w-full bg-slate-900 border border-white/10 rounded-lg text-[10px] pl-7 pr-2.5 py-1.5 text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
+                      />
+                    </div>
+                    <div className="overflow-y-auto border border-white/5 rounded-xl bg-slate-900/30 divide-y divide-white/5 text-[10px] p-1 space-y-0.5 max-h-[140px]">
+                      {catalogProducts
+                        .filter(p => p.name.toLowerCase().includes(printSearch.toLowerCase()) || p.category.toLowerCase().includes(printSearch.toLowerCase()))
+                        .map(p => {
+                          const isChecked = printItemsList.includes(p.id);
+                          return (
+                            <label
+                              key={p.id}
+                              className={`flex items-center space-x-2 p-1.5 rounded-lg cursor-pointer hover:bg-white/5 ${
+                                isChecked ? "bg-white/5 text-emerald-400" : "text-slate-400"
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => {
+                                  if (isChecked) {
+                                    setPrintItemsList(prev => prev.filter(id => id !== p.id));
+                                  } else {
+                                    setPrintItemsList(prev => [...prev, p.id]);
+                                  }
+                                }}
+                                className="rounded bg-slate-950 border-white/10 text-emerald-500 focus:ring-0 h-3 w-3"
+                              />
+                              <span className="truncate font-medium">{p.name}</span>
+                            </label>
+                          );
+                        })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="border-t border-white/5 pt-4 space-y-2 mt-4">
+                <button
+                  disabled={printItemsList.length === 0}
+                  onClick={() => setShowPrintConfirmation(true)}
+                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-2 shadow-lg shadow-emerald-600/10 active:scale-95 cursor-pointer"
+                >
+                  <Printer className="h-4 w-4" />
+                  <span>Cetak {printItemsList.length} Label</span>
+                </button>
+                <button
+                  onClick={() => setShowBarcodePrintModal(false)}
+                  className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-white/10 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                >
+                  Tutup
+                </button>
+              </div>
+            </div>
+
+            {/* Right Live Preview Area */}
+            <div className="flex-1 bg-slate-950 p-6 flex flex-col justify-between overflow-y-auto">
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-extrabold text-white uppercase tracking-wider">Pratinjau Lembar Label</h4>
+                  <span className="text-[10px] text-slate-400">Bisa langsung dicetak ke printer kertas / label roll</span>
+                </div>
+
+                {printItemsList.length === 0 ? (
+                  <div className="h-64 border border-dashed border-white/10 rounded-2xl flex flex-col items-center justify-center text-center p-6 bg-slate-900/30">
+                    <Printer className="h-8 w-8 text-slate-500 mb-2 animate-pulse" />
+                    <p className="text-slate-400 font-bold text-xs">Tidak Ada Label Terpilih</p>
+                    <p className="text-[10px] text-slate-500 mt-1 max-w-xs">Silakan centang satu atau lebih item produk di panel kiri untuk melihat pratinjau dan mencetak barcode label.</p>
+                  </div>
+                ) : (
+                  <div className="border border-white/10 rounded-2xl p-6 bg-slate-900/40 shadow-inner overflow-x-auto min-h-[400px]">
+                    {/* Screen Preview Grid */}
+                    <div 
+                      className={
+                        barcodeLayout === "grid"
+                          ? "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
+                          : "flex flex-col items-center space-y-4"
+                      }
+                    >
+                      {printItemsList.map((id) => {
+                        const product = catalogProducts.find((p) => p.id === id);
+                        if (!product) return null;
+                        const barCodeValue = getBarcodeValue(product.id);
+
+                        return (
+                          <div
+                            key={product.id}
+                            className={`bg-white text-slate-900 rounded-xl p-4 shadow-xl border border-slate-200/80 flex flex-col justify-between select-none shrink-0 transition-transform hover:scale-[1.02] ${
+                              barcodeSize === "small"
+                                ? "w-52 h-28"
+                                : barcodeSize === "medium"
+                                ? "w-64 h-36"
+                                : "w-80 h-44"
+                            }`}
+                          >
+                            {/* Company Name */}
+                            {showCompany && (
+                              <div className="flex items-center justify-between border-b border-slate-100 pb-1 shrink-0">
+                                <span className="text-[8px] font-black tracking-wider uppercase text-indigo-900">PT BBS INDONESIA</span>
+                                <span className="text-[7px] font-medium text-slate-400 font-mono">APPROVED IT</span>
+                              </div>
+                            )}
+
+                            {/* Info */}
+                            <div className="my-1.5 flex flex-col justify-center">
+                              {showCategory && (
+                                <span className="text-[7px] font-bold text-indigo-600 uppercase tracking-widest">{product.category}</span>
+                              )}
+                              <h5 className="text-[10px] font-extrabold text-slate-900 truncate leading-snug">{product.name}</h5>
+                              {showPrice && (
+                                <span className="text-[8px] font-mono text-emerald-600 font-semibold">{product.estimatedPriceRange}</span>
+                              )}
+                            </div>
+
+                            {/* Barcode representation */}
+                            <div className="flex flex-col items-center bg-slate-50/50 p-1 border border-slate-100 rounded-lg">
+                              <div className="w-full text-slate-900">
+                                <BarcodeSVG value={barCodeValue} />
+                              </div>
+                              {showId && (
+                                <span className="text-[8px] font-mono font-bold tracking-widest text-slate-600 mt-1 uppercase">
+                                  {barCodeValue}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="mt-6 p-3.5 bg-indigo-500/5 border border-indigo-500/10 rounded-xl flex items-start space-x-2.5">
+                <Icons.Info className="h-4 w-4 text-indigo-400 shrink-0 mt-0.5" />
+                <p className="text-[10px] text-slate-400 leading-relaxed">
+                  <span className="font-bold text-slate-300">Tips Pencetakan:</span> Jika Anda mencetak ke printer label (seperti Brother, DYMO, Zebra), gunakan layout <span className="text-emerald-400 font-semibold">"Label Roll"</span>. Atur orientasi cetak menjadi <span className="text-emerald-400 font-semibold">Landscape/Portrait</span> sesuai label Anda, dan pastikan setelan margin di browser diatur ke <span className="text-emerald-400 font-semibold">None (Tanpa Margin)</span>.
+                </p>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* BARCODE PRINTING CONFIRMATION MODAL */}
+      {showPrintConfirmation && (
+        <div className="fixed inset-0 z-[130] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-fadeIn no-print" id="barcode-print-confirmation-modal">
+          <div className="bg-slate-900 border border-white/10 rounded-2xl w-full max-w-lg p-6 shadow-2xl flex flex-col space-y-4">
+            {/* Header */}
+            <div className="flex items-center space-x-3 pb-3 border-b border-white/5">
+              <div className="p-2 bg-emerald-500/15 border border-emerald-500/30 rounded-xl text-emerald-400">
+                <Icons.CheckSquare className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-white uppercase tracking-wider">Konfirmasi Sebelum Mencetak</h3>
+                <p className="text-[10px] text-slate-400">Pastikan detail cetak barcode Anda sudah sesuai</p>
+              </div>
+            </div>
+
+            {/* Print Parameters Checklist info */}
+            <div className="grid grid-cols-3 gap-2 bg-slate-950/30 border border-white/5 rounded-xl p-3 text-[10px] font-bold text-slate-400 uppercase">
+              <div>
+                <span className="block text-[8px] text-slate-500 mb-0.5 font-bold">Jumlah Item</span>
+                <span className="text-white text-xs">{printItemsList.length} Label</span>
+              </div>
+              <div>
+                <span className="block text-[8px] text-slate-500 mb-0.5 font-bold">Ukuran Label</span>
+                <span className="text-white text-xs capitalize">{barcodeSize}</span>
+              </div>
+              <div>
+                <span className="block text-[8px] text-slate-500 mb-0.5 font-bold">Layout Cetak</span>
+                <span className="text-white text-xs capitalize">{barcodeLayout === "grid" ? "A4 Grid" : "Roll"}</span>
+              </div>
+            </div>
+
+            {/* List of Products */}
+            <div className="space-y-1.5">
+              <span className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Daftar Perangkat Yang Dipilih</span>
+              <div className="max-h-48 overflow-y-auto border border-white/5 bg-slate-950/40 rounded-xl divide-y divide-white/5 p-2">
+                {printItemsList.map((id) => {
+                  const product = catalogProducts.find(p => p.id === id);
+                  if (!product) return null;
+                  return (
+                    <div key={id} className="flex justify-between items-center p-2 text-xs text-slate-300">
+                      <div className="flex flex-col min-w-0 pr-3">
+                        <span className="font-extrabold text-white truncate text-[11px]">{product.name}</span>
+                        <span className="text-[9px] text-indigo-400 font-bold">{product.category}</span>
+                      </div>
+                      <span className="text-[10px] font-mono bg-slate-950 px-2 py-0.5 rounded border border-white/5 text-emerald-400 shrink-0 font-bold">
+                        {getBarcodeValue(product.id)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Notes/Tips */}
+            <div className="p-3 bg-indigo-500/5 border border-indigo-500/10 rounded-xl flex items-start space-x-2">
+              <Icons.Info className="h-3.5 w-3.5 text-indigo-400 shrink-0 mt-0.5" />
+              <p className="text-[10px] text-slate-400 leading-normal">
+                Klik <span className="font-semibold text-slate-300">Konfirmasi Cetak</span> untuk membuka dialog print bawaan browser. Atur opsi tujuan ke printer label/kertas yang sesuai.
+              </p>
+            </div>
+
+            {/* Footer Buttons */}
+            <div className="flex space-x-3 pt-2">
+              <button
+                onClick={() => setShowPrintConfirmation(false)}
+                className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-bold border border-white/5 cursor-pointer active:scale-95 transition-all"
+              >
+                Batal
+              </button>
+              <button
+                onClick={() => {
+                  setShowPrintConfirmation(false);
+                  setTimeout(() => {
+                    window.print();
+                  }, 150);
+                }}
+                className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-emerald-600/20 cursor-pointer active:scale-95 transition-all flex items-center justify-center space-x-1.5"
+              >
+                <Printer className="h-3.5 w-3.5" />
+                <span>Konfirmasi Cetak</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PRINT-ONLY BARCODE LABELS WRAPPER */}
+      {showBarcodePrintModal && (
+        <div id="barcode-print-wrapper-for-printing" className="hidden print:block bg-white text-black min-h-screen">
+          <div 
+            className={
+              barcodeLayout === "grid"
+                ? "grid grid-cols-2 gap-6 p-6"
+                : "flex flex-col items-center space-y-6 p-6"
+            }
+          >
+            {printItemsList.map((id) => {
+              const product = catalogProducts.find((p) => p.id === id);
+              if (!product) return null;
+              const barCodeValue = getBarcodeValue(product.id);
+
+              return (
+                <div
+                  key={product.id}
+                  className={`bg-white text-black border border-black rounded-lg p-5 flex flex-col justify-between page-break-inside-avoid ${
+                    barcodeSize === "small"
+                      ? "w-[3.2in] h-[1.6in]"
+                      : barcodeSize === "medium"
+                      ? "w-[4.0in] h-[2.0in]"
+                      : "w-[4.8in] h-[2.4in]"
+                  }`}
+                  style={{
+                    pageBreakInside: "avoid",
+                    breakInside: "avoid"
+                  }}
+                >
+                  {/* Company Name */}
+                  {showCompany && (
+                    <div className="flex items-center justify-between border-b border-black pb-1">
+                      <span className="text-[10px] font-black tracking-widest uppercase">PT BBS INDONESIA</span>
+                      <span className="text-[9px] font-mono font-bold">IT COMPLIANT</span>
+                    </div>
+                  )}
+
+                  {/* Info */}
+                  <div className="my-2 flex flex-col justify-center">
+                    {showCategory && (
+                      <span className="text-[9px] font-bold uppercase tracking-widest text-slate-700">{product.category}</span>
+                    )}
+                    <h5 className="text-[13px] font-black text-black leading-tight truncate">{product.name}</h5>
+                    {showPrice && (
+                      <span className="text-[10px] font-mono font-bold">{product.estimatedPriceRange}</span>
+                    )}
+                  </div>
+
+                  {/* Barcode representation */}
+                  <div className="flex flex-col items-center bg-white p-1 border border-black rounded mt-1">
+                    <div className="w-full text-black">
+                      <BarcodeSVG value={barCodeValue} />
+                    </div>
+                    {showId && (
+                      <span className="text-[9px] font-mono font-bold tracking-widest mt-1 uppercase text-black">
+                        {barCodeValue}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       )}
 
       {/* OAUTH POPUP MODAL OVERLAY */}

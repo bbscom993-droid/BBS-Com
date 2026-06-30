@@ -7,9 +7,11 @@ interface BarcodeScannerProps {
   catalogProducts: ProductItem[];
   onScanSuccess: (product: ProductItem) => void;
   onClose: () => void;
+  onAddCustomItem?: (item: { name: string; quantity: number; description?: string }) => void;
 }
 
-export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose }: BarcodeScannerProps) {
+export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose, onAddCustomItem }: BarcodeScannerProps) {
+  const modalRef = useRef<HTMLDivElement>(null);
   const [scannerActive, setScannerActive] = useState<boolean>(false);
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string>("");
@@ -17,6 +19,36 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
   const [lastScanned, setLastScanned] = useState<ProductItem | null>(null);
   const [scanHistory, setScanHistory] = useState<{ product: ProductItem; time: string }[]>([]);
   const [simulateMode, setSimulateMode] = useState<boolean>(false);
+
+  // New state variables for unmatched barcode and manual fallback input fields
+  const [unmatchedCode, setUnmatchedCode] = useState<string | null>(null);
+  const [manualName, setManualName] = useState<string>("");
+  const [manualQty, setManualQty] = useState<number>(1);
+  const [manualDesc, setManualDesc] = useState<string>("");
+
+  const handleManualSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!manualName.trim()) return;
+
+    if (onAddCustomItem) {
+      onAddCustomItem({
+        name: manualName.trim(),
+        quantity: manualQty,
+        description: manualDesc.trim() || undefined
+      });
+    }
+
+    setUnmatchedCode(null);
+
+    // Vibrate to confirm success
+    if (typeof navigator !== "undefined" && navigator.vibrate) {
+      navigator.vibrate([100, 50, 100]);
+    }
+
+    // Auto close or keep open? Usually let's reset or let user continue.
+    // Since we added successfully, let's keep it open but reset states so they can scan again if desired.
+    setLastScanned(null);
+  };
 
   const qrCodeInstanceRef = useRef<Html5Qrcode | null>(null);
   const containerId = "html5-qr-reader";
@@ -51,6 +83,13 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
         qrCodeInstanceRef.current.stop().catch((e) => console.error("Error stopping scanner on unmount", e));
       }
     };
+  }, []);
+
+  // Autofocus the modal on mount for accessibility
+  useEffect(() => {
+    if (modalRef.current) {
+      modalRef.current.focus();
+    }
   }, []);
 
   // Handle start scanning
@@ -165,8 +204,12 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
       // Briefly stop camera and restart to allow user to view scan or scan again
       stopScanner();
     } else {
-      // Show unknown scan warning but keep scanning
-      console.warn("Unregistered product code scanned:", code);
+      // Set unmatched state for custom fallback UI handling and stop the active scanner
+      setUnmatchedCode(code);
+      setManualName(`Perangkat Kustom (${code})`);
+      setManualQty(1);
+      setManualDesc(`Ditambahkan dari hasil scan barcode: ${code}`);
+      stopScanner();
     }
   };
 
@@ -180,7 +223,11 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">
-      <div className="bg-slate-900 border border-white/10 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col">
+      <div 
+        ref={modalRef}
+        tabIndex={-1}
+        className="bg-slate-900 border border-white/10 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col focus:outline-none"
+      >
         {/* Header */}
         <div className="p-4 bg-slate-950 border-b border-white/5 flex items-center justify-between">
           <div className="flex items-center space-x-2">
@@ -205,158 +252,278 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
 
         {/* Scanner Body */}
         <div className="p-5 space-y-4 flex-1 overflow-y-auto max-h-[80vh]">
-          {/* Tabs: Camera vs Simulator */}
-          <div className="grid grid-cols-2 p-1 bg-slate-950 rounded-xl border border-white/5">
-            <button
-              onClick={() => {
-                setSimulateMode(false);
-                stopScanner();
-              }}
-              className={`py-2 text-xs font-bold rounded-lg transition-all ${!simulateMode ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white"}`}
-            >
-              Kamera Perangkat
-            </button>
-            <button
-              onClick={() => {
-                setSimulateMode(true);
-                stopScanner();
-              }}
-              className={`py-2 text-xs font-bold rounded-lg transition-all ${simulateMode ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white"}`}
-            >
-              Simulasi Scanner
-            </button>
-          </div>
-
-          {/* Interactive Camera Area */}
-          {!simulateMode ? (
-            <div className="space-y-4">
-              {/* Camera selection dropdown */}
-              {cameras.length > 1 && !scannerActive && (
-                <div>
-                  <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider mb-1">Pilih Kamera</label>
-                  <div className="relative">
-                    <select
-                      value={selectedCameraId}
-                      onChange={(e) => setSelectedCameraId(e.target.value)}
-                      className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 pr-8 appearance-none"
-                    >
-                      {cameras.map((camera) => (
-                        <option key={camera.deviceId} value={camera.deviceId}>
-                          {camera.label || `Kamera ${cameras.indexOf(camera) + 1}`}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-slate-400">
-                      <RotateCw className="h-3.5 w-3.5" />
-                    </div>
-                  </div>
+          {unmatchedCode ? (
+            /* Custom Error Handling UI Component with Manual Add Fallback */
+            <div className="p-4 bg-red-500/10 border border-red-500/25 rounded-2xl space-y-4 animate-scaleIn">
+              <div className="flex items-start space-x-3">
+                <div className="p-2 bg-red-500/20 text-red-400 rounded-xl shrink-0">
+                  <AlertCircle className="h-5 w-5" />
                 </div>
-              )}
-
-              {/* Viewport Box */}
-              <div className="relative aspect-video bg-slate-950 border border-white/10 rounded-xl overflow-hidden flex flex-col items-center justify-center">
-                <div id={containerId} className="absolute inset-0 w-full h-full object-cover [&>video]:object-cover [&>video]:w-full [&>video]:h-full" />
-
-                {/* Laser Overlay scanning effect */}
-                {scannerActive && (
-                  <div className="absolute inset-x-0 top-0 h-0.5 bg-indigo-500/80 shadow-[0_0_10px_rgba(99,102,241,0.8)] animate-scanLine z-10" />
-                )}
-
-                {!scannerActive && (
-                  <div className="text-center p-4 space-y-3 z-10">
-                    <div className="mx-auto w-12 h-12 bg-white/5 rounded-full flex items-center justify-center">
-                      <Camera className="h-6 w-6 text-slate-400" />
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-xs text-white font-bold">Kamera Siap</p>
-                      <p className="text-[10px] text-slate-400 max-w-[240px] mx-auto">Klik tombol di bawah untuk mengaktifkan video scanner.</p>
-                    </div>
-                    <button
-                      onClick={startScanner}
-                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs transition-colors shadow-lg shadow-indigo-600/10"
-                    >
-                      Aktifkan Kamera
-                    </button>
-                  </div>
-                )}
-
-                {scannerActive && (
-                  <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20">
-                    <button
-                      onClick={stopScanner}
-                      className="px-4 py-1.5 bg-red-600 hover:bg-red-500 text-white font-bold rounded-lg text-xs transition-colors shadow-lg"
-                    >
-                      Matikan Kamera
-                    </button>
-                  </div>
-                )}
+                <div className="space-y-1">
+                  <h4 className="font-extrabold text-white text-xs uppercase tracking-wider">Label Barcode Tidak Dikenal</h4>
+                  <p className="text-[11px] text-slate-300">
+                    Label barcode <span className="font-mono font-bold text-amber-400 bg-slate-950 px-1.5 py-0.5 rounded border border-white/5">{unmatchedCode}</span> tidak cocok dengan produk mana pun di katalog kami.
+                  </p>
+                </div>
               </div>
 
-              {scanError && (
-                <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl flex items-start space-x-2">
-                  <AlertCircle className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
-                  <div className="space-y-1">
-                    <p className="text-[11px] font-bold text-red-200">Akses Kamera Bermasalah</p>
-                    <p className="text-[10px] text-slate-400 leading-normal">{scanError}</p>
-                    <button 
-                      onClick={() => setSimulateMode(true)}
-                      className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold underline block mt-1"
+              <div className="border-t border-white/5 pt-3">
+                <form onSubmit={handleManualSubmit} className="space-y-3 p-3.5 bg-slate-950/60 border border-white/5 rounded-xl">
+                  <div className="flex items-center space-x-1 text-indigo-400 text-[10px] font-black uppercase tracking-wider mb-1">
+                    <ShoppingCart className="h-3.5 w-3.5" />
+                    <span>Fallback: Tambah Manual ke Keranjang</span>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-[9px] text-slate-500 uppercase font-black mb-1">Nama Perangkat / Item</label>
+                    <input 
+                      type="text" 
+                      value={manualName}
+                      onChange={(e) => setManualName(e.target.value)}
+                      className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-bold font-sans"
+                      placeholder="Masukkan nama item custom"
+                      required
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="col-span-1">
+                      <label className="block text-[9px] text-slate-500 uppercase font-black mb-1">Jumlah</label>
+                      <input 
+                        type="number" 
+                        min="1"
+                        value={manualQty}
+                        onChange={(e) => setManualQty(parseInt(e.target.value, 10) || 1)}
+                        className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 text-center font-bold font-sans"
+                        required
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="block text-[9px] text-slate-500 uppercase font-black mb-1">Keterangan / Spesifikasi</label>
+                      <input 
+                        type="text" 
+                        value={manualDesc}
+                        onChange={(e) => setManualDesc(e.target.value)}
+                        className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-sans"
+                        placeholder="Spesifikasi tambahan (opsional)"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="pt-2 flex space-x-2">
+                    <button
+                      type="submit"
+                      className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition-colors shadow-md cursor-pointer"
                     >
-                      Gunakan Fitur Simulasi Scanner Sebagai Gantinya
+                      Tambahkan ke Keranjang
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUnmatchedCode(null);
+                        if (!simulateMode) {
+                          startScanner();
+                        }
+                      }}
+                      className="px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/5 text-slate-300 hover:text-white text-xs font-bold rounded-lg transition-colors cursor-pointer"
+                    >
+                      Batal / Scan Lagi
                     </button>
                   </div>
-                </div>
-              )}
+                </form>
+              </div>
             </div>
           ) : (
-            /* Simulation mode panel */
-            <div className="space-y-4">
-              <div className="p-3.5 bg-indigo-500/5 border border-indigo-500/15 rounded-xl space-y-1.5">
-                <div className="flex items-center space-x-1 text-indigo-400 text-xs font-bold">
-                  <Info className="h-4 w-4" />
-                  <span>Petunjuk Simulasi Barcode/QR</span>
-                </div>
-                <p className="text-[10px] text-slate-400 leading-relaxed">
-                  Gunakan simulator ini untuk menguji penambahan produk secara cepat jika kamera Anda diblokir, tidak tersedia, atau sedang dijalankan di dalam iframe. Cukup klik tombol produk di bawah ini untuk mensimulasikan hasil pemindaian label barcode secara instan.
-                </p>
+            <>
+              {/* Tabs: Camera vs Simulator */}
+              <div className="grid grid-cols-2 p-1 bg-slate-950 rounded-xl border border-white/5">
+                <button
+                  onClick={() => {
+                    setSimulateMode(false);
+                    stopScanner();
+                  }}
+                  className={`py-2 text-xs font-bold rounded-lg transition-all ${!simulateMode ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white"}`}
+                >
+                  Kamera Perangkat
+                </button>
+                <button
+                  onClick={() => {
+                    setSimulateMode(true);
+                    stopScanner();
+                  }}
+                  className={`py-2 text-xs font-bold rounded-lg transition-all ${simulateMode ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white"}`}
+                >
+                  Simulasi Scanner
+                </button>
               </div>
 
-              <div className="space-y-2">
-                <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Simulasikan Scan Label Produk:</label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {catalogProducts.map((product) => {
-                    // Match a custom barcode mock number for each
-                    const mockBarcodes: Record<string, string> = {
-                      "prod_1": "8895431201",
-                      "prod_2": "1928471048",
-                      "prod_3": "3049182740",
-                      "prod_4": "4095817263",
-                      "prod_5": "5120394857",
-                      "prod_6": "6238475910",
-                      "prod_7": "7349581023",
-                      "prod_8": "8450192837",
-                    };
-                    const code = mockBarcodes[product.id] || product.id;
+              {/* Interactive Camera Area */}
+              {!simulateMode ? (
+                <div className="space-y-4">
+                  {/* Camera selection dropdown */}
+                  {cameras.length > 1 && !scannerActive && (
+                    <div>
+                      <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider mb-1">Pilih Kamera</label>
+                      <div className="relative">
+                        <select
+                          value={selectedCameraId}
+                          onChange={(e) => setSelectedCameraId(e.target.value)}
+                          className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 pr-8 appearance-none font-sans font-bold"
+                        >
+                          {cameras.map((camera) => (
+                            <option key={camera.deviceId} value={camera.deviceId}>
+                              {camera.label || `Kamera ${cameras.indexOf(camera) + 1}`}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-slate-400">
+                          <RotateCw className="h-3.5 w-3.5" />
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
-                    return (
+                  {/* Viewport Box */}
+                  <div className={`relative aspect-video bg-slate-950 border rounded-xl overflow-hidden flex flex-col items-center justify-center transition-all duration-300 ${
+                    scannerActive 
+                      ? "border-indigo-500/50 ring-2 ring-indigo-500/20 shadow-[0_0_20px_rgba(99,102,241,0.15)] animate-pulseGlow" 
+                      : "border-white/10"
+                  }`}>
+                    <div id={containerId} className="absolute inset-0 w-full h-full object-cover [&>video]:object-cover [&>video]:w-full [&>video]:h-full" />
+
+                    {/* Scanning Target Frame & Brackets overlay */}
+                    {scannerActive && (
+                      <div className="absolute inset-0 pointer-events-none flex items-center justify-center z-10">
+                        {/* Target Frame Area */}
+                        <div className="w-36 h-36 border border-white/10 rounded-2xl relative flex items-center justify-center">
+                          {/* Corner brackets */}
+                          <div className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-indigo-400 rounded-tl-lg" />
+                          <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-indigo-400 rounded-tr-lg" />
+                          <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-indigo-400 rounded-bl-lg" />
+                          <div className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-indigo-400 rounded-br-lg" />
+                          
+                          {/* Subtle pulsating center target dot */}
+                          <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full shadow-[0_0_8px_rgba(129,140,248,0.8)] animate-ping" />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Laser Overlay scanning effect */}
+                    {scannerActive && (
+                      <div className="absolute inset-x-0 h-0.5 bg-gradient-to-r from-transparent via-indigo-400 to-transparent shadow-[0_0_12px_rgba(129,140,248,0.9)] animate-scanLine z-10" />
+                    )}
+
+                    {!scannerActive && (
+                      <div className="text-center p-4 space-y-3 z-10">
+                        <div className="mx-auto w-12 h-12 bg-white/5 rounded-full flex items-center justify-center">
+                          <Camera className="h-6 w-6 text-slate-400" />
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-xs text-white font-bold font-sans">Kamera Siap</p>
+                          <p className="text-[10px] text-slate-400 max-w-[240px] mx-auto leading-relaxed">Klik tombol di bawah untuk mengaktifkan video scanner.</p>
+                        </div>
+                        <button
+                          onClick={startScanner}
+                          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs transition-colors shadow-lg shadow-indigo-600/10 cursor-pointer"
+                        >
+                          Aktifkan Kamera
+                        </button>
+                      </div>
+                    )}
+
+                    {scannerActive && (
+                      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20">
+                        <button
+                          onClick={stopScanner}
+                          className="px-4 py-1.5 bg-red-600 hover:bg-red-500 text-white font-bold rounded-lg text-xs transition-colors shadow-lg cursor-pointer animate-fadeIn"
+                        >
+                          Matikan Kamera
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {scanError && (
+                    <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl flex items-start space-x-2">
+                      <AlertCircle className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <p className="text-[11px] font-bold text-red-200 font-sans">Akses Kamera Bermasalah</p>
+                        <p className="text-[10px] text-slate-400 leading-normal">{scanError}</p>
+                        <button 
+                          onClick={() => setSimulateMode(true)}
+                          className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold underline block mt-1 cursor-pointer"
+                        >
+                          Gunakan Fitur Simulasi Scanner Sebagai Gantinya
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                /* Simulation mode panel */
+                <div className="space-y-4">
+                  <div className="p-3.5 bg-indigo-500/5 border border-indigo-500/15 rounded-xl space-y-1.5">
+                    <div className="flex items-center space-x-1 text-indigo-400 text-xs font-bold">
+                      <Info className="h-4 w-4" />
+                      <span>Petunjuk Simulasi Barcode/QR</span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 leading-relaxed">
+                      Gunakan simulator ini untuk menguji penambahan produk secara cepat jika kamera Anda diblokir, tidak tersedia, atau sedang dijalankan di dalam iframe. Cukup klik tombol produk di bawah ini untuk mensimulasikan hasil pemindaian label barcode secara instan.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Simulasikan Scan Label Produk:</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {catalogProducts.map((product) => {
+                        // Match a custom barcode mock number for each
+                        const mockBarcodes: Record<string, string> = {
+                          "prod_1": "8895431201",
+                          "prod_2": "1928471048",
+                          "prod_3": "3049182740",
+                          "prod_4": "4095817263",
+                          "prod_5": "5120394857",
+                          "prod_6": "6238475910",
+                          "prod_7": "7349581023",
+                          "prod_8": "8450192837",
+                        };
+                        const code = mockBarcodes[product.id] || product.id;
+
+                        return (
+                          <button
+                            key={product.id}
+                            onClick={() => simulateScan(product.id)}
+                            className="flex items-center p-2.5 bg-slate-950 border border-white/5 rounded-xl text-left hover:border-indigo-500/30 hover:bg-white/5 transition-all group cursor-pointer"
+                          >
+                            <div className="p-1.5 bg-white/5 rounded-lg mr-2.5 text-slate-400 group-hover:text-indigo-400 group-hover:bg-indigo-500/5">
+                              <Scan className="h-3.5 w-3.5" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[10px] font-bold text-white truncate leading-tight font-sans">{product.name}</p>
+                              <p className="text-[9px] text-slate-500 font-mono tracking-wide">Code: {code}</p>
+                            </div>
+                          </button>
+                        );
+                      })}
+
+                      {/* Simulate Mismatch Scan Button */}
                       <button
-                        key={product.id}
-                        onClick={() => simulateScan(product.id)}
-                        className="flex items-center p-2.5 bg-slate-950 border border-white/5 rounded-xl text-left hover:border-indigo-500/30 hover:bg-white/5 transition-all group"
+                        onClick={() => handleScannedCode("9999999999")}
+                        className="flex items-center p-2.5 bg-red-500/5 border border-red-500/10 rounded-xl text-left hover:border-red-500/30 hover:bg-red-500/10 transition-all group sm:col-span-2 cursor-pointer"
                       >
-                        <div className="p-1.5 bg-white/5 rounded-lg mr-2.5 text-slate-400 group-hover:text-indigo-400 group-hover:bg-indigo-500/5">
-                          <Scan className="h-3.5 w-3.5" />
+                        <div className="p-1.5 bg-red-500/10 rounded-lg mr-2.5 text-red-400 group-hover:scale-110 transition-transform shrink-0">
+                          <AlertCircle className="h-3.5 w-3.5 animate-pulse" />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-[10px] font-bold text-white truncate leading-tight">{product.name}</p>
-                          <p className="text-[9px] text-slate-500 font-mono tracking-wide">Code: {code}</p>
+                          <p className="text-[10px] font-bold text-red-300 truncate leading-tight font-sans">Simulasikan Code Tidak Cocok</p>
+                          <p className="text-[9px] text-slate-500 font-mono tracking-wide">Test Error Fallback (9999999999)</p>
                         </div>
                       </button>
-                    );
-                  })}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
+              )}
+            </>
           )}
 
           {/* Recently Scanned Result */}
