@@ -166,7 +166,7 @@ export default function RfqAnalytics({ rfqs, catalogProducts, quotations }: RfqA
 
       const labels: Record<string, string> = {
         perusahaan: "Korporat & Perusahaan",
-        pemerintah: "Lembaga & Sektor Umum",
+        pemerintah: "Umum",
         pendidikan: "Lembaga Pendidikan",
         umkm: "UMKM & Individu",
         retail: "Retail & Toko"

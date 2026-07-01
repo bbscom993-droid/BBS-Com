@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
+import { motion } from "motion/react";
 import * as Icons from "lucide-react";
 import { 
   Laptop, 
@@ -241,6 +242,7 @@ export default function App() {
     icon: string;
     image: string;
     specifications: string[];
+    serialNumber?: string;
   }>({
     id: "",
     name: "",
@@ -250,22 +252,62 @@ export default function App() {
     icon: "Server",
     image: "",
     specifications: ["", "", "", "", ""],
+    serialNumber: "",
   });
   const [isEditingCatalog, setIsEditingCatalog] = useState(false);
   const [isAddingCatalog, setIsAddingCatalog] = useState(false);
   const [adminCatalogSearch, setAdminCatalogSearch] = useState("");
   const [adminCatalogCategory, setAdminCatalogCategory] = useState("Semua");
 
-  const [rfqCart, setRfqCart] = useState<{ product: ProductItem; quantity: number }[]>([]);
-  const [customCartItems, setCustomCartItems] = useState<RFQItem[]>([]);
+  const [rfqCart, setRfqCart] = useState<{ product: ProductItem; quantity: number }[]>(() => {
+    try {
+      const saved = localStorage.getItem("bbs_rfq_cart");
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      console.error("Error reading rfqCart from localStorage", e);
+      return [];
+    }
+  });
+  const [customCartItems, setCustomCartItems] = useState<RFQItem[]>(() => {
+    try {
+      const saved = localStorage.getItem("bbs_custom_cart_items");
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      console.error("Error reading customCartItems from localStorage", e);
+      return [];
+    }
+  });
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [selectedDetailProduct, setSelectedDetailProduct] = useState<ProductItem | null>(null);
   const [showSubtotalBreakdown, setShowSubtotalBreakdown] = useState(false);
+
+  // Deep linking to product details or comparison via query parameters
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const prodId = params.get("product");
+    const compareParam = params.get("compare");
+    
+    if (prodId && catalogProducts) {
+      const found = catalogProducts.find(p => p.id === prodId);
+      if (found) {
+        setSelectedDetailProduct(found);
+      }
+    }
+    
+    if (compareParam && catalogProducts) {
+      const ids = compareParam.split(",").filter(id => catalogProducts.some(p => p.id === id));
+      if (ids.length > 0) {
+        setSelectedCompareIds(ids);
+        setShowComparisonModal(true);
+      }
+    }
+  }, [catalogProducts]);
   
   // Custom item adding inputs
   const [customItemName, setCustomItemName] = useState("");
   const [customItemQty, setCustomItemQty] = useState(1);
   const [customItemDesc, setCustomItemDesc] = useState("");
+  const [customItemSerial, setCustomItemSerial] = useState("");
 
   // API Lists
   const [rfqs, setRfqs] = useState<RFQ[]>([]);
@@ -281,15 +323,39 @@ export default function App() {
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
 
   // Client RFQ Form Inputs
-  const [rfqForm, setRfqForm] = useState({
-    clientName: "",
-    companyName: "",
-    whatsapp: "",
-    email: "",
-    address: "",
-    clientCategory: "perusahaan" as "perusahaan" | "pemerintah" | "pendidikan" | "umkm" | "retail",
-    customRequirements: ""
+  const [rfqForm, setRfqForm] = useState(() => {
+    const defaultForm = {
+      clientName: "",
+      companyName: "",
+      whatsapp: "",
+      email: "",
+      address: "",
+      clientCategory: "perusahaan" as "perusahaan" | "pemerintah" | "pendidikan" | "umkm" | "retail",
+      customRequirements: ""
+    };
+    try {
+      const saved = localStorage.getItem("bbs_rfq_form");
+      return saved ? JSON.parse(saved) : defaultForm;
+    } catch (e) {
+      console.error("Error reading rfqForm from localStorage", e);
+      return defaultForm;
+    }
   });
+
+  // Auto-save RFQ form, standard cart, and custom cart items state to localStorage every 5 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      try {
+        localStorage.setItem("bbs_rfq_cart", JSON.stringify(rfqCart));
+        localStorage.setItem("bbs_custom_cart_items", JSON.stringify(customCartItems));
+        localStorage.setItem("bbs_rfq_form", JSON.stringify(rfqForm));
+      } catch (e) {
+        console.error("Error auto-saving state to localStorage", e);
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [rfqCart, customCartItems, rfqForm]);
   const [emailError, setEmailError] = useState("");
 
   // Admin Portal Auth (just a simple lock to simulate security)
@@ -297,9 +363,47 @@ export default function App() {
   const [adminPassword, setAdminPassword] = useState("");
   const [activeAdminSubTab, setActiveAdminSubTab] = useState<"rfqs" | "quotations" | "emails" | "reminders" | "settings" | "users" | "catalog">("rfqs");
   const [adminRfqSearch, setAdminRfqSearch] = useState("");
+  const [adminRfqClientFilter, setAdminRfqClientFilter] = useState("");
   const [adminRfqStartDate, setAdminRfqStartDate] = useState("");
   const [adminRfqEndDate, setAdminRfqEndDate] = useState("");
-  const [adminRfqStatus, setAdminRfqStatus] = useState<string>("");
+  const [adminRfqStatuses, setAdminRfqStatuses] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem("bbs_admin_rfq_statuses");
+      if (stored) {
+        return JSON.parse(stored);
+      }
+      // Backward compatibility check
+      const legacy = localStorage.getItem("bbs_admin_rfq_status");
+      return legacy ? [legacy] : [];
+    } catch (e) {
+      console.error("Error reading adminRfqStatuses from localStorage", e);
+      return [];
+    }
+  });
+
+  // Persist adminRfqStatuses to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem("bbs_admin_rfq_statuses", JSON.stringify(adminRfqStatuses));
+    } catch (e) {
+      console.error("Error writing adminRfqStatuses to localStorage", e);
+    }
+  }, [adminRfqStatuses]);
+
+  const [isStatusFilterOpen, setIsStatusFilterOpen] = useState(false);
+  const statusFilterRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (statusFilterRef.current && !statusFilterRef.current.contains(event.target as Node)) {
+        setIsStatusFilterOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
   const [adminRole, setAdminRole] = useState<"superadmin" | "admin" | "sales" | null>(null);
   const [adminDisplayName, setAdminDisplayName] = useState("");
   const [adminUsername, setAdminUsername] = useState("");
@@ -336,6 +440,189 @@ export default function App() {
   const [selectedRFQ, setSelectedRFQ] = useState<RFQ | null>(null);
   const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null);
   const [isPrintPreview, setIsPrintPreview] = useState<boolean>(false);
+
+  // Comment states
+  const [readCommentsMap, setReadCommentsMap] = useState<Record<string, number>>(() => {
+    try {
+      const saved = localStorage.getItem("rfq_read_comments_counts");
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      return {};
+    }
+  });
+
+  const markRfqCommentsAsRead = (rfqId: string, count: number) => {
+    setReadCommentsMap(prev => {
+      const next = { ...prev, [rfqId]: count };
+      try {
+        localStorage.setItem("rfq_read_comments_counts", JSON.stringify(next));
+      } catch (e) {
+        console.error(e);
+      }
+      return next;
+    });
+  };
+
+  const [selectedCommentRfq, setSelectedCommentRfqState] = useState<RFQ | null>(null);
+
+  // Comment Camera and Image Attachments
+  const [capturedImage, setCapturedImage] = useState<string | null>(null);
+  const [isCameraOpen, setIsCameraOpen] = useState<boolean>(false);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
+
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const startCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false
+      });
+      setCameraStream(stream);
+      setIsCameraOpen(true);
+    } catch (err) {
+      console.error("Camera access failed, falling back to file input", err);
+      showToast("Akses kamera langsung ditolak atau tidak didukung. Membuka pemilih file/kamera bawaan...", "info");
+      if (fileInputRef.current) {
+        fileInputRef.current.click();
+      }
+    }
+  };
+
+  const stopCamera = () => {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(track => track.stop());
+      setCameraStream(null);
+    }
+    setIsCameraOpen(false);
+  };
+
+  const capturePhoto = () => {
+    if (videoRef.current && cameraStream) {
+      const video = videoRef.current;
+      const canvas = document.createElement("canvas");
+      const width = video.videoWidth || 640;
+      const height = video.videoHeight || 480;
+      canvas.width = width;
+      canvas.height = height;
+      
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.drawImage(video, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.6);
+        setCapturedImage(dataUrl);
+      }
+      stopCamera();
+    }
+  };
+
+  const handleFileCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const result = reader.result as string;
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          const max_width = 800;
+          const max_height = 600;
+          let width = img.width;
+          let height = img.height;
+          if (width > max_width || height > max_height) {
+            if (width > height) {
+              height = Math.round((height * max_width) / width);
+              width = max_width;
+            } else {
+              width = Math.round((width * max_height) / height);
+              height = max_height;
+            }
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            setCapturedImage(canvas.toDataURL("image/jpeg", 0.6));
+          } else {
+            setCapturedImage(result);
+          }
+        };
+        img.onerror = () => {
+          setCapturedImage(result);
+        };
+        img.src = result;
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  useEffect(() => {
+    if (isCameraOpen && cameraStream && videoRef.current) {
+      videoRef.current.srcObject = cameraStream;
+    }
+  }, [isCameraOpen, cameraStream]);
+
+  useEffect(() => {
+    return () => {
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, [cameraStream]);
+
+  const setSelectedCommentRfq = (rfq: RFQ | null) => {
+    setSelectedCommentRfqState(rfq);
+    if (rfq) {
+      markRfqCommentsAsRead(rfq.id, rfq.internalComments?.length || 0);
+    } else {
+      stopCamera();
+      setCapturedImage(null);
+    }
+  };
+
+  const [commentInput, setCommentInput] = useState("");
+  const [isPostingComment, setIsPostingComment] = useState(false);
+
+  const handlePostComment = async () => {
+    if ((!commentInput.trim() && !capturedImage) || !selectedCommentRfq) return;
+    setIsPostingComment(true);
+    try {
+      const newComment = {
+        id: "c_" + Date.now(),
+        author: adminDisplayName || adminUsername || "Staf BBS",
+        role: adminRole || "staff",
+        text: commentInput.trim(),
+        timestamp: new Date().toISOString(),
+        imageUrl: capturedImage || undefined
+      };
+      const updatedComments = [...(selectedCommentRfq.internalComments || []), newComment];
+      
+      const res = await fetch(`/api/rfqs/${selectedCommentRfq.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ internalComments: updatedComments })
+      });
+
+      if (res.ok) {
+        const updatedRfq = { ...selectedCommentRfq, internalComments: updatedComments };
+        setRfqs(prevRfqs => prevRfqs.map(r => r.id === selectedCommentRfq.id ? updatedRfq : r));
+        setSelectedCommentRfq(updatedRfq);
+        setCommentInput("");
+        setCapturedImage(null);
+        showToast("Komentar internal berhasil ditambahkan!", "success");
+      } else {
+        showToast("Gagal mengirim komentar", "error");
+      }
+    } catch (err) {
+      console.error("Error posting comment:", err);
+      showToast("Koneksi API bermasalah", "error");
+    } finally {
+      setIsPostingComment(false);
+    }
+  };
   
   useEffect(() => {
     if (!selectedQuotation) {
@@ -349,11 +636,16 @@ export default function App() {
   const [selectedCatalogPdf, setSelectedCatalogPdf] = useState(false);
   const [isCatalogMenuOpen, setIsCatalogMenuOpen] = useState(false);
   const [showQrCodeModal, setShowQrCodeModal] = useState(false);
+  const [showQrCardModal, setShowQrCardModal] = useState(false);
+  const [showQrInPdf, setShowQrInPdf] = useState(true);
+  const [qrCardTheme, setQrCardTheme] = useState<"indigo" | "emerald" | "slate" | "amber">("emerald");
+  const [qrCardSize, setQrCardSize] = useState<"standard" | "badge" | "large">("standard");
   const [showPdfPreviewModal, setShowPdfPreviewModal] = useState(false);
   const [pdfPreviewPage, setPdfPreviewPage] = useState(1);
   const [pdfPreviewZoom, setPdfPreviewZoom] = useState(100);
   const catalogMenuRef = useRef<HTMLDivElement>(null);
   const [selectedCompareIds, setSelectedCompareIds] = useState<string[]>([]);
+  const [selectedQrProduct, setSelectedQrProduct] = useState<ProductItem | null>(null);
   const [showComparisonModal, setShowComparisonModal] = useState(false);
   const [showBarcodePrintModal, setShowBarcodePrintModal] = useState(false);
   const [showPrintConfirmation, setShowPrintConfirmation] = useState(false);
@@ -543,6 +835,131 @@ export default function App() {
     };
   }, []);
 
+  const uniqueClientsAndCompanies = useMemo(() => {
+    const names = new Set<string>();
+    rfqs.forEach((rfq) => {
+      if (rfq.clientName) names.add(rfq.clientName.trim());
+      if (rfq.companyName) names.add(rfq.companyName.trim());
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b, "id"));
+  }, [rfqs]);
+
+  const selectedClientRfqs = useMemo(() => {
+    if (!adminRfqClientFilter) return [];
+    if (adminRfqClientFilter.startsWith("cat:")) {
+      const cat = adminRfqClientFilter.substring(4);
+      return rfqs.filter((rfq) => rfq.clientCategory === cat);
+    }
+    const target = adminRfqClientFilter.toLowerCase().trim();
+    return rfqs.filter((rfq) => {
+      const matchClient = rfq.clientName && rfq.clientName.toLowerCase().trim() === target;
+      const matchCompany = rfq.companyName && rfq.companyName.toLowerCase().trim() === target;
+      return matchClient || matchCompany;
+    });
+  }, [rfqs, adminRfqClientFilter]);
+
+  const selectedClientCategory = useMemo(() => {
+    if (!adminRfqClientFilter) return null;
+    if (adminRfqClientFilter.startsWith("cat:")) {
+      return adminRfqClientFilter.substring(4);
+    }
+    if (selectedClientRfqs.length === 0) return null;
+    return selectedClientRfqs[0].clientCategory;
+  }, [selectedClientRfqs, adminRfqClientFilter]);
+
+  const selectedClientPendingRfqs = useMemo(() => {
+    return selectedClientRfqs.filter((r) => r.status === "pending" || r.status === "processing");
+  }, [selectedClientRfqs]);
+
+  const selectedClientPendingValue = useMemo(() => {
+    return selectedClientPendingRfqs.reduce((acc, rfq) => {
+      let rfqValue = 0;
+      rfq.items.forEach((item) => {
+        const itemNameLower = item.name.toLowerCase();
+        const matched = catalogProducts.find((p) => {
+          const pNameLower = p.name.toLowerCase();
+          return pNameLower.includes(itemNameLower) || itemNameLower.includes(pNameLower);
+        });
+        
+        let price = matched ? getNumericPrice(matched.estimatedPriceRange) : 5000000;
+        if (price === 0) price = 5000000;
+        rfqValue += price * item.quantity;
+      });
+      return acc + rfqValue;
+    }, 0);
+  }, [selectedClientPendingRfqs, catalogProducts]);
+
+  const downloadCsvForSelectedClient = () => {
+    if (!adminRfqClientFilter) return;
+    const targetRfqs = selectedClientRfqs;
+    if (targetRfqs.length === 0) {
+      showToast("Tidak ada data RFQ untuk diekspor", "info");
+      return;
+    }
+    
+    const headers = [
+      "No RFQ",
+      "Tanggal",
+      "Nama Klien",
+      "Perusahaan",
+      "Email",
+      "Telepon",
+      "Kategori Klien",
+      "Status",
+      "Daftar Item Perangkat",
+      "Total Item",
+      "Estimasi Nilai RFQ"
+    ];
+    
+    const csvRows = [headers.join(",")];
+    
+    targetRfqs.forEach((rfq) => {
+      const itemsDetail = rfq.items.map(item => `${item.name} (${item.quantity}x)`).join("; ");
+      let rfqValue = 0;
+      rfq.items.forEach((item) => {
+        const itemNameLower = item.name.toLowerCase();
+        const matched = catalogProducts.find((p) => {
+          const pNameLower = p.name.toLowerCase();
+          return pNameLower.includes(itemNameLower) || itemNameLower.includes(pNameLower);
+        });
+        let price = matched ? getNumericPrice(matched.estimatedPriceRange) : 5000000;
+        if (price === 0) price = 5000000;
+        rfqValue += price * item.quantity;
+      });
+      const totalItemsCount = rfq.items.reduce((sum, item) => sum + item.quantity, 0);
+
+      const row = [
+        `"${(rfq.rfqNumber || "").replace(/"/g, '""')}"`,
+        `"${(rfq.date || "").replace(/"/g, '""')}"`,
+        `"${(rfq.clientName || "").replace(/"/g, '""')}"`,
+        `"${(rfq.companyName || "").replace(/"/g, '""')}"`,
+        `"${(rfq.email || "").replace(/"/g, '""')}"`,
+        `"${(rfq.phone || "").replace(/"/g, '""')}"`,
+        `"${(rfq.clientCategory || "").replace(/"/g, '""')}"`,
+        `"${(rfq.status || "").replace(/"/g, '""')}"`,
+        `"${itemsDetail.replace(/"/g, '""')}"`,
+        totalItemsCount,
+        rfqValue
+      ];
+      csvRows.push(row.join(","));
+    });
+    
+    const csvContent = "data:text/csv;charset=utf-8,\uFEFF" + csvRows.map(e => e).join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    const filterCleanName = adminRfqClientFilter.startsWith("cat:") 
+      ? `kategori_${adminRfqClientFilter.substring(4)}`
+      : adminRfqClientFilter.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase();
+      
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `BBS_RFQ_History_${filterCleanName}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    showToast(`Ekspor CSV Berhasil! Mengunduh riwayat RFQ`, "success");
+  };
+
   const filteredRfqsForAdmin = rfqs.filter((rfq) => {
     // 1. Filter by search query
     const q = adminRfqSearch.toLowerCase().trim();
@@ -568,19 +985,114 @@ export default function App() {
       return false;
     }
 
-    // 3. Filter by Status
-    if (adminRfqStatus && rfq.status !== adminRfqStatus) {
+    // 3. Filter by selected client or company name/category
+    if (adminRfqClientFilter) {
+      if (adminRfqClientFilter.startsWith("cat:")) {
+        const cat = adminRfqClientFilter.substring(4);
+        if (rfq.clientCategory !== cat) {
+          return false;
+        }
+      } else {
+        const target = adminRfqClientFilter.toLowerCase();
+        const matchClient = rfq.clientName && rfq.clientName.toLowerCase().trim() === target;
+        const matchCompany = rfq.companyName && rfq.companyName.toLowerCase().trim() === target;
+        if (!matchClient && !matchCompany) {
+          return false;
+        }
+      }
+    }
+
+    // 4. Filter by Status
+    if (adminRfqStatuses.length > 0 && !adminRfqStatuses.includes(rfq.status)) {
       return false;
     }
 
     return true;
   });
 
+  const adminRfqStatusCounts = useMemo(() => {
+    const counts = {
+      "": 0,
+      pending: 0,
+      processing: 0,
+      quoted: 0,
+      completed: 0,
+      cancelled: 0,
+    };
+
+    rfqs.forEach((rfq) => {
+      // Apply Search query filter
+      const q = adminRfqSearch.toLowerCase().trim();
+      if (q) {
+        const matchesSearch = (
+          rfq.rfqNumber.toLowerCase().includes(q) ||
+          rfq.clientName.toLowerCase().includes(q) ||
+          (rfq.companyName && rfq.companyName.toLowerCase().includes(q))
+        );
+        if (!matchesSearch) return;
+      }
+
+      // Apply Date range filter
+      if (rfq.date) {
+        if (adminRfqStartDate && rfq.date < adminRfqStartDate) {
+          return;
+        }
+        if (adminRfqEndDate && rfq.date > adminRfqEndDate) {
+          return;
+        }
+      } else if (adminRfqStartDate || adminRfqEndDate) {
+        return;
+      }
+
+      // Apply Client/Category filter
+      if (adminRfqClientFilter) {
+        if (adminRfqClientFilter.startsWith("cat:")) {
+          const cat = adminRfqClientFilter.substring(4);
+          if (rfq.clientCategory !== cat) return;
+        } else {
+          const target = adminRfqClientFilter.toLowerCase();
+          const matchClient = rfq.clientName && rfq.clientName.toLowerCase().trim() === target;
+          const matchCompany = rfq.companyName && rfq.companyName.toLowerCase().trim() === target;
+          if (!matchClient && !matchCompany) return;
+        }
+      }
+
+      // Increment matching status
+      if (rfq.status && rfq.status in counts) {
+        counts[rfq.status as keyof typeof counts]++;
+      }
+      counts[""]++;
+    });
+
+    return counts;
+  }, [rfqs, adminRfqSearch, adminRfqStartDate, adminRfqEndDate, adminRfqClientFilter]);
+
   const showToast = (message: string, type: "success" | "error" | "info" = "success") => {
     setToast({ message, type });
     setTimeout(() => {
       setToast(null);
     }, 4000);
+  };
+
+  const handleShare = async () => {
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: "Berkah Bintang Solusindo - Portal E-Procurement",
+          text: "Akses katalog e-procurement lengkap dan request RFQ instan di Berkah Bintang Solusindo.",
+          url: window.location.href,
+        });
+      } catch (err) {
+        console.log("Error sharing:", err);
+      }
+    } else {
+      try {
+        await navigator.clipboard.writeText(window.location.href);
+        showToast("Link portal berhasil disalin ke clipboard!", "success");
+      } catch (err) {
+        showToast("Gagal menyalin link portal.", "error");
+      }
+    }
   };
 
   const fetchSettings = async () => {
@@ -764,12 +1276,14 @@ export default function App() {
     const newItem: RFQItem = {
       name: customItemName.trim(),
       quantity: customItemQty,
-      description: customItemDesc.trim() || undefined
+      description: customItemDesc.trim() || undefined,
+      serialNumber: customItemSerial.trim() || undefined
     };
     setCustomCartItems([...customCartItems, newItem]);
     setCustomItemName("");
     setCustomItemQty(1);
     setCustomItemDesc("");
+    setCustomItemSerial("");
     showToast("Item custom ditambahkan ke keranjang!", "success");
   };
 
@@ -809,7 +1323,8 @@ export default function App() {
       ...rfqCart.map(item => ({
         name: item.product.name,
         quantity: item.quantity,
-        description: item.product.description
+        description: item.product.description,
+        serialNumber: item.product.serialNumber
       })),
       ...customCartItems
     ];
@@ -848,6 +1363,13 @@ export default function App() {
           clientCategory: "perusahaan",
           customRequirements: ""
         });
+        try {
+          localStorage.removeItem("bbs_rfq_cart");
+          localStorage.removeItem("bbs_custom_cart_items");
+          localStorage.removeItem("bbs_rfq_form");
+        } catch (e) {
+          console.error("Error clearing auto-save localStorage", e);
+        }
         
         // Refresh admin lists in background
         fetchRfqs();
@@ -1365,26 +1887,26 @@ export default function App() {
               <div className="lg:col-span-5 space-y-6">
                 <div className="inline-flex items-center space-x-2 px-3 py-1 bg-indigo-500/10 border border-indigo-500/20 rounded-full text-indigo-300 text-[11px] font-semibold uppercase tracking-wider">
                   <Award className="h-3 w-3 text-indigo-400" />
-                  <span>Mitra Solusi IT Terpercaya & Handal</span>
+                  <span>Mitra Solusi IT Terpercaya & Murah</span>
                 </div>
                 
                 <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold leading-[1.1] tracking-tight">
-                  Solusi <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-purple-400 to-cyan-400">Teknologi Informasi</span> & Pengadaan Handal
+                  Solusi <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-purple-400 to-cyan-400">Teknologi Informasi</span> & Pengadaan Barang Jasa
                 </h1>
                 
                 <p className="text-slate-400 text-base sm:text-lg leading-relaxed">
-                  {settings.description} Kami menyuplai hardware orisinil, instalasi jaringan fiber/LAN, setting server, security system, hingga maintenance dengan SLA tinggi.
+                  {settings.description} Kami menyuplai laptop seken dan baru, instalasi jaringan fiber/LAN, setting server, security system, hingga maintenance dengan SLA tinggi.
                 </p>
 
                 {/* Quick Quality Check list */}
                 <div className="grid grid-cols-2 gap-3 pt-2">
                   <div className="flex items-center gap-2.5 text-xs sm:text-sm text-slate-300">
                     <div className="w-5 h-5 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 text-[10px] font-bold">✓</div>
-                    <span>Produk Original Bergaransi</span>
+                    <span>Produk-produk Bergaransi</span>
                   </div>
                   <div className="flex items-center gap-2.5 text-xs sm:text-sm text-slate-300">
                     <div className="w-5 h-5 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 text-[10px] font-bold">✓</div>
-                    <span>Tim Teknisi Sertifikasi</span>
+                    <span>Tim Teknisi Berpengalaman</span>
                   </div>
                   <div className="flex items-center gap-2.5 text-xs sm:text-sm text-slate-300">
                     <div className="w-5 h-5 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 text-[10px] font-bold">✓</div>
@@ -1578,7 +2100,7 @@ export default function App() {
                     </button>
 
                     {isCatalogMenuOpen && (
-                      <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 w-56 bg-slate-900 border border-white/10 rounded-xl shadow-2xl z-50 py-1.5 overflow-hidden backdrop-blur-xl animate-scaleUp">
+                      <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 w-64 bg-slate-900 border border-white/10 rounded-xl shadow-2xl z-50 py-1.5 overflow-hidden backdrop-blur-xl animate-scaleUp">
                         <button
                           onClick={() => {
                             setSelectedCatalogPdf(true);
@@ -1601,6 +2123,16 @@ export default function App() {
                         </button>
                         <button
                           onClick={() => {
+                            setShowQrCardModal(true);
+                            setIsCatalogMenuOpen(false);
+                          }}
+                          className="w-full flex items-center space-x-2.5 px-4 py-2.5 text-left text-xs font-semibold text-slate-200 hover:bg-white/5 hover:text-white transition-colors border-t border-white/5 cursor-pointer"
+                        >
+                          <Icons.Contact className="h-4 w-4 text-emerald-400" />
+                          <span>Export Kartu QR Lapangan</span>
+                        </button>
+                        <button
+                          onClick={() => {
                             setShowPdfPreviewModal(true);
                             setPdfPreviewPage(1);
                             setIsCatalogMenuOpen(false);
@@ -1610,6 +2142,20 @@ export default function App() {
                           <Icons.Eye className="h-4 w-4 text-indigo-400" />
                           <span>Preview PDF Katalog</span>
                         </button>
+
+                        {/* Settings & Toggle Panel */}
+                        <div className="px-4 py-2 border-t border-white/10 bg-slate-950/50 mt-1 space-y-1.5">
+                          <span className="block text-[9px] uppercase font-bold text-slate-400 tracking-wider">Setelan Dokumen PDF</span>
+                          <label className="flex items-center space-x-2 text-[10px] text-slate-300 hover:text-white cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={showQrInPdf}
+                              onChange={(e) => setShowQrInPdf(e.target.checked)}
+                              className="rounded bg-slate-950 border-white/10 text-indigo-600 focus:ring-0 h-3.5 w-3.5 cursor-pointer"
+                            />
+                            <span>Tampilkan QR di PDF</span>
+                          </label>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -1914,13 +2460,47 @@ export default function App() {
                         </button>
                       )}
 
-                      <button 
-                        onClick={() => addToCart(prod)}
-                        className="w-full py-2.5 bg-white/5 border border-white/10 hover:bg-indigo-600 hover:border-indigo-500 text-white hover:text-white rounded-xl text-xs font-bold transition-all duration-300 cursor-pointer flex items-center justify-center space-x-2"
-                      >
-                        <Plus className="h-4 w-4" />
-                        <span>Masukkan Keranjang RFQ</span>
-                      </button>
+                      <div className="grid grid-cols-12 gap-2">
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (selectedCompareIds.includes(prod.id)) {
+                              setSelectedCompareIds(prev => prev.filter(id => id !== prod.id));
+                            } else {
+                              if (selectedCompareIds.length >= 3) {
+                                showToast("Maksimal 3 produk dapat dibandingkan sekaligus", "error");
+                                return;
+                              }
+                              setSelectedCompareIds(prev => [...prev, prod.id]);
+                            }
+                          }}
+                          className={`col-span-4 py-2.5 rounded-xl text-xs font-bold transition-all duration-300 cursor-pointer flex items-center justify-center space-x-1 border ${
+                            selectedCompareIds.includes(prod.id)
+                              ? "bg-indigo-600/25 border-indigo-500 text-indigo-300 hover:bg-indigo-600/40"
+                              : "bg-white/5 border-white/10 hover:bg-slate-800 text-slate-300 hover:border-indigo-500/30"
+                          }`}
+                          title="Tambah ke Perbandingan"
+                        >
+                          <Icons.GitCompare className="h-3.5 w-3.5" />
+                          <span className="truncate">{selectedCompareIds.includes(prod.id) ? "Batal" : "Banding"}</span>
+                        </button>
+
+                        <button 
+                          onClick={() => addToCart(prod)}
+                          className="col-span-6 py-2.5 bg-white/5 border border-white/10 hover:bg-indigo-600 hover:border-indigo-500 text-white hover:text-white rounded-xl text-xs font-bold transition-all duration-300 cursor-pointer flex items-center justify-center space-x-1.5"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          <span className="truncate">Keranjang RFQ</span>
+                        </button>
+
+                        <button
+                          onClick={() => setSelectedQrProduct(prod)}
+                          className="col-span-2 py-2.5 bg-white/5 hover:bg-indigo-500/20 border border-white/10 text-indigo-400 hover:text-indigo-300 rounded-xl flex items-center justify-center transition-all duration-300 cursor-pointer hover:border-indigo-500/30"
+                          title="Tampilkan Kode QR Produk"
+                        >
+                          <Icons.QrCode className="h-4 w-4" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -1999,7 +2579,7 @@ export default function App() {
 
               <div className="py-6 border-t border-white/5 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500">
                 <div>
-                  &copy; {new Date().getFullYear()} {settings.companyName}. Hak Cipta Dilindungi. Solusi Infrastruktur IT & Pengadaan Handal.
+                  &copy; {new Date().getFullYear()} {settings.companyName}. Hak Cipta Dilindungi. Solusi Infrastruktur IT & Pengadaan Barang Jasa.
                 </div>
                 <div>
                   <button 
@@ -2013,6 +2593,62 @@ export default function App() {
                 </div>
               </div>
             </footer>
+
+            {/* Floating Action Buttons for Landing Page */}
+            <div className={`fixed ${selectedCompareIds.length > 0 ? "bottom-28 sm:bottom-32" : "bottom-6 sm:bottom-8"} right-4 sm:right-8 z-40 animate-fadeIn transition-all duration-300 no-print flex items-center space-x-2 sm:space-x-3`}>
+              <motion.button
+                onClick={handleShare}
+                className="flex items-center space-x-2 px-3 sm:px-4.5 py-2.5 sm:py-3 rounded-full bg-slate-900/95 hover:bg-slate-800 text-indigo-400 font-bold text-xs tracking-wide border border-white/10 hover:border-indigo-500/30 shadow-lg hover:shadow-indigo-500/10 transition-all cursor-pointer group"
+                title="Bagikan URL Portal E-Procurement"
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+              >
+                <div className="flex items-center -space-x-1.5 mr-0.5">
+                  <div className="bg-slate-950/40 p-1 rounded-lg border border-white/5 group-hover:border-indigo-500/20 transition-colors">
+                    <Icons.Share2 className="h-3.5 w-3.5 text-indigo-400 group-hover:scale-110 transition-transform" />
+                  </div>
+                  <div className="bg-slate-950 p-0.5 rounded border border-indigo-500/30 z-10 shadow-md group-hover:border-indigo-400 transition-colors -mt-1.5">
+                    <Icons.QrCode className="h-2.5 w-2.5 text-indigo-300" />
+                  </div>
+                </div>
+                <span className="hidden xs:inline">Bagikan Portal</span>
+                <span className="xs:hidden">Bagikan</span>
+              </motion.button>
+
+              <motion.button
+                onClick={() => setIsScannerOpen(true)}
+                className="flex items-center space-x-2 px-4.5 py-3 rounded-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-bold text-xs tracking-wide border border-indigo-400/30 cursor-pointer group"
+                title="Quick Scan Label Barcode / QR Produk"
+                animate={{
+                  scale: [1, 1.04, 1],
+                  boxShadow: [
+                    "0 8px 25px rgba(99, 102, 241, 0.4)",
+                    "0 12px 35px rgba(139, 92, 246, 0.6)",
+                    "0 8px 25px rgba(99, 102, 241, 0.4)"
+                  ]
+                }}
+                transition={{
+                  duration: 3,
+                  repeat: Infinity,
+                  ease: "easeInOut"
+                }}
+                whileHover={{ 
+                  scale: 1.08,
+                  boxShadow: "0 15px 40px rgba(139, 92, 246, 0.8)",
+                  transition: { duration: 0.2 }
+                }}
+                whileTap={{ scale: 0.96 }}
+              >
+                <div className="relative">
+                  <QrCode className="h-4.5 w-4.5 text-white group-hover:rotate-12 transition-transform" />
+                  <span className="absolute -top-1 -right-1 flex h-1.5 w-1.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+                  </span>
+                </div>
+                <span>Quick Scan QR</span>
+              </motion.button>
+            </div>
 
           </div>
         )}
@@ -2414,7 +3050,14 @@ export default function App() {
                           >
                             <div className="space-y-1 pr-3">
                               <h5 className="font-bold text-xs text-white leading-tight">{item.product.name}</h5>
-                              <p className="text-[10px] text-slate-500">{item.product.category}</p>
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <p className="text-[10px] text-slate-500">{item.product.category}</p>
+                                {item.product.serialNumber && (
+                                  <span className="text-[9px] font-mono text-indigo-400 bg-indigo-950/50 px-1.5 py-0.5 rounded border border-indigo-500/15">
+                                    SN: {item.product.serialNumber}
+                                  </span>
+                                )}
+                              </div>
                             </div>
 
                             <div className="flex items-center space-x-3.5">
@@ -2456,7 +3099,14 @@ export default function App() {
                                 <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full"></span>
                                 <span>{item.name}</span>
                               </h5>
-                              <p className="text-[10px] text-slate-500 line-clamp-1">{item.description || "Item Kustom Khusus"}</p>
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <p className="text-[10px] text-slate-400 line-clamp-1">{item.description || "Item Kustom Khusus"}</p>
+                                {item.serialNumber && (
+                                  <span className="text-[9px] font-mono text-indigo-400 bg-indigo-950/50 px-1.5 py-0.5 rounded border border-indigo-500/15">
+                                    SN: {item.serialNumber}
+                                  </span>
+                                )}
+                              </div>
                             </div>
 
                             <div className="flex items-center space-x-3.5">
@@ -2518,7 +3168,17 @@ export default function App() {
                             className="w-full px-3 py-2 bg-slate-950 border border-white/10 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-200 font-bold font-mono"
                           />
                         </div>
-                        <div className="sm:col-span-2">
+                        <div className="sm:col-span-1">
+                          <label className="block text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1">Serial Number (Opsional)</label>
+                          <input 
+                            type="text" 
+                            placeholder="Contoh: SN-7890ABCD" 
+                            value={customItemSerial}
+                            onChange={(e) => setCustomItemSerial(e.target.value)}
+                            className="w-full px-3 py-2 bg-slate-950 border border-white/10 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-200 font-mono"
+                          />
+                        </div>
+                        <div className="sm:col-span-1">
                           <label className="block text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1">Rincian Deskripsi/Spek (Opsional)</label>
                           <input 
                             type="text" 
@@ -2634,7 +3294,7 @@ export default function App() {
                           className="px-3 py-2.5 bg-slate-950 border border-white/10 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-200 w-full font-medium appearance-none"
                         >
                           <option value="perusahaan">Perusahaan Swasta</option>
-                          <option value="pemerintah">Lembaga & Sektor Umum</option>
+                          <option value="pemerintah">Umum</option>
                           <option value="pendidikan">Lembaga Pendidikan</option>
                           <option value="umkm">UMKM / Individu</option>
                           <option value="retail">Retail & Toko</option>
@@ -3385,27 +4045,263 @@ export default function App() {
                               <Icons.Filter className="h-4 w-4 text-emerald-400" />
                               <span>Status RFQ:</span>
                             </div>
-                            <select
-                              id="rfq_status_filter"
-                              value={adminRfqStatus}
-                              onChange={(e) => setAdminRfqStatus(e.target.value)}
-                              className="bg-slate-950 border border-white/10 hover:border-indigo-500/40 rounded-xl px-3 py-1.5 text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs font-semibold cursor-pointer transition-all"
-                            >
-                              <option value="">Semua Status</option>
-                              <option value="pending">Menunggu Proposal (Pending)</option>
-                              <option value="processing">Sedang Diproses (Processing)</option>
-                              <option value="quoted">Sudah Di-Quoted (Quoted)</option>
-                              <option value="completed">Selesai (Completed)</option>
-                              <option value="cancelled">Dibatalkan (Cancelled)</option>
-                            </select>
-                            {adminRfqStatus && (
+                            <div className="relative" ref={statusFilterRef}>
+                              {/* Hidden select for standard DOM API and integration compatibility */}
+                              <select
+                                id="rfq_status_filter"
+                                multiple
+                                value={adminRfqStatuses}
+                                onChange={(e) => {
+                                  const options = Array.from(e.target.selectedOptions).map((o) => (o as HTMLOptionElement).value);
+                                  setAdminRfqStatuses(options.filter(val => val !== ""));
+                                }}
+                                className="sr-only"
+                              >
+                                <option value="">Semua Status ({adminRfqStatusCounts[""]})</option>
+                                <option value="pending">Menunggu Proposal (Pending) ({adminRfqStatusCounts["pending"]})</option>
+                                <option value="processing">Sedang Diproses (Processing) ({adminRfqStatusCounts["processing"]})</option>
+                                <option value="quoted">Sudah Di-Quoted (Quoted) ({adminRfqStatusCounts["quoted"]})</option>
+                                <option value="completed">Selesai (Completed) ({adminRfqStatusCounts["completed"]})</option>
+                                <option value="cancelled">Dibatalkan (Cancelled) ({adminRfqStatusCounts["cancelled"]})</option>
+                              </select>
+
+                              {/* Custom trigger button styled professionally */}
                               <button
                                 type="button"
-                                onClick={() => setAdminRfqStatus("")}
+                                onClick={() => setIsStatusFilterOpen(!isStatusFilterOpen)}
+                                className={`flex items-center justify-between border rounded-xl px-3 py-1.5 text-xs font-semibold cursor-pointer transition-all gap-2 min-w-[210px] text-left ${
+                                  adminRfqStatuses.length === 0
+                                    ? "bg-slate-950 border-white/10 text-slate-200 hover:border-indigo-500/40 hover:bg-slate-900"
+                                    : adminRfqStatuses.length === 1
+                                    ? adminRfqStatuses[0] === "pending"
+                                      ? "bg-amber-950/40 border-amber-500/50 text-amber-400 hover:bg-amber-950/60"
+                                      : adminRfqStatuses[0] === "processing"
+                                      ? "bg-blue-950/40 border-blue-500/50 text-blue-400 hover:bg-blue-950/60"
+                                      : adminRfqStatuses[0] === "quoted"
+                                      ? "bg-indigo-950/40 border-indigo-500/50 text-indigo-400 hover:bg-indigo-950/60"
+                                      : adminRfqStatuses[0] === "completed"
+                                      ? "bg-emerald-950/40 border-emerald-500/50 text-emerald-400 hover:bg-emerald-950/60"
+                                      : adminRfqStatuses[0] === "cancelled"
+                                      ? "bg-rose-950/40 border-rose-500/50 text-rose-400 hover:bg-rose-950/60"
+                                      : "bg-slate-950 border-white/10 text-slate-200 hover:border-indigo-500/40 hover:bg-slate-900"
+                                    : "bg-indigo-950/30 border-indigo-500/40 text-indigo-300 hover:bg-indigo-950/50"
+                                }`}
+                              >
+                                <div className="flex items-center gap-2">
+                                  {adminRfqStatuses.length === 0 ? (
+                                    <span className="h-2 w-2 rounded-full bg-slate-400" />
+                                  ) : adminRfqStatuses.length === 1 ? (
+                                    <span className={`h-2 w-2 rounded-full ${
+                                      adminRfqStatuses[0] === "pending"
+                                        ? "bg-amber-400 animate-pulse"
+                                        : adminRfqStatuses[0] === "processing"
+                                        ? "bg-blue-400 animate-pulse"
+                                        : adminRfqStatuses[0] === "quoted"
+                                        ? "bg-indigo-400"
+                                        : adminRfqStatuses[0] === "completed"
+                                        ? "bg-emerald-400"
+                                        : "bg-rose-400"
+                                    }`} />
+                                  ) : (
+                                    <div className="flex -space-x-1 items-center">
+                                      {adminRfqStatuses.map((st) => (
+                                        <span key={st} className={`h-2 w-2 rounded-full border border-slate-950 ${
+                                          st === "pending" ? "bg-amber-400 animate-pulse" :
+                                          st === "processing" ? "bg-blue-400 animate-pulse" :
+                                          st === "quoted" ? "bg-indigo-400" :
+                                          st === "completed" ? "bg-emerald-400" :
+                                          st === "cancelled" ? "bg-rose-400" : "bg-slate-400"
+                                        }`} />
+                                      ))}
+                                    </div>
+                                  )}
+                                  <span>
+                                    {adminRfqStatuses.length === 0
+                                      ? `Semua Status (${adminRfqStatusCounts[""]})`
+                                      : adminRfqStatuses.length === 1
+                                      ? adminRfqStatuses[0] === "pending"
+                                        ? `Menunggu Proposal (${adminRfqStatusCounts["pending"]})`
+                                        : adminRfqStatuses[0] === "processing"
+                                        ? `Sedang Diproses (${adminRfqStatusCounts["processing"]})`
+                                        : adminRfqStatuses[0] === "quoted"
+                                        ? `Sudah Di-Quoted (${adminRfqStatusCounts["quoted"]})`
+                                        : adminRfqStatuses[0] === "completed"
+                                        ? `Selesai (${adminRfqStatusCounts["completed"]})`
+                                        : adminRfqStatuses[0] === "cancelled"
+                                        ? `Dibatalkan (${adminRfqStatusCounts["cancelled"]})`
+                                        : `Semua Status`
+                                      : `${adminRfqStatuses.length} Status Terpilih`}
+                                  </span>
+                                </div>
+                                <ChevronDown className={`h-3 w-3 text-slate-400 transition-transform duration-200 ${isStatusFilterOpen ? "rotate-180" : ""}`} />
+                              </button>
+
+                              {/* Custom Styled Dropdown Options with pills and subtexts */}
+                              {isStatusFilterOpen && (
+                                <div 
+                                  className="absolute top-full left-0 mt-1.5 w-[260px] bg-slate-950 border border-white/10 rounded-xl shadow-2xl z-50 p-1 divide-y divide-white/5 backdrop-blur-md"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  {/* Color Legend Header */}
+                                  <div className="px-2.5 py-2 bg-slate-900/80 rounded-t-lg border-b border-white/5 text-[10px] text-slate-300">
+                                    <div className="flex items-center gap-1 mb-1.5 font-bold text-slate-200 uppercase tracking-wider text-[9px]">
+                                      <Icons.Info className="h-3 w-3 text-indigo-400" />
+                                      <span>Panduan Warna / Legend</span>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-y-1 gap-x-2 text-slate-400 font-medium">
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shadow-[0_0_4px_rgba(245,158,11,0.5)]" />
+                                        <span>Amber = Pending</span>
+                                      </div>
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="h-1.5 w-1.5 rounded-full bg-blue-400 shadow-[0_0_4px_rgba(59,130,246,0.5)]" />
+                                        <span>Biru = Processing</span>
+                                      </div>
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 shadow-[0_0_4px_rgba(99,102,241,0.5)]" />
+                                        <span>Indigo = Quoted</span>
+                                      </div>
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_4px_rgba(16,185,129,0.5)]" />
+                                        <span>Hijau = Completed</span>
+                                      </div>
+                                      <div className="flex items-center gap-1.5 col-span-2">
+                                        <span className="h-1.5 w-1.5 rounded-full bg-rose-400 shadow-[0_0_4px_rgba(239,68,68,0.5)]" />
+                                        <span>Merah = Cancelled</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="py-1 space-y-0.5">
+                                    {[
+                                      { value: "", label: "Semua Status", desc: "Tampilkan semua RFQ", color: "slate" },
+                                      { value: "pending", label: "Menunggu Proposal", desc: "RFQ baru butuh penawaran", color: "amber" },
+                                      { value: "processing", label: "Sedang Diproses", desc: "Sedang dipersiapkan sales", color: "blue" },
+                                      { value: "quoted", label: "Sudah Di-Quoted", desc: "Proposal penawaran terkirim", color: "indigo" },
+                                      { value: "completed", label: "Selesai", desc: "Transaksi berhasil tuntas", color: "emerald" },
+                                      { value: "cancelled", label: "Dibatalkan", desc: "RFQ ditolak atau batal", color: "rose" }
+                                    ].map((item) => {
+                                      const isSelected = item.value === "" ? adminRfqStatuses.length === 0 : adminRfqStatuses.includes(item.value);
+                                      const count = adminRfqStatusCounts[item.value as keyof typeof adminRfqStatusCounts] || 0;
+                                      return (
+                                        <button
+                                          key={item.value}
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (item.value === "") {
+                                              setAdminRfqStatuses([]);
+                                            } else {
+                                              if (adminRfqStatuses.includes(item.value)) {
+                                                setAdminRfqStatuses(adminRfqStatuses.filter(s => s !== item.value));
+                                              } else {
+                                                setAdminRfqStatuses([...adminRfqStatuses, item.value]);
+                                              }
+                                            }
+                                          }}
+                                          className={`w-full flex items-center justify-between text-left px-2.5 py-1.5 rounded-lg text-xs transition-all cursor-pointer ${
+                                            isSelected 
+                                              ? item.color === "amber"
+                                                ? "bg-amber-950/50 text-amber-300 border border-amber-500/20"
+                                                : item.color === "blue"
+                                                ? "bg-blue-950/50 text-blue-300 border border-blue-500/20"
+                                                : item.color === "indigo"
+                                                ? "bg-indigo-950/50 text-indigo-300 border border-indigo-500/20"
+                                                : item.color === "emerald"
+                                                ? "bg-emerald-950/50 text-emerald-300 border border-emerald-500/20"
+                                                : item.color === "rose"
+                                                ? "bg-rose-950/50 text-rose-300 border border-rose-500/20"
+                                                : "bg-slate-800 text-white border border-white/10"
+                                              : "text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-transparent"
+                                          }`}
+                                        >
+                                          <div className="flex items-center gap-2">
+                                            {/* Pill / side indicator */}
+                                            <span className={`h-2.5 w-2.5 rounded-full flex-shrink-0 ${
+                                              item.color === "amber" ? "bg-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.5)]" :
+                                              item.color === "blue" ? "bg-blue-400 shadow-[0_0_8px_rgba(59,130,246,0.5)]" :
+                                              item.color === "indigo" ? "bg-indigo-400 shadow-[0_0_8px_rgba(99,102,241,0.5)]" :
+                                              item.color === "emerald" ? "bg-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.5)]" :
+                                              item.color === "rose" ? "bg-rose-400 shadow-[0_0_8px_rgba(239,68,68,0.5)]" :
+                                              "bg-slate-500"
+                                            }`} />
+                                            <div className="flex flex-col">
+                                              <span className="font-semibold text-slate-200">
+                                                {item.label} <span className="opacity-75 font-normal">({count})</span>
+                                              </span>
+                                              <span className="text-[10px] text-slate-500">{item.desc}</span>
+                                            </div>
+                                          </div>
+                                          {/* Mini pill name & selection status */}
+                                          <div className="flex items-center gap-1.5">
+                                            <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wider ${
+                                              item.color === "amber" ? "bg-amber-500/10 text-amber-400" :
+                                              item.color === "blue" ? "bg-blue-500/10 text-blue-400" :
+                                              item.color === "indigo" ? "bg-indigo-500/10 text-indigo-400" :
+                                              item.color === "emerald" ? "bg-emerald-500/10 text-emerald-400" :
+                                              item.color === "rose" ? "bg-rose-500/10 text-rose-400" :
+                                              "bg-slate-500/10 text-slate-400"
+                                            }`}>
+                                              {item.value || "All"}
+                                            </span>
+                                            {isSelected && <Check className="h-3.5 w-3.5 text-emerald-400 flex-shrink-0" />}
+                                          </div>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                            {adminRfqStatuses.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setAdminRfqStatuses([])}
                                 className="px-2.5 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/20 rounded-xl font-bold transition-all text-xs flex items-center gap-1 cursor-pointer"
                               >
                                 <X className="h-3 w-3" />
                                 <span>Reset</span>
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Client / Company Dropdown Filter Section */}
+                          <div className="flex flex-wrap items-center gap-2 md:border-l md:border-white/10 md:pl-4">
+                            <div className="flex items-center space-x-2 text-slate-300 font-semibold shrink-0">
+                              <User className="h-4 w-4 text-sky-400" />
+                              <span>Klien:</span>
+                            </div>
+                            <div className="relative">
+                              <select
+                                id="rfq_client_filter"
+                                value={adminRfqClientFilter}
+                                onChange={(e) => setAdminRfqClientFilter(e.target.value)}
+                                className="bg-slate-950 border border-white/10 hover:border-indigo-500/40 rounded-xl px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-all max-w-[220px] cursor-pointer"
+                              >
+                                <option value="">Semua Klien & Instansi</option>
+                                <optgroup label="Kategori Klien" className="text-slate-400 bg-slate-950 font-semibold">
+                                  <option value="cat:perusahaan" className="text-slate-200">🏢 Perusahaan / Corporate</option>
+                                  <option value="cat:pemerintah" className="text-slate-200">🏛️ Instansi Pemerintah / Umum</option>
+                                  <option value="cat:pendidikan" className="text-slate-200">🎓 Lembaga Pendidikan</option>
+                                  <option value="cat:umkm" className="text-slate-200">🏪 UMKM / Bisnis Lokal</option>
+                                  <option value="cat:retail" className="text-slate-200">👤 Pelanggan Retail</option>
+                                </optgroup>
+                                <optgroup label="Nama Klien & Instansi" className="text-slate-400 bg-slate-950 font-semibold">
+                                  {uniqueClientsAndCompanies.map((name) => (
+                                    <option key={name} value={name} className="text-slate-200">
+                                      {name}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              </select>
+                            </div>
+                            {adminRfqClientFilter && (
+                              <button
+                                type="button"
+                                onClick={() => setAdminRfqClientFilter("")}
+                                className="px-2.5 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/20 rounded-xl font-bold transition-all text-xs flex items-center gap-1 cursor-pointer"
+                              >
+                                <X className="h-3 w-3" />
+                                <span>Hapus</span>
                               </button>
                             )}
                           </div>
@@ -3479,8 +4375,163 @@ export default function App() {
                         </div>
                       </div>
 
+                      {/* Status Color Legend */}
+                      <div className="px-5 py-2.5 bg-slate-950/20 border-b border-white/5 flex flex-wrap items-center gap-x-3 gap-y-2 text-[11px] text-slate-400">
+                        <span className="text-[10px] text-slate-500 uppercase font-extrabold tracking-wider flex items-center gap-1">
+                          <Icons.Info className="h-3.5 w-3.5 text-indigo-400" />
+                          <span>Legenda Status:</span>
+                        </span>
+                        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+                          {[
+                            { value: "pending", label: "Menunggu Proposal", color: "amber", desc: "Pending", pulse: true },
+                            { value: "processing", label: "Sedang Diproses", color: "blue", desc: "Processing", pulse: true },
+                            { value: "quoted", label: "Sudah Di-Quoted", color: "indigo", desc: "Quoted" },
+                            { value: "completed", label: "Selesai", color: "emerald", desc: "Completed" },
+                            { value: "cancelled", label: "Dibatalkan", color: "rose", desc: "Cancelled" }
+                          ].map((item) => {
+                            const isFilteringThis = adminRfqStatuses.includes(item.value);
+                            const count = adminRfqStatusCounts[item.value as keyof typeof adminRfqStatusCounts] || 0;
+                            return (
+                              <button
+                                key={item.value}
+                                type="button"
+                                onClick={() => {
+                                  if (adminRfqStatuses.includes(item.value)) {
+                                    setAdminRfqStatuses(adminRfqStatuses.filter(s => s !== item.value));
+                                  } else {
+                                    setAdminRfqStatuses([...adminRfqStatuses, item.value]);
+                                  }
+                                }}
+                                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border transition-all cursor-pointer ${
+                                  isFilteringThis
+                                    ? item.color === "amber"
+                                      ? "bg-amber-500/15 border-amber-500/40 text-amber-300"
+                                      : item.color === "blue"
+                                      ? "bg-blue-500/15 border-blue-500/40 text-blue-300"
+                                      : item.color === "indigo"
+                                      ? "bg-indigo-500/15 border-indigo-500/40 text-indigo-300"
+                                      : item.color === "emerald"
+                                      ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-300"
+                                      : "bg-rose-500/15 border-rose-500/40 text-rose-300"
+                                    : "bg-white/5 border-white/5 hover:bg-white/10 hover:border-white/10 text-slate-400 hover:text-slate-200"
+                                }`}
+                                title={`Saring berdasarkan ${item.label}`}
+                              >
+                                <span className={`h-1.5 w-1.5 rounded-full ${
+                                  item.color === "amber" ? "bg-amber-400 shadow-[0_0_6px_rgba(245,158,11,0.5)]" :
+                                  item.color === "blue" ? "bg-blue-400 shadow-[0_0_6px_rgba(59,130,246,0.5)]" :
+                                  item.color === "indigo" ? "bg-indigo-400 shadow-[0_0_6px_rgba(99,102,241,0.5)]" :
+                                  item.color === "emerald" ? "bg-emerald-400 shadow-[0_0_6px_rgba(16,185,129,0.5)]" :
+                                  "bg-rose-400 shadow-[0_0_6px_rgba(239,68,68,0.5)]"
+                                } ${item.pulse ? "animate-pulse" : ""}`} />
+                                <span className="font-extrabold text-[10px] uppercase tracking-wider">{item.desc}</span>
+                                <span className="text-[10px] font-medium text-slate-300">({item.label})</span>
+                                <span className="font-mono text-[10px] opacity-75 font-black text-indigo-300">({count})</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
                       {rfqs.length > 0 ? (
-                        <div className="overflow-x-auto">
+                        <motion.div
+                          key={adminRfqStatuses.join(",")}
+                          initial={{ opacity: 0, y: 12 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.35, ease: "easeOut" }}
+                          className="overflow-x-auto"
+                        >
+                          {/* Client Detail Status Banner (Active when client filter is set) */}
+                          {adminRfqClientFilter && (
+                            <div className="mb-4 p-4 bg-slate-900/40 border border-indigo-500/20 rounded-2xl flex flex-wrap items-center justify-between gap-4 backdrop-blur-md">
+                              <div className="flex items-center gap-3">
+                                {(() => {
+                                  const cat = selectedClientCategory || "retail";
+                                  const clientCategoryIcons: Record<string, { icon: React.ComponentType<any>; color: string; bg: string; border: string; label: string }> = {
+                                    perusahaan: { 
+                                      icon: Icons.Building2, 
+                                      color: "text-blue-400", 
+                                      bg: "bg-blue-500/10", 
+                                      border: "border-blue-500/20",
+                                      label: "Perusahaan / Corporate" 
+                                    },
+                                    pemerintah: { 
+                                      icon: Icons.Landmark, 
+                                      color: "text-purple-400", 
+                                      bg: "bg-purple-500/10", 
+                                      border: "border-purple-500/20",
+                                      label: "Instansi Pemerintah / Umum" 
+                                    },
+                                    pendidikan: { 
+                                      icon: Icons.GraduationCap, 
+                                      color: "text-cyan-400", 
+                                      bg: "bg-cyan-500/10", 
+                                      border: "border-cyan-500/20",
+                                      label: "Lembaga Pendidikan" 
+                                    },
+                                    umkm: { 
+                                      icon: Icons.Store, 
+                                      color: "text-amber-400", 
+                                      bg: "bg-amber-500/10", 
+                                      border: "border-amber-500/20",
+                                      label: "UMKM / Bisnis Lokal" 
+                                    },
+                                    retail: { 
+                                      icon: Icons.User, 
+                                      color: "text-emerald-400", 
+                                      bg: "bg-emerald-500/10", 
+                                      border: "border-emerald-500/20",
+                                      label: "Pelanggan Retail" 
+                                    },
+                                  };
+                                  const config = clientCategoryIcons[cat] || clientCategoryIcons.retail;
+                                  const CategoryIcon = config.icon;
+                                  return (
+                                    <>
+                                      <div className={`p-2.5 rounded-xl border ${config.bg} ${config.border} ${config.color}`}>
+                                        <CategoryIcon className="h-5 w-5" />
+                                      </div>
+                                      <div>
+                                        <div className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">
+                                          {adminRfqClientFilter.startsWith("cat:") ? "Filter Kategori Klien" : "Filter Klien / Perusahaan"}
+                                        </div>
+                                        <div className="text-sm font-extrabold text-white flex items-center gap-2 mt-0.5">
+                                          <span>{adminRfqClientFilter.startsWith("cat:") ? config.label : adminRfqClientFilter}</span>
+                                          <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${config.bg} ${config.border} ${config.color}`}>
+                                            {config.label}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </>
+                                  );
+                                })()}
+                              </div>
+                              <div className="flex items-center gap-4">
+                                <div className="flex items-center gap-3 md:border-l md:border-white/10 md:pl-6">
+                                  <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400">
+                                    <Icons.TrendingUp className="h-5 w-5 animate-pulse" />
+                                  </div>
+                                  <div>
+                                    <div className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Total Nilai Pending RFQ</div>
+                                    <div className="text-base font-black text-amber-400 font-mono tracking-tight mt-0.5">
+                                      {formatRupiah(selectedClientPendingValue)}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="flex items-center md:border-l md:border-white/10 md:pl-6">
+                                  <button
+                                    type="button"
+                                    onClick={downloadCsvForSelectedClient}
+                                    className="px-4 py-2.5 bg-emerald-600/95 hover:bg-emerald-500 text-white font-extrabold rounded-xl transition-all text-xs flex items-center gap-2 shadow-lg shadow-emerald-600/15 cursor-pointer border border-emerald-500/30 hover:scale-[1.02]"
+                                  >
+                                    <Icons.Download className="h-4 w-4" />
+                                    <span>Download CSV</span>
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
                           <table className="w-full text-left border-collapse text-xs">
                             <thead>
                               <tr className="bg-slate-950/60 text-slate-400 font-bold uppercase tracking-wider border-b border-white/5">
@@ -3490,6 +4541,7 @@ export default function App() {
                                 <th className="p-4">Kategori</th>
                                 <th className="p-4">Daftar Barang</th>
                                 <th className="p-4">Status</th>
+                                <th className="p-4">Komentar Internal</th>
                                 <th className="p-4 text-center">SLA Response (48j)</th>
                                 <th className="p-4 text-center">Aksi / Penawaran AI</th>
                               </tr>
@@ -3538,9 +4590,25 @@ export default function App() {
                                         )}
                                       </td>
                                       <td className="p-4">
-                                        <div className="font-extrabold text-white text-xs">{rfq.clientName}</div>
-                                        {rfq.companyName && <div className="text-[10px] text-slate-400 mt-0.5">{rfq.companyName}</div>}
-                                        <div className="text-[10px] text-slate-500 font-mono mt-1">{rfq.whatsapp} | {rfq.email}</div>
+                                        <div className="font-extrabold text-white text-xs flex items-center gap-1.5">
+                                          {(() => {
+                                            const stat = rfq.status || "pending";
+                                            const dotColors: Record<string, string> = {
+                                              pending: "bg-amber-400 shadow-[0_0_5px_rgba(245,158,11,0.6)]",
+                                              processing: "bg-blue-400 shadow-[0_0_5px_rgba(59,130,246,0.6)]",
+                                              quoted: "bg-indigo-400 shadow-[0_0_5px_rgba(99,102,241,0.6)]",
+                                              completed: "bg-emerald-400 shadow-[0_0_5px_rgba(16,185,129,0.6)]",
+                                              cancelled: "bg-rose-400 shadow-[0_0_5px_rgba(239,68,68,0.6)]",
+                                            };
+                                            const colorClass = dotColors[stat] || dotColors.pending;
+                                            return (
+                                              <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${colorClass} ${stat === "pending" || stat === "processing" ? "animate-pulse" : ""}`} />
+                                            );
+                                          })()}
+                                          <span>{rfq.clientName}</span>
+                                        </div>
+                                        {rfq.companyName && <div className="text-[10px] text-slate-400 mt-0.5 pl-3">{rfq.companyName}</div>}
+                                        <div className="text-[10px] text-slate-500 font-mono mt-1 pl-3">{rfq.whatsapp} | {rfq.email}</div>
                                       </td>
                                       <td className="p-4">
                                         <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${
@@ -3554,15 +4622,22 @@ export default function App() {
                                             ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-300"
                                             : "bg-amber-500/10 border border-amber-500/20 text-amber-300"
                                         }`}>
-                                          {rfq.clientCategory}
+                                          {rfq.clientCategory === "pemerintah" ? "umum" : rfq.clientCategory}
                                         </span>
                                       </td>
                                       <td className="p-4 max-w-xs">
                                         <div className="space-y-1">
                                           {rfq.items.map((it, idx) => (
-                                            <div key={idx} className="text-[11px] text-slate-200 flex justify-between gap-2 bg-white/5 px-2 py-1 rounded">
-                                              <span className="font-bold">{it.name}</span>
-                                              <span className="text-amber-400 font-bold font-mono">x{it.quantity}</span>
+                                            <div key={idx} className="text-[11px] text-slate-200 flex flex-col gap-1 bg-white/5 px-2 py-1.5 rounded">
+                                              <div className="flex justify-between gap-2">
+                                                <span className="font-bold">{it.name}</span>
+                                                <span className="text-amber-400 font-bold font-mono">x{it.quantity}</span>
+                                              </div>
+                                              {it.serialNumber && (
+                                                <div className="text-[9px] font-mono text-indigo-300 bg-indigo-950/40 px-1 py-0.5 rounded self-start border border-indigo-500/10">
+                                                  SN: {it.serialNumber}
+                                                </div>
+                                              )}
                                             </div>
                                           ))}
                                           {rfq.customRequirements && (
@@ -3571,13 +4646,108 @@ export default function App() {
                                         </div>
                                       </td>
                                       <td className="p-4">
-                                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
-                                          rfq.status === "quoted" 
-                                            ? "bg-emerald-500/15 border border-emerald-500/30 text-emerald-400" 
-                                            : "bg-amber-500/15 border border-amber-500/30 text-amber-400"
-                                        }`}>
-                                          {rfq.status === "quoted" ? "Sudah Di-Quoted" : "Menunggu Proposal"}
-                                        </span>
+                                        {(() => {
+                                          const status = rfq.status || "pending";
+                                          const statusConfigs: Record<string, { bg: string; text: string; border: string; label: string; dot: string }> = {
+                                            pending: {
+                                              bg: "bg-amber-500/15",
+                                              text: "text-amber-400",
+                                              border: "border-amber-500/30",
+                                              label: "Menunggu Proposal",
+                                              dot: "bg-amber-400"
+                                            },
+                                            processing: {
+                                              bg: "bg-blue-500/15",
+                                              text: "text-blue-400",
+                                              border: "border-blue-500/30",
+                                              label: "Sedang Diproses",
+                                              dot: "bg-blue-400"
+                                            },
+                                            quoted: {
+                                              bg: "bg-indigo-500/15",
+                                              text: "text-indigo-400",
+                                              border: "border-indigo-500/30",
+                                              label: "Sudah Di-Quoted",
+                                              dot: "bg-indigo-400"
+                                            },
+                                            completed: {
+                                              bg: "bg-emerald-500/15",
+                                              text: "text-emerald-400",
+                                              border: "border-emerald-500/30",
+                                              label: "Selesai",
+                                              dot: "bg-emerald-400"
+                                            },
+                                            cancelled: {
+                                              bg: "bg-rose-500/15",
+                                              text: "text-rose-400",
+                                              border: "border-rose-500/30",
+                                              label: "Dibatalkan",
+                                              dot: "bg-rose-400"
+                                            }
+                                          };
+                                          const cfg = statusConfigs[status] || statusConfigs.pending;
+                                          return (
+                                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border ${cfg.bg} ${cfg.border} ${cfg.text}`}>
+                                              <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot} ${status === "pending" || status === "processing" ? "animate-pulse" : ""}`} />
+                                              <span>{cfg.label}</span>
+                                            </span>
+                                          );
+                                        })()}
+                                      </td>
+                                      <td className="p-4">
+                                        <div className="flex flex-col gap-1 min-w-[140px] max-w-[220px]">
+                                          {rfq.internalComments && rfq.internalComments.length > 0 ? (
+                                            (() => {
+                                              const totalComments = rfq.internalComments.length;
+                                              const readCount = readCommentsMap[rfq.id] || 0;
+                                              const unreadCount = Math.max(0, totalComments - readCount);
+
+                                              return (
+                                                <>
+                                                  <button
+                                                    onClick={() => setSelectedCommentRfq(rfq)}
+                                                    className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1.5 self-start transition-colors relative"
+                                                  >
+                                                    <div className="relative">
+                                                      <Icons.MessageSquare className="h-3 w-3 shrink-0" />
+                                                      {unreadCount > 0 && (
+                                                        <span className="absolute -top-1.5 -right-1.5 flex h-2 w-2">
+                                                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                                                          <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
+                                                        </span>
+                                                      )}
+                                                    </div>
+                                                    <span>{totalComments} Komentar</span>
+                                                    {unreadCount > 0 && (
+                                                      <span className="px-1.5 py-0.5 text-[8px] leading-none font-extrabold bg-rose-500 text-white rounded-full">
+                                                        {unreadCount} Baru
+                                                      </span>
+                                                    )}
+                                                  </button>
+                                                  <div className="text-[10px] text-slate-300 bg-white/5 p-1.5 rounded border border-white/5 leading-normal">
+                                                    <div className="flex items-center gap-1 mb-0.5">
+                                                      <span className="font-bold text-indigo-300">@{rfq.internalComments[totalComments - 1].author.split(" ")[0]}</span>
+                                                      <span className="text-[8px] text-slate-500">
+                                                        ({new Date(rfq.internalComments[totalComments - 1].timestamp).toLocaleDateString("id-ID", { day: "numeric", month: "short" })})
+                                                      </span>
+                                                    </div>
+                                                    <p className="line-clamp-2 text-slate-400 italic">
+                                                      "{rfq.internalComments[totalComments - 1].text}"
+                                                    </p>
+                                                  </div>
+                                                </>
+                                              );
+                                            })()
+                                          ) : (
+                                            <button
+                                              onClick={() => setSelectedCommentRfq(rfq)}
+                                              className="text-[10px] text-slate-500 hover:text-slate-300 font-semibold flex items-center gap-1 py-1 transition-colors"
+                                            >
+                                              <Icons.MessageSquare className="h-3 w-3 shrink-0 text-slate-600" />
+                                              <span>Tulis Komentar...</span>
+                                            </button>
+                                          )}
+                                        </div>
                                       </td>
                                       <td className="p-4 text-center">
                                         {isQuoted ? (
@@ -3651,7 +4821,7 @@ export default function App() {
                                 })
                               ) : (
                                 <tr>
-                                  <td colSpan={8} className="p-12 text-center text-slate-500">
+                                  <td colSpan={9} className="p-12 text-center text-slate-500">
                                     <Search className="h-8 w-8 text-slate-600 mx-auto mb-2" />
                                     <h5 className="font-bold text-slate-400">Tidak ada RFQ yang cocok</h5>
                                     <p className="text-xs text-slate-600">Cobalah kata kunci pencarian atau nomor RFQ lainnya.</p>
@@ -3660,7 +4830,7 @@ export default function App() {
                               )}
                             </tbody>
                           </table>
-                        </div>
+                        </motion.div>
                       ) : (
                         <div className="py-16 text-center text-slate-500 space-y-2">
                           <FileText className="h-10 w-10 text-slate-600 mx-auto" />
@@ -4591,6 +5761,7 @@ export default function App() {
                               icon: "Server",
                               image: "https://images.unsplash.com/photo-1558494949-ef010cbdcc31?w=400&auto=format&fit=crop&q=80",
                               specifications: ["", "", "", "", ""],
+                              serialNumber: "",
                             });
                             setIsEditingCatalog(false);
                             setIsAddingCatalog(true);
@@ -4695,7 +5866,7 @@ export default function App() {
                             </div>
                           </div>
 
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                             <div>
                               <label className="block text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1">Estimasi Rentang Harga *</label>
                               <input
@@ -4705,6 +5876,17 @@ export default function App() {
                                 value={catalogForm.estimatedPriceRange}
                                 onChange={(e) => setCatalogForm({ ...catalogForm, estimatedPriceRange: e.target.value })}
                                 className="w-full px-3.5 py-2 bg-slate-950 border border-white/10 rounded-xl text-xs focus:outline-none text-slate-100 placeholder-slate-600 focus:border-indigo-500 font-mono font-bold"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1">Serial Number (Opsional)</label>
+                              <input
+                                type="text"
+                                placeholder="Contoh: SN-ASUS-98231"
+                                value={catalogForm.serialNumber || ""}
+                                onChange={(e) => setCatalogForm({ ...catalogForm, serialNumber: e.target.value })}
+                                className="w-full px-3.5 py-2 bg-slate-950 border border-white/10 rounded-xl text-xs focus:outline-none text-slate-100 placeholder-slate-600 focus:border-indigo-500 font-mono"
                               />
                             </div>
 
@@ -4866,6 +6048,12 @@ export default function App() {
                                         <div>
                                           <h5 className="font-extrabold text-white text-xs">{item.name}</h5>
                                           <p className="text-[10px] text-slate-400 line-clamp-1 mt-0.5">{item.description}</p>
+                                          {item.serialNumber && (
+                                            <div className="inline-flex items-center space-x-1 text-[9px] font-mono text-indigo-400 bg-indigo-950/40 px-1.5 py-0.5 rounded border border-indigo-500/10 mt-1">
+                                              <Icons.QrCode className="h-2.5 w-2.5" />
+                                              <span>SN: {item.serialNumber}</span>
+                                            </div>
+                                          )}
                                         </div>
                                       </div>
                                     </td>
@@ -4911,6 +6099,7 @@ export default function App() {
                                               icon: item.icon || "Package",
                                               image: item.image || "",
                                               specifications: filledSpecs,
+                                              serialNumber: item.serialNumber || "",
                                             });
                                             setIsAddingCatalog(false);
                                             setIsEditingCatalog(true);
@@ -5412,6 +6601,18 @@ export default function App() {
                       <td className="p-3 text-center font-bold text-slate-500">{index + 1}</td>
                       <td className="p-3 space-y-1 text-left">
                         <div className="font-bold text-slate-900">{item.name}</div>
+                        {(() => {
+                          const matchingRfq = rfqs.find(r => r.id === selectedQuotation.rfqId);
+                          const matchingRfqItem = matchingRfq?.items.find(it => it.name === item.name);
+                          if (matchingRfqItem?.serialNumber) {
+                            return (
+                              <div className="inline-flex items-center space-x-1 text-[9px] font-mono text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 no-print">
+                                <span>SN: {matchingRfqItem.serialNumber}</span>
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()}
                         {item.specification && (
                           <p className="text-[10px] text-slate-500 whitespace-pre-line leading-relaxed italic">
                             {item.specification}
@@ -5746,9 +6947,21 @@ export default function App() {
             
             {/* Modal Controls (Sticky on Top of Modal) */}
             <div className="sticky top-0 bg-white/95 backdrop-blur-sm py-4 -mt-4 mb-6 border-b border-slate-100 flex items-center justify-between z-20 no-print">
-              <span className="text-xs font-mono font-bold text-slate-500 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200/50">
-                Katalog Resmi - PT Berkah Bintang Solusindo
-              </span>
+              <div className="flex items-center space-x-4">
+                <span className="text-xs font-mono font-bold text-slate-500 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200/50">
+                  Katalog Resmi - PT Berkah Bintang Solusindo
+                </span>
+                
+                <label className="flex items-center space-x-2 text-xs font-semibold text-slate-600 hover:text-slate-900 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={showQrInPdf}
+                    onChange={(e) => setShowQrInPdf(e.target.checked)}
+                    className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 h-4 w-4 cursor-pointer"
+                  />
+                  <span>Tampilkan QR Code</span>
+                </label>
+              </div>
               
               <div className="flex items-center space-x-2">
                 <button 
@@ -5793,12 +7006,26 @@ export default function App() {
                   </p>
                 </div>
                 
-                <div className="text-right space-y-1.5 bg-slate-50 border border-slate-200 p-3.5 rounded-2xl">
-                  <h3 className="text-sm font-extrabold text-indigo-700 uppercase tracking-wider">Katalog Perangkat</h3>
-                  <div className="font-mono text-[9px] text-slate-600">
-                    <div>Kategori: <span className="font-bold text-slate-900">{catalogCategory}</span></div>
-                    <div>Tanggal: <span className="font-bold text-slate-900">{new Date().toLocaleDateString("id-ID", { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span></div>
-                    <div>Total Item: <span className="font-bold text-slate-900">{filteredProducts.length} Perangkat</span></div>
+                <div className="flex items-start space-x-3">
+                  {showQrInPdf && (
+                    <div className="bg-white border border-slate-200 p-1.5 rounded-2xl flex flex-col items-center justify-center text-center w-[100px] shadow-sm shrink-0">
+                      <img 
+                        src={`https://api.qrserver.com/v1/create-qr-code/?size=100x100&color=0f172a&data=${encodeURIComponent(typeof window !== "undefined" ? window.location.origin + window.location.pathname : "https://ais-pre-berlxqagrxrt5v55xbqzsl-42487289899.asia-east1.run.app")}`}
+                        alt="QR Katalog"
+                        className="w-20 h-20"
+                        referrerPolicy="no-referrer"
+                      />
+                      <span className="text-[7px] font-mono text-slate-400 mt-1 uppercase font-bold tracking-wider">Pindai Akses</span>
+                    </div>
+                  )}
+                  
+                  <div className="text-right space-y-1.5 bg-slate-50 border border-slate-200 p-3.5 rounded-2xl">
+                    <h3 className="text-sm font-extrabold text-indigo-700 uppercase tracking-wider">Katalog Perangkat</h3>
+                    <div className="font-mono text-[9px] text-slate-600">
+                      <div>Kategori: <span className="font-bold text-slate-900">{catalogCategory}</span></div>
+                      <div>Tanggal: <span className="font-bold text-slate-900">{new Date().toLocaleDateString("id-ID", { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span></div>
+                      <div>Total Item: <span className="font-bold text-slate-900">{filteredProducts.length} Perangkat</span></div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -5867,9 +7094,19 @@ export default function App() {
                           </td>
                           <td className="p-3">
                             <h4 className="font-bold text-slate-900 text-sm leading-snug">{prod.name}</h4>
-                            <span className="text-[9px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-semibold border border-slate-200 mt-1 inline-block uppercase">
-                              {prod.category}
-                            </span>
+                            <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                              <span className="text-[9px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-semibold border border-slate-200 uppercase">
+                                {prod.category}
+                              </span>
+                              <button
+                                onClick={() => setSelectedQrProduct(prod)}
+                                className="inline-flex items-center space-x-1 px-1.5 py-0.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded border border-indigo-100 text-[9px] font-bold transition-all cursor-pointer no-print"
+                                title="Lihat QR Code Perangkat"
+                              >
+                                <Icons.QrCode className="h-2.5 w-2.5" />
+                                <span>Lihat QR</span>
+                              </button>
+                            </div>
                             <p className="text-[10px] text-slate-500 mt-1 leading-normal max-w-xs">{prod.description}</p>
                           </td>
                           <td className="p-3">
@@ -5931,6 +7168,84 @@ export default function App() {
       )}
 
       {/* ==================================== */}
+      {/* MODAL VIEW: PRODUCT QR CODE MODAL     */}
+      {/* ==================================== */}
+      {selectedQrProduct && (() => {
+        const barcodeMappings: Record<string, string> = {
+          "prod_1": "8895431201",
+          "prod_2": "1928471048",
+          "prod_3": "3049182740",
+          "prod_4": "4095817263",
+          "prod_5": "5120394857",
+          "prod_6": "6238475910",
+          "prod_7": "7349581023",
+          "prod_8": "8450192837",
+        };
+        const qrData = barcodeMappings[selectedQrProduct.id] || selectedQrProduct.id;
+        const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&color=0f172a&data=${encodeURIComponent(qrData)}`;
+
+        return (
+          <div className="fixed inset-0 z-[110] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-fadeIn no-print" id="product-qr-modal">
+            <div className="bg-slate-900 border border-white/10 text-white rounded-3xl w-full max-w-sm p-6 sm:p-8 shadow-2xl relative font-sans text-center space-y-5 animate-scaleUp">
+              
+              {/* Modal Close */}
+              <button 
+                onClick={() => setSelectedQrProduct(null)}
+                className="absolute top-4 right-4 p-1.5 hover:bg-white/10 rounded-full transition-all text-slate-400 hover:text-white cursor-pointer border border-white/10"
+              >
+                <Icons.X className="h-4 w-4" />
+              </button>
+
+              <div className="mx-auto w-12 h-12 bg-indigo-500/10 border border-indigo-500/25 text-indigo-400 rounded-full flex items-center justify-center">
+                <QrCode className="h-6 w-6" />
+              </div>
+
+              <div className="space-y-1">
+                <h3 className="text-base font-extrabold text-white">QR Code Produk</h3>
+                <p className="text-indigo-300 font-bold text-sm leading-snug">{selectedQrProduct.name}</p>
+                <p className="text-slate-400 text-[11px] leading-relaxed">Pindai menggunakan modul Quick Scan atau kamera lapangan untuk identifikasi fisik produk secara instan.</p>
+              </div>
+
+              {/* QR Code Image Container */}
+              <div className="bg-white p-4.5 rounded-2xl inline-block shadow-inner mx-auto border border-white/5">
+                <img 
+                  src={qrCodeUrl}
+                  alt={`QR Code ${selectedQrProduct.name}`}
+                  className="w-44 h-44 mx-auto"
+                  referrerPolicy="no-referrer"
+                />
+              </div>
+
+              <div className="bg-slate-950/50 border border-white/5 rounded-xl p-3 text-left space-y-1 font-mono text-[10px]">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">ID Produk:</span>
+                  <span className="text-slate-300 font-bold">{selectedQrProduct.id}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Kategori:</span>
+                  <span className="text-slate-300 font-bold uppercase">{selectedQrProduct.category}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Data Scan:</span>
+                  <span className="text-indigo-300 font-black">{qrData}</span>
+                </div>
+              </div>
+
+              <div className="pt-2">
+                <button
+                  onClick={() => setSelectedQrProduct(null)}
+                  className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer"
+                >
+                  Tutup
+                </button>
+              </div>
+
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ==================================== */}
       {/* MODAL VIEW: CATALOG QR CODE          */}
       {/* ==================================== */}
       {showQrCodeModal && (
@@ -5990,6 +7305,184 @@ export default function App() {
                 Tutup
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================== */}
+      {/* MODAL VIEW: FIELD TECHNICIAN QR CODE CARD      */}
+      {/* ============================================== */}
+      {showQrCardModal && (
+        <div className="fixed inset-0 z-[110] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-fadeIn" id="print-qr-card-modal">
+          <div className="bg-slate-900 border border-white/10 text-white rounded-3xl w-full max-w-2xl p-6 sm:p-8 shadow-2xl relative font-sans space-y-6 animate-scaleUp no-print-inside">
+            
+            {/* Modal Close */}
+            <button 
+              onClick={() => setShowQrCardModal(false)}
+              className="absolute top-4 right-4 p-1.5 hover:bg-white/10 rounded-full transition-all text-slate-400 hover:text-white cursor-pointer border border-white/10 no-print"
+            >
+              <X className="h-4 w-4" />
+            </button>
+
+            {/* Title block */}
+            <div className="flex items-center space-x-3 border-b border-white/10 pb-4 no-print">
+              <div className="w-10 h-10 bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 rounded-xl flex items-center justify-center">
+                <Icons.Contact className="h-5 w-5" />
+              </div>
+              <div className="text-left">
+                <h3 className="text-lg font-bold text-white">Kartu QR Akses Lapangan</h3>
+                <p className="text-slate-400 text-xs">Desain & ekspor kartu barcode fisik untuk teknisi lapangan atau dipasang di rack server.</p>
+              </div>
+            </div>
+
+            {/* Customization controls */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-950/50 p-4 rounded-2xl border border-white/5 no-print">
+              <div className="space-y-2 text-left">
+                <span className="block text-xs font-bold text-slate-300">Pilih Warna Kartu:</span>
+                <div className="flex flex-wrap gap-2">
+                  {(["emerald", "indigo", "slate", "amber"] as const).map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => setQrCardTheme(t)}
+                      className={`px-3 py-1.5 rounded-lg text-[10px] font-bold capitalize transition-all cursor-pointer border ${
+                        qrCardTheme === t 
+                          ? "bg-indigo-600 border-indigo-500 text-white" 
+                          : "bg-slate-800 border-white/5 text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2 text-left">
+                <span className="block text-xs font-bold text-slate-300">Ukuran Kartu:</span>
+                <div className="flex flex-wrap gap-2">
+                  {(["standard", "badge", "large"] as const).map((sz) => (
+                    <button
+                      key={sz}
+                      onClick={() => setQrCardSize(sz)}
+                      className={`px-3 py-1.5 rounded-lg text-[10px] font-bold capitalize transition-all cursor-pointer border ${
+                        qrCardSize === sz 
+                          ? "bg-indigo-600 border-indigo-500 text-white" 
+                          : "bg-slate-800 border-white/5 text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      {sz}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Live Card Preview Area */}
+            <div className="flex justify-center py-4 bg-slate-950/20 rounded-2xl border border-dashed border-white/10 overflow-hidden">
+              <div 
+                id="qr-field-card-preview"
+                className={`bg-white rounded-3xl border-2 p-6 sm:p-8 flex flex-col items-center justify-between text-center relative shadow-2xl transition-all duration-300 ${
+                  qrCardTheme === "emerald" ? "border-emerald-500 text-slate-900" :
+                  qrCardTheme === "indigo" ? "border-indigo-500 text-slate-900" :
+                  qrCardTheme === "slate" ? "border-slate-800 text-slate-900" :
+                  "border-amber-500 text-slate-900"
+                } ${
+                  qrCardSize === "badge" ? "w-72 max-w-xs min-h-[400px] text-xs" :
+                  qrCardSize === "large" ? "w-[440px] max-w-md min-h-[560px] text-base" :
+                  "w-[380px] max-w-sm min-h-[500px] text-sm"
+                }`}
+              >
+                {/* Stamp overlay */}
+                <div className={`absolute top-[40%] left-1/2 -translate-x-1/2 -translate-y-1/2 border-4 font-mono text-[10px] font-black uppercase tracking-widest rounded-xl px-4 py-2 transform -rotate-12 select-none pointer-events-none ${
+                  qrCardTheme === "emerald" ? "border-emerald-500/10 text-emerald-500/10" :
+                  qrCardTheme === "indigo" ? "border-indigo-500/10 text-indigo-500/10" :
+                  qrCardTheme === "slate" ? "border-slate-800/10 text-slate-800/10" :
+                  "border-amber-500/10 text-amber-500/10"
+                }`}>
+                  BBS OFFICIAL PASS
+                </div>
+
+                {/* Header (BBS Logo & Title) */}
+                <div className="space-y-1 w-full pb-4 border-b border-slate-100">
+                  <div className="flex items-center justify-center space-x-2">
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-extrabold text-white text-sm shadow shrink-0 ${
+                      qrCardTheme === "emerald" ? "bg-emerald-600" :
+                      qrCardTheme === "indigo" ? "bg-indigo-600" :
+                      qrCardTheme === "slate" ? "bg-slate-800" :
+                      "bg-amber-600"
+                    }`}>
+                      BBS
+                    </div>
+                    <div className="text-left">
+                      <h4 className="text-sm font-black tracking-tight text-slate-950 uppercase line-clamp-1">{settings.companyName}</h4>
+                      <p className={`text-[8px] font-bold tracking-widest uppercase line-clamp-1 ${
+                        qrCardTheme === "emerald" ? "text-emerald-600" :
+                        qrCardTheme === "indigo" ? "text-indigo-600" :
+                        qrCardTheme === "slate" ? "text-slate-600" :
+                        "text-amber-600"
+                      }`}>{settings.tagline}</p>
+                    </div>
+                  </div>
+                  <div className={`text-[9px] font-black tracking-wider uppercase inline-block px-2.5 py-0.5 rounded-full mt-2 ${
+                    qrCardTheme === "emerald" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" :
+                    qrCardTheme === "indigo" ? "bg-indigo-50 text-indigo-700 border border-indigo-200" :
+                    qrCardTheme === "slate" ? "bg-slate-100 text-slate-700 border border-slate-300" :
+                    "bg-amber-50 text-amber-700 border border-amber-200"
+                  }`}>
+                    FIELD ACCESS CARD
+                  </div>
+                </div>
+
+                {/* Body (QR Code Image) */}
+                <div className="my-6 space-y-3 flex flex-col items-center justify-center">
+                  <div className={`p-4 bg-white rounded-2xl inline-block border-2 ${
+                    qrCardTheme === "emerald" ? "border-emerald-100 shadow-emerald-100/30 shadow-lg" :
+                    qrCardTheme === "indigo" ? "border-indigo-100 shadow-indigo-100/30 shadow-lg" :
+                    qrCardTheme === "slate" ? "border-slate-200 shadow-slate-200/30 shadow-lg" :
+                    "border-amber-100 shadow-amber-100/30 shadow-lg"
+                  }`}>
+                    <img 
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&color=0f172a&data=${encodeURIComponent(typeof window !== "undefined" ? window.location.origin + window.location.pathname : "https://ais-pre-berlxqagrxrt5v55xbqzsl-42487289899.asia-east1.run.app")}`}
+                      alt="QR Code Lapangan"
+                      className="w-36 h-36 mx-auto"
+                      referrerPolicy="no-referrer"
+                    />
+                  </div>
+                  <span className="text-[10px] font-mono text-slate-400 tracking-wider">SCAN TO ENTER PORTAL</span>
+                </div>
+
+                {/* Footer instructions */}
+                <div className="space-y-2 w-full pt-4 border-t border-slate-100 text-left">
+                  <p className="text-[10px] text-slate-500 leading-normal text-center font-medium">
+                    Pindai kartu QR ini menggunakan smartphone untuk membuka katalog lengkap e-procurement, spesifikasi, dan membuat penawaran RFQ instan di lapangan.
+                  </p>
+                  <div className="flex justify-between items-center text-[8px] font-mono text-slate-400 mt-2 pt-2 border-t border-slate-50">
+                    <span>ID: BBS-FLD-{new Date().getFullYear()}-{catalogCategory.substring(0,3).toUpperCase()}</span>
+                    <span>Status: AKTIF</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Bottom Controls */}
+            <div className="flex items-center justify-between gap-3 pt-2 no-print">
+              <button
+                onClick={() => setShowQrCardModal(false)}
+                className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 border border-white/10 rounded-xl text-xs font-bold transition-all text-slate-300 hover:text-white cursor-pointer"
+              >
+                Tutup
+              </button>
+              
+              <button
+                onClick={() => {
+                  window.print();
+                }}
+                className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer shadow-lg active:scale-95"
+              >
+                <Printer className="h-3.5 w-3.5" />
+                <span>Cetak Kartu Lapangan</span>
+              </button>
+            </div>
+
           </div>
         </div>
       )}
@@ -6715,6 +8208,79 @@ export default function App() {
                   </div>
                 );
               })()}
+
+              {/* QR Code Sharing Card for Comparison */}
+              {selectedCompareIds.length > 0 && (
+                <div className="mt-8 bg-slate-950/60 border border-indigo-500/20 rounded-2xl p-6 flex flex-col md:flex-row items-center gap-6 animate-fadeIn">
+                  <div className="bg-white p-3 rounded-2xl border-2 border-indigo-500/20 shadow-[0_4px_20px_rgba(99,102,241,0.15)] shrink-0">
+                    <img 
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&color=4f46e5&data=${encodeURIComponent(
+                        window.location.origin + window.location.pathname + "?compare=" + selectedCompareIds.join(",")
+                      )}`} 
+                      alt="Comparison QR Code" 
+                      className="w-32 h-32 md:w-36 md:h-36"
+                    />
+                  </div>
+                  
+                  <div className="flex-1 space-y-3 text-center md:text-left">
+                    <div className="space-y-1">
+                      <span className="text-[10px] bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider inline-block">
+                        Bagikan Laporan Perbandingan
+                      </span>
+                      <h4 className="text-sm font-bold text-white">Buka di Smartphone atau Kirim ke Rekan Kerja</h4>
+                      <p className="text-xs text-slate-400 leading-relaxed max-w-xl">
+                        Pindai kode QR di atas untuk membuka tabel perbandingan teknis lengkap ini langsung di perangkat mobile Anda, atau bagikan tautan ini ke tim procurement Anda.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-center md:justify-start gap-2.5 pt-1">
+                      <button
+                        onClick={async () => {
+                          const shareUrl = window.location.origin + window.location.pathname + "?compare=" + selectedCompareIds.join(",");
+                          if (navigator.share) {
+                            try {
+                              await navigator.share({
+                                title: "Perbandingan Teknis Perangkat - Berkah Bintang Solusindo",
+                                text: `Bandingkan spesifikasi teknis perangkat terbaik pilihan kami.`,
+                                url: shareUrl
+                              });
+                            } catch (err) {
+                              console.log("Error sharing:", err);
+                            }
+                          } else {
+                            try {
+                              await navigator.clipboard.writeText(shareUrl);
+                              showToast("Link perbandingan berhasil disalin ke clipboard!", "success");
+                            } catch (err) {
+                              showToast("Gagal menyalin link perbandingan.", "error");
+                            }
+                          }
+                        }}
+                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-400/20 hover:border-indigo-400/40 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-md shadow-indigo-600/10 active:scale-95"
+                      >
+                        <Icons.Share2 className="h-3.5 w-3.5" />
+                        <span>Bagikan Tautan</span>
+                      </button>
+
+                      <button
+                        onClick={async () => {
+                          const shareUrl = window.location.origin + window.location.pathname + "?compare=" + selectedCompareIds.join(",");
+                          try {
+                            await navigator.clipboard.writeText(shareUrl);
+                            showToast("Link perbandingan berhasil disalin ke clipboard!", "success");
+                          } catch (err) {
+                            showToast("Gagal menyalin link perbandingan.", "error");
+                          }
+                        }}
+                        className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-indigo-500/30 text-slate-300 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 active:scale-95"
+                      >
+                        <Icons.Copy className="h-3.5 w-3.5 text-indigo-400" />
+                        <span>Salin Link</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Footer */}
@@ -6741,15 +8307,15 @@ export default function App() {
             print-color-adjust: exact !important;
           }
           /* Hide EVERYTHING in the application body first */
-          #root > *:not(#quotation_sheet_modal):not(#print-session-catalog),
+          #root > *:not(#quotation_sheet_modal):not(#print-session-catalog):not(#print-qr-card-modal),
           header, footer, nav, aside, 
-          .fixed.inset-0:not(#quotation_sheet_modal):not(#print-session-catalog) {
+          .fixed.inset-0:not(#quotation_sheet_modal):not(#print-session-catalog):not(#print-qr-card-modal) {
             display: none !important;
             opacity: 0 !important;
             pointer-events: none !important;
           }
-          /* Ensure either modal matches full page width on print */
-          #quotation_sheet_modal, #print-session-catalog {
+          /* Ensure any printable modal matches full page width on print */
+          #quotation_sheet_modal, #print-session-catalog, #print-qr-card-modal {
             position: absolute !important;
             left: 0 !important;
             top: 0 !important;
@@ -6763,7 +8329,7 @@ export default function App() {
             padding: 0 !important;
             display: block !important;
           }
-          #quotation_sheet_modal > div, #print-session-catalog > div {
+          #quotation_sheet_modal > div, #print-session-catalog > div, #print-qr-card-modal > div {
             max-height: none !important;
             overflow: visible !important;
             box-shadow: none !important;
@@ -6773,6 +8339,11 @@ export default function App() {
             max-width: 100% !important;
             background: white !important;
             color: black !important;
+          }
+          #print-qr-card-modal #qr-field-card-preview {
+            margin: 2rem auto !important;
+            box-shadow: none !important;
+            border: 2px solid #cbd5e1 !important;
           }
           /* Hide button UI, controls, and browser-specific dialog headers */
           .no-print, button, .sticky, svg {
@@ -7619,6 +9190,236 @@ export default function App() {
                 </form>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 8. INTERNAL COMMENTS MODAL */}
+      {selectedCommentRfq && (
+        <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-fadeIn no-print" id="rfq-comments-modal">
+          <div className="bg-slate-900 border border-white/10 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl flex flex-col max-h-[85vh]">
+            {/* Header */}
+            <div className="p-4 bg-white/5 border-b border-white/10 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Icons.MessageSquare className="h-4.5 w-4.5 text-indigo-400" />
+                <div>
+                  <h3 className="font-extrabold text-white text-sm">Komentar Internal RFQ</h3>
+                  <p className="text-[10px] text-indigo-300 font-mono mt-0.5">{selectedCommentRfq.rfqNumber} &bull; {selectedCommentRfq.clientName}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedCommentRfq(null)}
+                className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors cursor-pointer"
+              >
+                <Icons.X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Comments Thread */}
+            <div className="flex-1 p-4 overflow-y-auto space-y-3 min-h-[250px] max-h-[400px] scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent relative">
+              {isCameraOpen ? (
+                <div className="absolute inset-0 bg-slate-950 flex flex-col items-center justify-center p-4 z-20">
+                  <div className="relative w-full max-w-sm rounded-2xl overflow-hidden border border-white/10 bg-black aspect-video flex items-center justify-center">
+                    <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+                    <div className="absolute top-2 right-2 bg-black/60 px-2 py-1 rounded text-[9px] text-white flex items-center gap-1 font-mono">
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>
+                      <span>KAMERA STAF</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 mt-4">
+                    <button
+                      type="button"
+                      onClick={capturePhoto}
+                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-lg"
+                    >
+                      <Icons.Camera className="h-4 w-4" />
+                      <span>Ambil Foto</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={stopCamera}
+                      className="px-4 py-2 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Icons.X className="h-4 w-4" />
+                      <span>Batal</span>
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {selectedCommentRfq.internalComments && selectedCommentRfq.internalComments.length > 0 ? (
+                selectedCommentRfq.internalComments.map((comment) => (
+                  <div 
+                    key={comment.id} 
+                    className={`p-3 rounded-xl space-y-1 transition-all border ${
+                      comment.role === "superadmin" 
+                        ? "bg-indigo-500/[4%] border-indigo-500/25 shadow-sm shadow-indigo-500/[2%]" 
+                        : comment.role === "admin"
+                        ? "bg-emerald-500/[4%] border-emerald-500/25 shadow-sm shadow-emerald-500/[2%]"
+                        : "bg-amber-500/[4%] border-amber-500/25 shadow-sm shadow-amber-500/[2%]"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between text-[10px]">
+                      <div className="flex items-center space-x-1.5">
+                        <span className="font-extrabold text-indigo-300">@{comment.author}</span>
+                        <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold uppercase ${
+                          comment.role === "superadmin" 
+                            ? "bg-indigo-500/10 border border-indigo-500/20 text-indigo-300" 
+                            : comment.role === "admin"
+                            ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-300"
+                            : "bg-amber-500/10 border border-amber-500/20 text-amber-300"
+                        }`}>
+                          {comment.role === "superadmin" ? "S. Admin" : comment.role}
+                        </span>
+                      </div>
+                      <span className="text-slate-500 font-mono">
+                        {new Date(comment.timestamp).toLocaleString("id-ID", {
+                          day: "numeric",
+                          month: "short",
+                          hour: "2-digit",
+                          minute: "2-digit"
+                        })}
+                      </span>
+                    </div>
+                    {comment.text && (
+                      <p className="text-xs text-slate-300 whitespace-pre-wrap leading-relaxed">
+                        {comment.text}
+                      </p>
+                    )}
+                    {comment.imageUrl && (
+                      <div 
+                        className="mt-2 relative rounded-lg overflow-hidden border border-white/10 max-w-[200px] group cursor-pointer"
+                        onClick={() => setPreviewImageUrl(comment.imageUrl || null)}
+                      >
+                        <img 
+                          src={comment.imageUrl} 
+                          alt="Lampiran foto komentar" 
+                          className="max-h-36 object-cover rounded-lg group-hover:scale-[1.02] transition-transform duration-200" 
+                          referrerPolicy="no-referrer" 
+                        />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity rounded-lg">
+                          <Icons.Maximize2 className="h-4 w-4 text-white" />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center text-center py-8 text-slate-500">
+                  <Icons.MessageSquare className="h-8 w-8 text-slate-600 mb-2" />
+                  <p className="text-xs font-semibold">Belum ada komentar internal</p>
+                  <p className="text-[10px] text-slate-600 mt-0.5">Mulai diskusikan status pengadaan RFQ ini dengan tim.</p>
+                </div>
+              )}
+            </div>
+
+            {/* Input Form */}
+            <div className="p-4 bg-slate-950/60 border-t border-white/10">
+              {/* Captured Image Preview Area */}
+              {capturedImage && (
+                <div className="mb-3 flex items-center gap-3 p-2 bg-white/5 border border-white/5 rounded-xl">
+                  <div className="relative h-12 w-16 rounded-lg overflow-hidden border border-white/10 bg-black">
+                    <img src={capturedImage} alt="Attachment thumbnail" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                    <button
+                      type="button"
+                      onClick={() => setCapturedImage(null)}
+                      className="absolute top-0.5 right-0.5 p-0.5 bg-rose-600/95 hover:bg-rose-500 rounded-full text-white transition-colors cursor-pointer"
+                    >
+                      <Icons.X className="h-3 w-3" />
+                    </button>
+                  </div>
+                  <div className="text-[10px]">
+                    <p className="text-slate-300 font-bold">Foto Terlampir</p>
+                    <p className="text-slate-500 font-mono">Siap dikirim bersama komentar</p>
+                  </div>
+                </div>
+              )}
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handlePostComment();
+                }}
+                className="flex gap-2 items-center"
+              >
+                {/* Hidden File Input Fallback */}
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  ref={fileInputRef}
+                  onChange={handleFileCapture}
+                  className="hidden"
+                />
+
+                {/* Camera Button */}
+                <button
+                  type="button"
+                  onClick={startCamera}
+                  disabled={isPostingComment || isCameraOpen}
+                  title="Ambil Foto dari Kamera"
+                  className="p-2 bg-white/5 hover:bg-white/10 disabled:opacity-50 text-slate-400 hover:text-indigo-400 rounded-xl transition-all flex items-center justify-center cursor-pointer shrink-0 border border-white/5"
+                >
+                  <Icons.Camera className="h-4 w-4" />
+                </button>
+
+                <input
+                  type="text"
+                  placeholder="Ketik komentar internal staf..."
+                  value={commentInput}
+                  onChange={(e) => setCommentInput(e.target.value)}
+                  disabled={isPostingComment}
+                  required={!capturedImage}
+                  className="flex-1 px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
+                />
+                <button
+                  type="submit"
+                  disabled={isPostingComment || (!commentInput.trim() && !capturedImage)}
+                  className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-950/40 disabled:text-indigo-800 text-white rounded-xl text-xs font-bold transition-all flex items-center space-x-1 cursor-pointer"
+                >
+                  {isPostingComment ? (
+                    <Icons.RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <>
+                      <Icons.Send className="h-3.5 w-3.5" />
+                      <span>Kirim</span>
+                    </>
+                  )}
+                </button>
+              </form>
+              <div className="mt-2 flex items-center gap-1.5 text-[9px] text-slate-500">
+                <Icons.Info className="h-3 w-3 text-slate-600 shrink-0" />
+                <span>Komentar ini bersifat internal dan hanya dapat dilihat oleh staff admin & sales.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 9. COMMENT IMAGE LIGHTBOX PREVIEW */}
+      {previewImageUrl && (
+        <div 
+          className="fixed inset-0 z-[110] bg-slate-950/95 backdrop-blur-md flex flex-col items-center justify-center p-4 animate-fadeIn no-print"
+          onClick={() => setPreviewImageUrl(null)}
+        >
+          <div className="absolute top-4 right-4 flex items-center gap-2">
+            <button
+              onClick={() => setPreviewImageUrl(null)}
+              className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors cursor-pointer border border-white/5"
+            >
+              <Icons.X className="h-5 w-5" />
+            </button>
+          </div>
+          <div className="max-w-4xl max-h-[80vh] rounded-2xl overflow-hidden border border-white/10 shadow-2xl bg-slate-900" onClick={(e) => e.stopPropagation()}>
+            <img 
+              src={previewImageUrl} 
+              alt="Fullscreen Attached Photo" 
+              className="max-w-full max-h-[80vh] object-contain mx-auto" 
+              referrerPolicy="no-referrer" 
+            />
+          </div>
+          <div className="mt-4 text-center">
+            <p className="text-xs text-slate-400 font-medium">Klik di mana saja untuk menutup</p>
           </div>
         </div>
       )}

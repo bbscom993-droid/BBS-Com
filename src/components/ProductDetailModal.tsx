@@ -16,7 +16,11 @@ import {
   ShoppingCart,
   Camera,
   Info,
-  RotateCw
+  RotateCw,
+  QrCode,
+  Share2,
+  Copy,
+  Check
 } from "lucide-react";
 import { ProductItem } from "../types";
 
@@ -38,6 +42,8 @@ export default function ProductDetailModal({
   onAddToCart,
 }: ProductDetailModalProps) {
   const [activeTab, setActiveTab] = useState<"specs" | "warehouse">("specs");
+  const [showQrShare, setShowQrShare] = useState(false);
+  const [copySuccess, setCopySuccess] = useState(false);
   
   // Scanner state inside the modal
   const [scannerActive, setScannerActive] = useState(false);
@@ -218,9 +224,17 @@ export default function ProductDetailModal({
               <span className="text-[10px] bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 px-2.5 py-1 rounded-full font-bold uppercase tracking-wider">
                 {product.category}
               </span>
-              <span className="text-[9px] font-mono text-slate-500 bg-white/5 px-2 py-0.5 rounded border border-white/5">
-                SKU: {currentWh?.sku}
-              </span>
+              <div className="flex flex-col items-end space-y-1">
+                <span className="text-[9px] font-mono text-slate-500 bg-white/5 px-2 py-0.5 rounded border border-white/5">
+                  SKU: {currentWh?.sku}
+                </span>
+                {product.serialNumber && (
+                  <span className="text-[9px] font-mono text-indigo-300 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded flex items-center gap-1 font-bold">
+                    <Info className="h-2.5 w-2.5 text-indigo-400" />
+                    <span>SN: {product.serialNumber}</span>
+                  </span>
+                )}
+              </div>
             </div>
 
             {product.image ? (
@@ -251,29 +265,108 @@ export default function ProductDetailModal({
               <span className="text-sm font-extrabold text-amber-400">{product.estimatedPriceRange}</span>
             </div>
 
-            <button 
-              onClick={() => {
-                onAddToCart(product);
-                // Simple feedback
-                const origText = document.getElementById(`add-btn-detail-${product.id}`)?.innerText;
-                const btn = document.getElementById(`add-btn-detail-${product.id}`);
-                if (btn) {
-                  btn.innerText = "✓ Berhasil Ditambahkan";
-                  btn.classList.add("bg-emerald-600", "border-emerald-500");
-                  setTimeout(() => {
-                    if (btn) {
-                      btn.innerText = origText || "Tambahkan ke Keranjang RFQ";
-                      btn.classList.remove("bg-emerald-600", "border-emerald-500");
-                    }
-                  }, 1500);
-                }
-              }}
-              id={`add-btn-detail-${product.id}`}
-              className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold rounded-xl text-xs transition-all flex items-center justify-center space-x-2 cursor-pointer shadow-lg shadow-indigo-600/15"
-            >
-              <Plus className="h-4 w-4" />
-              <span>Tambahkan ke Keranjang RFQ</span>
-            </button>
+            <div className="grid grid-cols-4 gap-2">
+              <button 
+                onClick={() => {
+                  onAddToCart(product);
+                  // Simple feedback
+                  const origText = document.getElementById(`add-btn-detail-${product.id}`)?.innerText;
+                  const btn = document.getElementById(`add-btn-detail-${product.id}`);
+                  if (btn) {
+                    btn.innerText = "✓ Ditambahkan";
+                    btn.classList.add("bg-emerald-600", "border-emerald-500");
+                    setTimeout(() => {
+                      if (btn) {
+                        btn.innerText = origText || "Keranjang RFQ";
+                        btn.classList.remove("bg-emerald-600", "border-emerald-500");
+                      }
+                    }, 1500);
+                  }
+                }}
+                id={`add-btn-detail-${product.id}`}
+                className="col-span-3 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold rounded-xl text-xs transition-all flex items-center justify-center space-x-2 cursor-pointer shadow-lg shadow-indigo-600/15"
+              >
+                <Plus className="h-4 w-4" />
+                <span>Keranjang RFQ</span>
+              </button>
+
+              <button
+                onClick={() => setShowQrShare(!showQrShare)}
+                className={`col-span-1 py-2.5 rounded-xl flex items-center justify-center transition-all duration-300 cursor-pointer border ${
+                  showQrShare 
+                    ? "bg-indigo-500/20 text-indigo-300 border-indigo-500/40" 
+                    : "bg-white/5 text-indigo-400 hover:text-indigo-300 border-white/10 hover:border-indigo-500/30"
+                }`}
+                title="Tampilkan QR Code untuk membagikan produk ini"
+              >
+                <QrCode className="h-4.5 w-4.5" />
+              </button>
+            </div>
+
+            {showQrShare && (
+              <div className="p-3 bg-slate-950 rounded-xl border border-white/5 flex flex-col items-center space-y-3 animate-fadeIn">
+                <div className="text-center">
+                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wide block">Scan & Bagikan Produk</span>
+                  <span className="text-[9px] text-slate-500 block">Pindai QR untuk membuka detail produk langsung</span>
+                </div>
+                
+                <div className="bg-white p-2.5 rounded-lg border border-indigo-500/20 shadow-inner">
+                  <img 
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&color=4f46e5&data=${encodeURIComponent(window.location.origin + window.location.pathname + "?product=" + product.id)}`} 
+                    alt="Product QR Link" 
+                    className="w-28 h-28"
+                  />
+                </div>
+
+                <div className="flex w-full space-x-1.5">
+                  <button
+                    onClick={async () => {
+                      const shareUrl = window.location.origin + window.location.pathname + "?product=" + product.id;
+                      if (navigator.share) {
+                        try {
+                          await navigator.share({
+                            title: product.name,
+                            text: `Cek detail spesifikasi ${product.name} di Berkah Bintang Solusindo.`,
+                            url: shareUrl
+                          });
+                        } catch (err) {
+                          console.log("Error sharing:", err);
+                        }
+                      } else {
+                        try {
+                          await navigator.clipboard.writeText(shareUrl);
+                          setCopySuccess(true);
+                          setTimeout(() => setCopySuccess(false), 2000);
+                        } catch (err) {
+                          console.error("Clipboard write error:", err);
+                        }
+                      }
+                    }}
+                    className="flex-1 py-1.5 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/20 hover:border-indigo-500/40 text-indigo-400 rounded-lg text-[10px] font-bold transition-all cursor-pointer flex items-center justify-center space-x-1"
+                  >
+                    <Share2 className="h-3 w-3" />
+                    <span>Bagikan Link</span>
+                  </button>
+
+                  <button
+                    onClick={async () => {
+                      const shareUrl = window.location.origin + window.location.pathname + "?product=" + product.id;
+                      try {
+                        await navigator.clipboard.writeText(shareUrl);
+                        setCopySuccess(true);
+                        setTimeout(() => setCopySuccess(false), 2000);
+                      } catch (err) {
+                        console.error("Clipboard write error:", err);
+                      }
+                    }}
+                    className="py-1.5 px-3 bg-slate-900 hover:bg-slate-800 border border-white/5 text-slate-300 rounded-lg text-[10px] font-bold transition-all cursor-pointer flex items-center justify-center space-x-1"
+                  >
+                    {copySuccess ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                    <span>{copySuccess ? "Copied!" : "Salin Link"}</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -338,7 +431,7 @@ export default function ProductDetailModal({
                   <div>
                     <h4 className="text-[10px] text-indigo-400 font-black uppercase tracking-widest mb-1.5">Deskripsi Detil Barang</h4>
                     <p className="text-xs text-slate-300 leading-relaxed bg-slate-950/40 p-3 rounded-xl border border-white/5">
-                      Perangkat {product.name} dirancang khusus untuk memenuhi standar keandalan tinggi dalam infrastruktur IT perusahaan, pengadaan sekolah, instansi pemerintah, dan UMKM. Komponen berkualitas menjamin ketahanan masa pakai optimal.
+                      Perangkat {product.name} dirancang khusus untuk memenuhi standar keandalan tinggi dalam infrastruktur IT perusahaan, pengadaan sekolah, umum, dan UMKM. Komponen berkualitas menjamin ketahanan masa pakai optimal.
                     </p>
                   </div>
 

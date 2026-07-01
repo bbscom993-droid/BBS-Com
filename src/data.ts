@@ -11,12 +11,12 @@ import imgMicrosoft from "./assets/images/microsoft_365_1782410907906.jpg";
 export const SERVICE_OFFERINGS: ServiceOffering[] = [
   {
     id: "srv_1",
-    name: "Pengadaan Komputer & Laptop bar dan second",
+    name: "Pengadaan Komputer & Laptop baru dan second",
     description: "Pengadaan komputer workstation, PC All-in-One, laptop bisnis, serta mini PC bergaransi resmi untuk operasional kantor, lembaga pendidikan, swasta, dan laboratorium computer.",
     category: "Hardware",
     icon: "Laptop",
     features: [
-      "Produk original 100% bergaransi resmi distributor Indonesia",
+      "Produk-produk bergaransi resmi distributor Indonesia",
       "Pilihan brand ternama (ASUS, Lenovo, HP, Dell, Acer)",
       "Ready stock tipe bisnis tahan banting dengan sistem keamanan tinggi",
       "Custom spec sesuai kebutuhan aplikasi (kantor, desain grafis, coding)"
@@ -103,11 +103,11 @@ export const SERVICE_OFFERINGS: ServiceOffering[] = [
   {
     id: "srv_8",
     name: "Managed Services",
-    description: "Serahkan seluruh pengelolaan IT kantor Anda kepada tim profesional kami. Dari helpdesk harian, sewa perangkat komputer, cloud hosting, hingga admin jaringan.",
+    description: "Serahkan seluruh pengelolaan IT kantor Anda kepada tim profesional kami. Dari helpdesk profesional, cloud hosting, hingga admin jaringan.",
     category: "Support",
     icon: "Activity",
     features: [
-      "Sewa komputer/laptop jangka panjang tanpa pusing depresiasi aset",
+      "Sewa komputer/laptop jangka panjang tanpa pusing depresiasi aset dari vendor terpercaya",
       "Monitoring jaringan nirkabel dan firewall 24/7",
       "Managed backup database harian di luar lokasi (off-site)",
       "Tim support yang berdedikasi tinggi layaknya divisi IT internal"

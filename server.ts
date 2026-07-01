@@ -30,14 +30,17 @@ const getGeminiClient = () => {
   });
 };
 
-const ai = getGeminiClient();
+// Lazy-initialized accessor for the BBS AI engine
+const getAi = () => {
+  return getGeminiClient();
+};
 
 // Default Database State for Seeding
 const DEFAULT_DB = {
   settings: {
     companyName: "Berkah Bintang Solusindo",
     tagline: "Solusi Teknologi Informasi dan Pengadaan Terpercaya",
-    description: "Melayani kebutuhan pengadaan perangkat IT, infrastruktur jaringan, server, CCTV, software, maintenance, serta konsultasi teknologi informasi untuk perusahaan, instansi pemerintah, pendidikan, dan UMKM.",
+    description: "Melayani kebutuhan pengadaan perangkat IT, infrastruktur jaringan, server, CCTV, software, maintenance, serta konsultasi teknologi informasi untuk perusahaan, umum, pendidikan, dan UMKM.",
     address: "Jl.Cempaka putih barat 21 no.10",
     whatsapp: "+6281234567890",
     email: "bbscom993@gmail.com",
@@ -701,12 +704,14 @@ app.post("/api/consult", async (req, res) => {
     return res.status(400).json({ error: "Invalid messages history." });
   }
 
+  const aiClient = getAi();
+
   // Fallback if no Gemini AI is initialized
-  if (!ai) {
+  if (!aiClient) {
     const lastUserMsg = messages[messages.length - 1]?.text || "";
     let responseText = "Terima kasih telah menghubungi Berkah Bintang Solusindo. Saat ini sistem kecerdasan buatan kami sedang berjalan dalam mode demonstrasi offline. ";
     if (lastUserMsg.toLowerCase().includes("laptop") || lastUserMsg.toLowerCase().includes("komputer")) {
-      responseText += "Kami siap menyediakan pengadaan Komputer/Laptop kantor original bergaransi resmi dari brand ASUS, Lenovo, Dell, dan HP dengan spesifikasi Core i3/i5/i7 yang sesuai anggaran Anda. Silakan tambahkan item laptop ke Keranjang RFQ Anda di halaman utama kami agar tim kami dapat membuatkan penawaran harga resmi.";
+      responseText += "Kami siap menyediakan pengadaan Komputer/Laptop kantor bergaransi resmi dari brand ASUS, Lenovo, Dell, dan HP dengan spesifikasi Core i3/i5/i7 yang sesuai anggaran Anda. Silakan tambahkan item laptop ke Keranjang RFQ Anda di halaman utama kami agar tim kami dapat membuatkan penawaran harga resmi.";
     } else if (lastUserMsg.toLowerCase().includes("jaringan") || lastUserMsg.toLowerCase().includes("lan") || lastUserMsg.toLowerCase().includes("wifi")) {
       responseText += "Untuk instalasi jaringan LAN/WAN, kami menyediakan layanan penarikan kabel cat6, instalasi Switch manageable, Router Mikrotik/Cisco, serta setting Access Point. Silakan berikan info luas kantor dan estimasi jumlah pengguna agar teknisi kami dapat merancang topologi terbaik.";
     } else {
@@ -725,16 +730,38 @@ ${formattedHistory}
 
 BBS Consultant: (Lanjutkan tanggapan Anda yang sopan, ramah, profesional, bernilai tinggi, menggunakan bahasa Indonesia formal namun luwes, dan berikan rekomendasi spesifikasi barang serta estimasi budget bersaing jika relevan. Ajak mereka untuk memasukkan barang tersebut ke form RFQ di aplikasi untuk dibuatkan dokumen Penawaran Harga resmi)`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: prompt,
-      config: {
-        systemInstruction: "Anda adalah asisten konsultan IT handal untuk Berkah Bintang Solusindo. Berikan jawaban dalam Bahasa Indonesia. Fokus pada solusi teknis yang bergaransi, harga kompetitif, pelayanan purna jual handal, dan pengerjaan oleh teknisi bersertifikat.",
-        temperature: 0.7,
-      }
-    });
+    let responseText = "";
+    try {
+      console.log("Attempting to connect with Hermes Agent (Antigravity)...");
+      const interaction = await aiClient.interactions.create({
+        agent: "antigravity-preview-05-2026",
+        input: prompt,
+        environment: "remote",
+        system_instruction: "Anda adalah asisten konsultan IT handal untuk Berkah Bintang Solusindo. Berikan jawaban dalam Bahasa Indonesia. Fokus pada solusi teknis yang bergaransi, harga kompetitif, pelayanan purna jual handal, dan pengerjaan oleh teknisi bersertifikat.",
+      }, { timeout: 120000 });
 
-    res.json({ text: response.text });
+      for (const step of interaction.steps) {
+        if (step.type === 'model_output') {
+          const textContent = step.content?.find(c => c.type === 'text');
+          if (textContent && textContent.text) {
+            responseText += textContent.text;
+          }
+        }
+      }
+    } catch (agentErr) {
+      console.warn("Hermes Agent failed, falling back to standard Gemini model:", agentErr);
+      const response = await aiClient.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: prompt,
+        config: {
+          systemInstruction: "Anda adalah asisten konsultan IT handal untuk Berkah Bintang Solusindo. Berikan jawaban dalam Bahasa Indonesia. Fokus pada solusi teknis yang bergaransi, harga kompetitif, pelayanan purna jual handal, dan pengerjaan oleh teknisi bersertifikat.",
+          temperature: 0.7,
+        }
+      });
+      responseText = response.text || "";
+    }
+
+    res.json({ text: responseText });
   } catch (err: any) {
     console.error("Gemini Consultation Error:", err);
     res.status(500).json({ error: "Gagal memproses konsultasi AI.", details: err.message });
@@ -800,7 +827,9 @@ app.post("/api/generate-quotation", async (req, res) => {
       };
     };
 
-    if (!ai) {
+    const aiClient = getAi();
+
+    if (!aiClient) {
       const fallbackQuote = generateFallbackQuotation(rfq);
       await adminDb.collection("quotations").doc(fallbackQuote.id).set(fallbackQuote);
       await adminDb.collection("rfqs").doc(rfq.id).update({
@@ -845,7 +874,7 @@ Anda harus mengembalikan respons dalam format JSON murni yang sesuai dengan skem
   "termsAndConditions": ["string (daftar syarat & ketentuan lengkap, minimal 4 butir)"]
 }`;
 
-      const response = await ai.models.generateContent({
+      const response = await aiClient.models.generateContent({
         model: "gemini-3.5-flash",
         contents: prompt,
         config: {

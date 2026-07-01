@@ -44,6 +44,20 @@
         "customRequirements": { "type": "string" },
         "notes": { "type": "string" },
         "generatedQuotationId": { "type": "string" },
+        "internalComments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "author": { "type": "string" },
+              "role": { "type": "string" },
+              "text": { "type": "string" },
+              "timestamp": { "type": "string" },
+              "imageUrl": { "type": "string" }
+            }
+          }
+        },
         "items": {
           "type": "array",
           "items": {
@@ -51,7 +65,8 @@
             "properties": {
               "name": { "type": "string" },
               "quantity": { "type": "number" },
-              "description": { "type": "string" }
+              "description": { "type": "string" },
+              "serialNumber": { "type": "string" }
             }
           }
         }
@@ -107,6 +122,7 @@
         "estimatedPriceRange": { "type": "string" },
         "icon": { "type": "string" },
         "image": { "type": "string" },
+        "serialNumber": { "type": "string" },
         "specifications": {
           "type": "array",
           "items": { "type": "string" }

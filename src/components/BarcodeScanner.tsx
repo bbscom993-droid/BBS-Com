@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Html5Qrcode } from "html5-qrcode";
-import { Camera, Scan, X, RotateCw, CheckCircle, AlertCircle, ShoppingCart, Info } from "lucide-react";
+import { Camera, Scan, X, RotateCw, CheckCircle, AlertCircle, ShoppingCart, Info, History, Trash2, Search } from "lucide-react";
 import { ProductItem } from "../types";
 
 interface BarcodeScannerProps {
@@ -8,6 +8,11 @@ interface BarcodeScannerProps {
   onScanSuccess: (product: ProductItem) => void;
   onClose: () => void;
   onAddCustomItem?: (item: { name: string; quantity: number; description?: string }) => void;
+}
+
+interface RecentScanItem {
+  product: ProductItem;
+  scannedAt: number;
 }
 
 export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose, onAddCustomItem }: BarcodeScannerProps) {
@@ -20,11 +25,85 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
   const [scanHistory, setScanHistory] = useState<{ product: ProductItem; time: string }[]>([]);
   const [simulateMode, setSimulateMode] = useState<boolean>(false);
 
+  // Sorting state for Recent Scans
+  const [recentScansSortBy, setRecentScansSortBy] = useState<"date_desc" | "date_asc" | "name_asc">("date_desc");
+
+  // Persistent Recent Scans (last 5 scans) in localStorage with timestamps
+  const [recentScans, setRecentScans] = useState<RecentScanItem[]>(() => {
+    try {
+      const saved = localStorage.getItem("bbs_recent_scans");
+      if (!saved) return [];
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) {
+        return parsed.map((item: any) => {
+          // Backward compatibility support: check if it already has product and scannedAt properties
+          if (item && item.product && typeof item.scannedAt === "number") {
+            return item as RecentScanItem;
+          }
+          // Legacy direct ProductItem format
+          return { product: item, scannedAt: Date.now() };
+        });
+      }
+      return [];
+    } catch (e) {
+      console.error("Error reading recent scans from localStorage", e);
+      return [];
+    }
+  });
+
+  const addToRecentScans = (product: ProductItem) => {
+    setRecentScans((prev) => {
+      const filtered = prev.filter((item) => item.product.id !== product.id);
+      const updated = [{ product, scannedAt: Date.now() }, ...filtered].slice(0, 5);
+      try {
+        localStorage.setItem("bbs_recent_scans", JSON.stringify(updated));
+      } catch (e) {
+        console.error("Error saving recent scans to localStorage", e);
+      }
+      return updated;
+    });
+  };
+
+  const clearRecentScans = () => {
+    setRecentScans([]);
+    try {
+      localStorage.removeItem("bbs_recent_scans");
+    } catch (e) {
+      console.error("Error clearing recent scans from localStorage", e);
+    }
+  };
+
+  const handleRevisitProduct = (product: ProductItem) => {
+    onScanSuccess(product);
+    setLastScanned(product);
+    addToRecentScans(product);
+    
+    const newHistoryItem = {
+      product: product,
+      time: new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    };
+    setScanHistory(prev => [newHistoryItem, ...prev.filter(h => h.product.id !== product.id).slice(0, 4)]);
+    
+    // Stop the active camera if it is scanning to display the success banner
+    stopScanner();
+  };
+
   // New state variables for unmatched barcode and manual fallback input fields
   const [unmatchedCode, setUnmatchedCode] = useState<string | null>(null);
   const [manualName, setManualName] = useState<string>("");
   const [manualQty, setManualQty] = useState<number>(1);
   const [manualDesc, setManualDesc] = useState<string>("");
+
+  // SKU Search state and handler
+  const [skuInput, setSkuInput] = useState<string>("");
+
+  const handleSkuSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (skuInput.trim()) {
+      handleScannedCode(skuInput.trim());
+      setSkuInput("");
+    }
+  };
 
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -196,6 +275,9 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
       };
       setScanHistory(prev => [newHistoryItem, ...prev.slice(0, 4)]);
 
+      // Add to persistent recent scans
+      addToRecentScans(matchedProduct);
+
       // Vibrate if supported by device
       if (typeof navigator !== "undefined" && navigator.vibrate) {
         navigator.vibrate(200);
@@ -252,6 +334,34 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
 
         {/* Scanner Body */}
         <div className="p-5 space-y-4 flex-1 overflow-y-auto max-h-[80vh]">
+          {/* Dedicated SKU Search Field */}
+          <form onSubmit={handleSkuSearch} className="space-y-1.5 p-3.5 bg-slate-950/60 border border-white/5 rounded-2xl">
+            <div className="flex items-center space-x-1.5 text-indigo-400 text-[10px] font-black uppercase tracking-wider mb-0.5">
+              <Search className="h-3.5 w-3.5" />
+              <span>Manual SKU / Barcode Lookup</span>
+            </div>
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <input
+                  type="text"
+                  value={skuInput}
+                  onChange={(e) => setSkuInput(e.target.value)}
+                  placeholder="Masukkan nomor SKU (e.g. 8895431201) atau ID..."
+                  className="w-full bg-slate-900 border border-white/10 rounded-xl pl-8.5 pr-2.5 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-bold font-sans"
+                />
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                  <Search className="h-3.5 w-3.5" />
+                </div>
+              </div>
+              <button
+                type="submit"
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-all duration-200 shadow-md cursor-pointer flex items-center gap-1.5 shrink-0 hover:scale-[1.02] active:scale-95"
+              >
+                <span>Cari SKU</span>
+              </button>
+            </div>
+          </form>
+
           {unmatchedCode ? (
             /* Custom Error Handling UI Component with Manual Add Fallback */
             <div className="p-4 bg-red-500/10 border border-red-500/25 rounded-2xl space-y-4 animate-scaleIn">
@@ -566,6 +676,82 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
               )}
             </div>
           )}
+
+          {/* Recent Scans (Persistent in localStorage) */}
+          {recentScans.length > 0 && (() => {
+            const sortedRecentScans = [...recentScans].sort((a, b) => {
+              if (recentScansSortBy === "date_desc") {
+                return b.scannedAt - a.scannedAt;
+              } else if (recentScansSortBy === "date_asc") {
+                return a.scannedAt - b.scannedAt;
+              } else if (recentScansSortBy === "name_asc") {
+                return a.product.name.localeCompare(b.product.name);
+              }
+              return 0;
+            });
+
+            return (
+              <div className="space-y-2 border-t border-white/5 pt-3">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center space-x-1.5">
+                    <History className="h-3.5 w-3.5 text-indigo-400" />
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Recent Scans (localStorage)</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <select
+                      value={recentScansSortBy}
+                      onChange={(e) => setRecentScansSortBy(e.target.value as any)}
+                      className="bg-slate-950/60 text-slate-300 border border-white/10 rounded px-1.5 py-0.5 text-[9px] font-bold cursor-pointer outline-none focus:border-indigo-500/50 transition-colors"
+                    >
+                      <option value="date_desc" className="bg-slate-900">Date Newest</option>
+                      <option value="date_asc" className="bg-slate-900">Date Oldest</option>
+                      <option value="name_asc" className="bg-slate-900">Product Name</option>
+                    </select>
+                    <button 
+                      onClick={clearRecentScans} 
+                      className="text-[9px] text-slate-500 hover:text-red-400 flex items-center space-x-1 transition-colors cursor-pointer"
+                      title="Hapus riwayat permanen"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                      <span>Hapus</span>
+                    </button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 gap-1.5">
+                  {sortedRecentScans.map(({ product }) => (
+                    <button
+                      key={product.id}
+                      onClick={() => handleRevisitProduct(product)}
+                      className="flex items-center justify-between text-left p-2 bg-slate-950/40 hover:bg-indigo-500/5 rounded-xl border border-white/5 hover:border-indigo-500/20 transition-all cursor-pointer group"
+                    >
+                      <div className="flex items-center space-x-2.5 min-w-0 flex-1">
+                        {product.image ? (
+                          <img 
+                            src={product.image} 
+                            alt={product.name} 
+                            className="w-6 h-6 object-contain bg-white rounded p-0.5 shrink-0" 
+                            referrerPolicy="no-referrer"
+                          />
+                        ) : (
+                          <div className="w-6 h-6 bg-indigo-500/10 rounded flex items-center justify-center shrink-0 text-indigo-400 font-bold text-[9px]">
+                            {product.id.slice(-2)}
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-bold text-slate-200 truncate group-hover:text-indigo-300 transition-colors">{product.name}</p>
+                          <p className="text-[9px] text-slate-500 truncate">{product.category} • {product.estimatedPriceRange}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-1 text-[9px] font-bold text-indigo-400 bg-indigo-500/10 px-2 py-1 rounded-lg border border-indigo-500/10 opacity-70 group-hover:opacity-100 transition-opacity">
+                        <ShoppingCart className="h-3 w-3" />
+                        <span>Re-add</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Scanning History logs */}
           {scanHistory.length > 0 && (

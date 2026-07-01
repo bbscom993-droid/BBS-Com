@@ -16,15 +16,26 @@ export interface ProductItem {
   specifications: string[];
   icon: string;
   image?: string;
+  serialNumber?: string;
 }
 
 export interface RFQItem {
   name: string;
   quantity: number;
   description?: string;
+  serialNumber?: string;
 }
 
 export type RFQStatus = 'pending' | 'processing' | 'quoted' | 'cancelled' | 'completed';
+
+export interface RFQComment {
+  id: string;
+  author: string;
+  role: string;
+  text: string;
+  timestamp: string;
+  imageUrl?: string;
+}
 
 export interface RFQ {
   id: string;
@@ -41,6 +52,7 @@ export interface RFQ {
   customRequirements?: string;
   notes?: string;
   generatedQuotationId?: string;
+  internalComments?: RFQComment[];
 }
 
 export interface QuotationItem {
