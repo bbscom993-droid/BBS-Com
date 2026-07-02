@@ -445,6 +445,15 @@ export default function App() {
   const [isStatusFilterOpen, setIsStatusFilterOpen] = useState(false);
   const statusFilterRef = useRef<HTMLDivElement>(null);
 
+  // Subtle pulse animation state whenever applied filters change
+  const [isFilterPulsing, setIsFilterPulsing] = useState(false);
+
+  useEffect(() => {
+    setIsFilterPulsing(true);
+    const timer = setTimeout(() => setIsFilterPulsing(false), 800);
+    return () => clearTimeout(timer);
+  }, [adminRfqSearch, adminRfqStartDate, adminRfqEndDate, adminRfqClientFilter, adminRfqStatuses]);
+
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (statusFilterRef.current && !statusFilterRef.current.contains(event.target as Node)) {
@@ -4696,6 +4705,22 @@ export default function App() {
                                 </div>
                               )}
                             </div>
+
+                            {/* Summary count displaying how many RFQs are visible in the table */}
+                            <div className="flex items-center gap-1.5 text-[11px] font-mono px-2.5 py-1.5 bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 rounded-xl font-bold shrink-0">
+                              <span>Visible:</span>
+                              <motion.span
+                                id="rfq_status_filter_summary_count"
+                                key={filteredRfqsForAdmin.length}
+                                animate={isFilterPulsing ? { scale: [1, 1.25, 1], color: ["#a5b4fc", "#10b981", "#a5b4fc"] } : {}}
+                                transition={{ duration: 0.6, ease: "easeInOut" }}
+                                className={`font-black ${isFilterPulsing ? "animate-pulse text-emerald-400" : ""}`}
+                              >
+                                {filteredRfqsForAdmin.length}
+                              </motion.span>
+                              <span className="text-slate-500">/{rfqs.length}</span>
+                            </div>
+
                             {adminRfqStatuses.length > 0 && (
                               <button
                                 type="button"
