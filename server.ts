@@ -427,6 +427,14 @@ app.post("/api/rfqs", async (req, res) => {
       rfqNumber: `RFQ-${new Date().getFullYear()}-${String(totalCount + 1).padStart(4, "0")}`,
       date: new Date().toISOString().split("T")[0],
       status: "pending",
+      history: [
+        {
+          status: "pending",
+          timestamp: new Date().toISOString(),
+          note: "Permintaan Penawaran (RFQ) diajukan oleh klien.",
+          operator: "Klien"
+        }
+      ],
       ...req.body
     };
 
@@ -622,7 +630,39 @@ app.put("/api/rfqs/:id", async (req, res) => {
     const rfqRef = adminDb.collection("rfqs").doc(req.params.id);
     const doc = await rfqRef.get();
     if (doc.exists) {
-      const updated = { ...doc.data(), ...req.body };
+      const existingData = doc.data() || {};
+      const newStatus = req.body.status;
+      const historyNote = req.body.historyNote;
+      const operator = req.body.operator || "Sales Admin";
+      
+      let history = existingData.history || [];
+      if (history.length === 0) {
+        history.push({
+          status: existingData.status || "pending",
+          timestamp: new Date(existingData.date || Date.now()).toISOString(),
+          note: "Permintaan Penawaran (RFQ) diajukan oleh klien.",
+          operator: "Klien"
+        });
+      }
+
+      if (newStatus && newStatus !== existingData.status) {
+        let note = historyNote;
+        if (!note) {
+          if (newStatus === "pending") note = "Permintaan Penawaran menunggu proposal.";
+          if (newStatus === "processing") note = "Sales Engineer sedang menganalisis & memproses RFQ.";
+          if (newStatus === "quoted") note = "Surat Penawaran Harga resmi (Quotation) telah diterbitkan.";
+          if (newStatus === "completed") note = "Pengadaan selesai & seluruh perangkat dikirim.";
+          if (newStatus === "cancelled") note = "RFQ dibatalkan.";
+        }
+        history.push({
+          status: newStatus,
+          timestamp: new Date().toISOString(),
+          note: note || `Status diperbarui menjadi ${newStatus}.`,
+          operator
+        });
+      }
+
+      const updated = { ...existingData, ...req.body, history };
       await rfqRef.set(updated);
       res.json(updated);
     } else {
@@ -630,6 +670,62 @@ app.put("/api/rfqs/:id", async (req, res) => {
     }
   } catch (error: any) {
     res.status(500).json({ error: "Gagal memperbarui RFQ", details: error.message });
+  }
+});
+
+app.post("/api/rfqs/bulk-status", async (req, res) => {
+  try {
+    const { rfqIds, status, historyNote, operator } = req.body;
+    if (!rfqIds || !Array.isArray(rfqIds) || !status) {
+      return res.status(400).json({ error: "Parameter rfqIds dan status diperlukan." });
+    }
+
+    const updatedRfqs = [];
+    const op = operator || "Sales Admin";
+
+    for (const rfqId of rfqIds) {
+      const rfqRef = adminDb.collection("rfqs").doc(rfqId);
+      const doc = await rfqRef.get();
+      if (doc.exists) {
+        const existingData = doc.data() || {};
+        let history = existingData.history || [];
+        
+        if (history.length === 0) {
+          history.push({
+            status: existingData.status || "pending",
+            timestamp: new Date(existingData.date || Date.now()).toISOString(),
+            note: "Permintaan Penawaran (RFQ) diajukan oleh klien.",
+            operator: "Klien"
+          });
+        }
+
+        if (status !== existingData.status) {
+          let note = historyNote;
+          if (!note) {
+            if (status === "pending") note = "Permintaan Penawaran menunggu proposal.";
+            if (status === "processing") note = "Sales Engineer sedang menganalisis & memproses RFQ.";
+            if (status === "quoted") note = "Surat Penawaran Harga resmi (Quotation) telah diterbitkan.";
+            if (status === "completed") note = "Pengadaan selesai & seluruh perangkat dikirim.";
+            if (status === "cancelled") note = "RFQ dibatalkan.";
+          }
+          history.push({
+            status,
+            timestamp: new Date().toISOString(),
+            note: note || `Status diperbarui menjadi ${status}.`,
+            operator: op
+          });
+        }
+
+        const updated = { ...existingData, status, history };
+        await rfqRef.set(updated);
+        updatedRfqs.push(updated);
+      }
+    }
+
+    res.json({ success: true, count: updatedRfqs.length, rfqs: updatedRfqs });
+  } catch (error: any) {
+    console.error("Error updating bulk status:", error);
+    res.status(500).json({ error: "Gagal memperbarui status secara massal", details: error.message });
   }
 });
 
@@ -668,9 +764,26 @@ app.post("/api/quotations", async (req, res) => {
       const rfqRef = adminDb.collection("rfqs").doc(newQuotation.rfqId);
       const rfqDoc = await rfqRef.get();
       if (rfqDoc.exists) {
+        const rfqData = rfqDoc.data() || {};
+        let history = rfqData.history || [];
+        if (history.length === 0) {
+          history.push({
+            status: rfqData.status || "pending",
+            timestamp: new Date(rfqData.date || Date.now()).toISOString(),
+            note: "Permintaan Penawaran (RFQ) diajukan oleh klien.",
+            operator: "Klien"
+          });
+        }
+        history.push({
+          status: "quoted",
+          timestamp: new Date().toISOString(),
+          note: "Surat Penawaran Harga resmi (Quotation) telah diterbitkan secara manual.",
+          operator: req.body.operator || "Sales Admin"
+        });
         await rfqRef.update({
           generatedQuotationId: id,
-          status: "quoted"
+          status: "quoted",
+          history
         });
       }
     }
@@ -832,10 +945,32 @@ app.post("/api/generate-quotation", async (req, res) => {
     if (!aiClient) {
       const fallbackQuote = generateFallbackQuotation(rfq);
       await adminDb.collection("quotations").doc(fallbackQuote.id).set(fallbackQuote);
-      await adminDb.collection("rfqs").doc(rfq.id).update({
-        generatedQuotationId: fallbackQuote.id,
-        status: "quoted"
-      });
+      
+      const rfqRef = adminDb.collection("rfqs").doc(rfq.id);
+      const rfqDoc = await rfqRef.get();
+      if (rfqDoc.exists) {
+        const rfqData = rfqDoc.data() || {};
+        let history = rfqData.history || [];
+        if (history.length === 0) {
+          history.push({
+            status: rfqData.status || "pending",
+            timestamp: new Date(rfqData.date || Date.now()).toISOString(),
+            note: "Permintaan Penawaran (RFQ) diajukan oleh klien.",
+            operator: "Klien"
+          });
+        }
+        history.push({
+          status: "quoted",
+          timestamp: new Date().toISOString(),
+          note: "Surat Penawaran Harga resmi (Quotation) telah di-generate secara otomatis.",
+          operator: "Sistem (Offline)"
+        });
+        await rfqRef.update({
+          generatedQuotationId: fallbackQuote.id,
+          status: "quoted",
+          history
+        });
+      }
       return res.status(201).json(fallbackQuote);
     }
 
@@ -925,20 +1060,64 @@ Anda harus mengembalikan respons dalam format JSON murni yang sesuai dengan skem
       };
 
       await adminDb.collection("quotations").doc(newQuotation.id).set(newQuotation);
-      await adminDb.collection("rfqs").doc(rfq.id).update({
-        generatedQuotationId: newQuotation.id,
-        status: "quoted"
-      });
+      
+      const rfqRef = adminDb.collection("rfqs").doc(rfq.id);
+      let rfqDoc = await rfqRef.get();
+      if (rfqDoc.exists) {
+        const rfqData = rfqDoc.data() || {};
+        let history = rfqData.history || [];
+        if (history.length === 0) {
+          history.push({
+            status: rfqData.status || "pending",
+            timestamp: new Date(rfqData.date || Date.now()).toISOString(),
+            note: "Permintaan Penawaran (RFQ) diajukan oleh klien.",
+            operator: "Klien"
+          });
+        }
+        history.push({
+          status: "quoted",
+          timestamp: new Date().toISOString(),
+          note: "Surat Penawaran Harga resmi (Quotation) telah di-generate oleh Gemini AI.",
+          operator: "Gemini AI"
+        });
+        await rfqRef.update({
+          generatedQuotationId: newQuotation.id,
+          status: "quoted",
+          history
+        });
+      }
 
       res.status(201).json(newQuotation);
     } catch (err: any) {
       console.error("AI Quotation Generation Error:", err);
       const fallbackQuote = generateFallbackQuotation(rfq);
       await adminDb.collection("quotations").doc(fallbackQuote.id).set(fallbackQuote);
-      await adminDb.collection("rfqs").doc(rfq.id).update({
-        generatedQuotationId: fallbackQuote.id,
-        status: "quoted"
-      });
+      
+      const rfqRef = adminDb.collection("rfqs").doc(rfq.id);
+      let rfqDoc = await rfqRef.get();
+      if (rfqDoc.exists) {
+        const rfqData = rfqDoc.data() || {};
+        let history = rfqData.history || [];
+        if (history.length === 0) {
+          history.push({
+            status: rfqData.status || "pending",
+            timestamp: new Date(rfqData.date || Date.now()).toISOString(),
+            note: "Permintaan Penawaran (RFQ) diajukan oleh klien.",
+            operator: "Klien"
+          });
+        }
+        history.push({
+          status: "quoted",
+          timestamp: new Date().toISOString(),
+          note: "Surat Penawaran Harga resmi (Quotation) telah di-generate secara otomatis.",
+          operator: "Sistem (Offline)"
+        });
+        await rfqRef.update({
+          generatedQuotationId: fallbackQuote.id,
+          status: "quoted",
+          history
+        });
+      }
       res.status(201).json(fallbackQuote);
     }
   } catch (error: any) {

@@ -312,6 +312,8 @@ export default function App() {
   // API Lists
   const [rfqs, setRfqs] = useState<RFQ[]>([]);
   const [quotations, setQuotations] = useState<Quotation[]>([]);
+  const [selectedRfqIds, setSelectedRfqIds] = useState<string[]>([]);
+  const [selectedHistoryRfq, setSelectedHistoryRfq] = useState<RFQ | null>(null);
   
   // Loading & status flags
   const [loading, setLoading] = useState(false);
@@ -1104,6 +1106,35 @@ export default function App() {
       }
     } catch (err) {
       console.error("Failed to fetch settings", err);
+    }
+  };
+
+  const [isBulkUpdating, setIsBulkUpdating] = useState(false);
+  const handleBulkStatusUpdate = async (status: string) => {
+    if (selectedRfqIds.length === 0) return;
+    setIsBulkUpdating(true);
+    try {
+      const res = await fetch("/api/rfqs/bulk-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rfqIds: selectedRfqIds,
+          status,
+          operator: adminDisplayName || adminUsername || "Staf BBS"
+        })
+      });
+      if (res.ok) {
+        showToast(`Berhasil memperbarui status ${selectedRfqIds.length} RFQ secara massal!`, "success");
+        setSelectedRfqIds([]);
+        fetchRfqs(); // Refresh lists
+      } else {
+        showToast("Gagal memperbarui status secara massal", "error");
+      }
+    } catch (err) {
+      console.error("Bulk status update failed:", err);
+      showToast("Kesalahan koneksi ke server", "error");
+    } finally {
+      setIsBulkUpdating(false);
     }
   };
 
@@ -4535,7 +4566,46 @@ export default function App() {
                           <table className="w-full text-left border-collapse text-xs">
                             <thead>
                               <tr className="bg-slate-950/60 text-slate-400 font-bold uppercase tracking-wider border-b border-white/5">
-                                <th className="p-4">No RFQ</th>
+                                <th className="p-4 w-12 text-center">
+                                  <input
+                                    type="checkbox"
+                                    checked={filteredRfqsForAdmin.length > 0 && selectedRfqIds.length === filteredRfqsForAdmin.length}
+                                    onChange={(e) => {
+                                      if (e.target.checked) {
+                                        setSelectedRfqIds(filteredRfqsForAdmin.map(r => r.id));
+                                      } else {
+                                        setSelectedRfqIds([]);
+                                      }
+                                    }}
+                                    className="rounded border-white/20 bg-slate-900 text-indigo-600 focus:ring-indigo-500/30 h-3.5 w-3.5 cursor-pointer"
+                                  />
+                                </th>
+                                <th className="p-4">
+                                  <div className="flex items-center gap-1.5">
+                                    <span>No RFQ</span>
+                                    {selectedRfqIds.length > 0 && (
+                                      <div className="relative inline-block text-left text-[10px] normal-case">
+                                        <select
+                                          disabled={isBulkUpdating}
+                                          value=""
+                                          onChange={(e) => {
+                                            if (e.target.value) {
+                                              handleBulkStatusUpdate(e.target.value);
+                                            }
+                                          }}
+                                          className="bg-indigo-950/90 text-indigo-200 border border-indigo-500/30 text-[10px] font-extrabold rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                                        >
+                                          <option value="">Aksi Massal...</option>
+                                          <option value="pending">Ubah ke Pending</option>
+                                          <option value="processing">Ubah ke Processing</option>
+                                          <option value="quoted">Ubah ke Quoted</option>
+                                          <option value="completed">Ubah ke Completed</option>
+                                          <option value="cancelled">Ubah ke Cancelled</option>
+                                        </select>
+                                      </div>
+                                    )}
+                                  </div>
+                                </th>
                                 <th className="p-4">Tanggal</th>
                                 <th className="p-4">Info Klien</th>
                                 <th className="p-4">Kategori</th>

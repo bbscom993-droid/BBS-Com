@@ -37,6 +37,13 @@ export interface RFQComment {
   imageUrl?: string;
 }
 
+export interface RFQHistoryEntry {
+  status: RFQStatus;
+  timestamp: string;
+  note: string;
+  operator?: string;
+}
+
 export interface RFQ {
   id: string;
   rfqNumber: string;
@@ -53,6 +60,7 @@ export interface RFQ {
   notes?: string;
   generatedQuotationId?: string;
   internalComments?: RFQComment[];
+  history?: RFQHistoryEntry[];
 }
 
 export interface QuotationItem {
