@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Html5Qrcode } from "html5-qrcode";
+import { db, handleFirestoreError, OperationType } from "../lib/firebase";
+import { doc, onSnapshot, setDoc, updateDoc } from "firebase/firestore";
 import { 
   X, 
   Layers, 
   Scan, 
   CheckCircle, 
   AlertCircle, 
+  AlertTriangle,
   Monitor, 
   Wrench, 
   Package, 
@@ -44,6 +47,125 @@ export default function ProductDetailModal({
   const [activeTab, setActiveTab] = useState<"specs" | "warehouse">("specs");
   const [showQrShare, setShowQrShare] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
+
+  // Real-time stock states from Firestore
+  const [stockQuantity, setStockQuantity] = useState<number | null>(null);
+  const [stockStatus, setStockStatus] = useState<string | null>(null);
+  const [rackLocation, setRackLocation] = useState<string | null>(null);
+  const [realtimeLoading, setRealtimeLoading] = useState(true);
+  const [realtimeError, setRealtimeError] = useState<string | null>(null);
+
+  // Real-time Firestore sync effect
+  useEffect(() => {
+    if (!product || !isOpen) return;
+
+    setRealtimeLoading(true);
+    setRealtimeError(null);
+
+    const docRef = doc(db, "catalog", product.id);
+
+    const unsubscribe = onSnapshot(docRef, async (snapshot) => {
+      try {
+        if (snapshot.exists()) {
+          const data = snapshot.data();
+          setStockQuantity(data.stockQuantity !== undefined ? data.stockQuantity : null);
+          setStockStatus(data.stockStatus || null);
+          setRackLocation(data.rackLocation || null);
+          setRealtimeLoading(false);
+        } else {
+          // Document does not exist yet. Let's initialize it in Firestore on-demand!
+          const defaultInfo = getWarehouseInfo(product.id);
+          let defaultQty = 10;
+          const qtyMatch = defaultInfo.stok.match(/\d+/);
+          if (qtyMatch) {
+            defaultQty = parseInt(qtyMatch[0], 10);
+          } else if (defaultInfo.stok.includes("Tersedia") || defaultInfo.stok.includes("Ready")) {
+            defaultQty = 50;
+          }
+
+          let defaultStatus = "Available";
+          if (defaultQty === 0) defaultStatus = "Out of Stock";
+          else if (defaultQty < 5) defaultStatus = "Low Stock";
+
+          await setDoc(docRef, {
+            id: product.id,
+            name: product.name,
+            category: product.category,
+            description: product.description,
+            estimatedPriceRange: product.estimatedPriceRange,
+            specifications: product.specifications,
+            icon: product.icon || "Package",
+            image: product.image || "",
+            serialNumber: product.serialNumber || "",
+            stockQuantity: defaultQty,
+            stockStatus: defaultStatus,
+            rackLocation: defaultInfo.rak
+          });
+        }
+      } catch (err) {
+        console.error("onSnapshot error:", err);
+        setRealtimeError(err instanceof Error ? err.message : String(err));
+        setRealtimeLoading(false);
+      }
+    }, (error) => {
+      try {
+        handleFirestoreError(error, OperationType.GET, `catalog/${product.id}`);
+      } catch (wrappedErr: any) {
+        setRealtimeError(wrappedErr.message);
+        setRealtimeLoading(false);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [product, isOpen]);
+
+  const handleDeployUnit = async () => {
+    if (!product || stockQuantity === null || stockQuantity <= 0) return;
+    const newQty = stockQuantity - 1;
+    let newStatus = "Available";
+    if (newQty === 0) newStatus = "Out of Stock";
+    else if (newQty < 5) newStatus = "Low Stock";
+
+    const docRef = doc(db, "catalog", product.id);
+    try {
+      await updateDoc(docRef, {
+        stockQuantity: newQty,
+        stockStatus: newStatus
+      });
+      if (typeof navigator !== "undefined" && navigator.vibrate) {
+        navigator.vibrate(100);
+      }
+    } catch (err) {
+      try {
+        handleFirestoreError(err, OperationType.UPDATE, `catalog/${product.id}`);
+      } catch (wrappedErr: any) {
+        setRealtimeError(wrappedErr.message);
+      }
+    }
+  };
+
+  const handleRestockUnit = async () => {
+    if (!product) return;
+    const currentQty = stockQuantity !== null ? stockQuantity : 0;
+    const newQty = currentQty + 5;
+    let newStatus = "Available";
+    if (newQty === 0) newStatus = "Out of Stock";
+    else if (newQty < 5) newStatus = "Low Stock";
+
+    const docRef = doc(db, "catalog", product.id);
+    try {
+      await updateDoc(docRef, {
+        stockQuantity: newQty,
+        stockStatus: newStatus
+      });
+    } catch (err) {
+      try {
+        handleFirestoreError(err, OperationType.UPDATE, `catalog/${product.id}`);
+      } catch (wrappedErr: any) {
+        setRealtimeError(wrappedErr.message);
+      }
+    }
+  };
   
   // Scanner state inside the modal
   const [scannerActive, setScannerActive] = useState(false);
@@ -250,6 +372,71 @@ export default function ProductDetailModal({
               <div className="w-full aspect-square max-h-64 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex flex-col items-center justify-center text-indigo-400">
                 <Package className="h-16 w-16 mb-2 stroke-1 animate-pulse" />
                 <span className="text-xs font-mono">{product.id}</span>
+              </div>
+            )}
+
+            {/* Real-time Stock Status Badge */}
+            {realtimeLoading ? (
+              <div className="flex items-center gap-2 text-slate-400 text-[10px] bg-slate-900/50 p-2.5 rounded-xl border border-white/5 font-mono animate-pulse">
+                <div className="w-1.5 h-1.5 rounded-full bg-slate-500 animate-ping" />
+                <span>Menghubungkan ke Firestore...</span>
+              </div>
+            ) : realtimeError ? (
+              <div className="text-[10px] text-red-400 bg-red-950/20 p-2.5 rounded-xl border border-red-500/10 font-mono">
+                Gagal memuat status real-time: {realtimeError}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className={`flex items-center justify-between p-2.5 rounded-xl border font-mono text-[10px] ${
+                  stockStatus === "Available" 
+                    ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                    : stockStatus === "Low Stock" || (stockQuantity !== null && stockQuantity < 5 && stockQuantity > 0)
+                    ? "bg-amber-500/10 border-amber-500/20 text-amber-400"
+                    : "bg-rose-500/10 border-rose-500/20 text-rose-400"
+                }`}>
+                  <div className="flex items-center gap-1.5 font-bold">
+                    <span className={`w-2 h-2 rounded-full ${
+                      stockStatus === "Available" 
+                        ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]"
+                        : stockStatus === "Low Stock" || (stockQuantity !== null && stockQuantity < 5 && stockQuantity > 0)
+                        ? "bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)]"
+                        : "bg-rose-400 shadow-[0_0_8px_rgba(251,113,133,0.8)]"
+                    } animate-pulse`} />
+                    <span>
+                      {stockStatus === "Available" ? "READY FOR DEPLOYMENT" : stockStatus === "Low Stock" || (stockQuantity !== null && stockQuantity < 5 && stockQuantity > 0) ? "STOK MENIPIS" : "STOK HABIS"}
+                    </span>
+                  </div>
+                  <span className="font-black text-[11px] bg-white/5 px-2 py-0.5 rounded border border-white/5">
+                    {stockQuantity} Unit
+                  </span>
+                </div>
+
+                {/* Real-time Low Stock Warning Indicator Card */}
+                {stockQuantity !== null && stockQuantity < 5 && (
+                  <div className={`p-3 rounded-xl border flex gap-2.5 items-start text-[11px] animate-pulse shadow-md ${
+                    stockQuantity === 0 
+                      ? "bg-rose-500/10 border-rose-500/25 text-rose-300 shadow-rose-500/5"
+                      : "bg-amber-500/10 border-amber-500/25 text-amber-300 shadow-amber-500/5"
+                  }`}>
+                    {stockQuantity === 0 ? (
+                      <AlertTriangle className="h-4 w-4 text-rose-400 shrink-0 mt-0.5" />
+                    ) : (
+                      <AlertCircle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                    )}
+                    <div className="space-y-0.5">
+                      <span className={`font-black block uppercase tracking-wider text-[9px] ${
+                        stockQuantity === 0 ? "text-rose-400" : "text-amber-400"
+                      }`}>
+                        {stockQuantity === 0 ? "Peringatan: Stok Habis!" : "Peringatan: Stok Menipis!"}
+                      </span>
+                      <p className="text-slate-300 text-[10px] leading-relaxed">
+                        {stockQuantity === 0 
+                          ? "Stok unit ini kosong di Firestore. Harap lakukan restock agar siap digunakan oleh teknisi lapangan."
+                          : `Sisa ${stockQuantity} unit di database Firestore. Harap segera koordinasikan pengadaan atau batasi deployment.`}
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -493,7 +680,9 @@ export default function ProductDetailModal({
                       </div>
                       <div>
                         <span className="text-[9px] text-slate-500 uppercase font-mono block">Stok Inventaris Gudang</span>
-                        <span className="text-xs font-bold text-emerald-400">{currentWh?.stok}</span>
+                        <span className="text-xs font-bold text-emerald-400">
+                          {stockQuantity !== null ? `${stockQuantity} Unit (Firestore)` : currentWh?.stok}
+                        </span>
                       </div>
                     </div>
 
@@ -506,6 +695,58 @@ export default function ProductDetailModal({
                         <span className="text-xs font-bold text-slate-300">{currentWh?.petugas}</span>
                       </div>
                     </div>
+                  </div>
+
+                  {/* Real-time Technician Deployment Control Panel */}
+                  <div className="bg-slate-950/45 border border-white/5 rounded-2xl p-4 space-y-3 shadow-lg">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <Wrench className="h-4 w-4 text-indigo-400" />
+                        <h4 className="text-xs font-black text-white uppercase tracking-wider">Aksi Deployment Teknisi Lapangan</h4>
+                      </div>
+                      <span className="px-2 py-0.5 text-[8px] font-mono font-black rounded-full bg-indigo-500/15 text-indigo-400 border border-indigo-500/30 animate-pulse">
+                        FIRESTORE LIVE
+                      </span>
+                    </div>
+
+                    <p className="text-[10px] text-slate-400 leading-normal">
+                      Teknisi lapangan dapat mencatat penggunaan unit langsung ke database cloud Firestore saat melakukan instalasi di lapangan. Perubahan stok akan disinkronisasikan ke semua layar secara instan.
+                    </p>
+
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={handleDeployUnit}
+                        disabled={stockQuantity === null || stockQuantity <= 0}
+                        className={`flex-1 py-2.5 px-3 rounded-xl text-[10px] font-black transition-all duration-200 cursor-pointer flex items-center justify-center gap-1.5 shadow-md ${
+                          stockQuantity !== null && stockQuantity > 0
+                            ? "bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/15"
+                            : "bg-slate-800 text-slate-500 cursor-not-allowed border border-white/5"
+                        }`}
+                      >
+                        <Package className="h-3.5 w-3.5" />
+                        <span>Deploy 1 Unit</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleRestockUnit}
+                        className="py-2.5 px-3 bg-slate-900 hover:bg-slate-800 border border-white/10 text-slate-300 hover:text-slate-100 rounded-xl text-[10px] font-black transition-all duration-200 cursor-pointer flex items-center justify-center gap-1.5"
+                      >
+                        <RotateCw className="h-3.5 w-3.5 text-indigo-400" />
+                        <span>Restock +5 Unit</span>
+                      </button>
+                    </div>
+
+                    {stockQuantity !== null && stockQuantity <= 0 && (
+                      <div className="bg-rose-500/10 border border-rose-500/20 text-rose-300 rounded-xl p-3 text-[10px] flex items-start gap-2 animate-pulse">
+                        <AlertCircle className="h-4 w-4 text-rose-400 shrink-0 mt-0.5" />
+                        <div>
+                          <strong className="text-rose-400 block uppercase tracking-wide text-[9px] mb-0.5">Stok Inventaris Habis!</strong>
+                          <p className="text-slate-300 text-[10px] leading-relaxed">Peringatan: Stok di gudang telah kosong. Hubungi tim procurement untuk memesan pengadaan unit tambahan.</p>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* QR/Barcode scanner section for warehouse worker */}

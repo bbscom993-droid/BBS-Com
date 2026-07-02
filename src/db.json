@@ -1,23 +1,31 @@
 {
   "settings": {
-    "companyName": "Berkah Bintang Solusindo",
-    "tagline": "Solusi Teknologi Informasi dan Pengadaan Terpercaya",
-    "description": "Melayani kebutuhan pengadaan perangkat IT, infrastruktur jaringan, server, CCTV, software, maintenance, serta konsultasi teknologi informasi untuk perusahaan, lembaga pendidikan, bisnis, dan UMKM.",
-    "address": "Jl. Cempaka Putih Barat 21 No. 10 Jakarta Pusat 10520",
-    "whatsapp": "+628131852419",
-    "email": "bbscom993@gmail.com",
-    "website": "www.berkahbintangsolusindo.com",
-    "workingHours": "Senin - Jumat: 08:30 - 17:30 WIB",
-    "logoText": "BBS",
-    "motto": "Inovasi, Integritas & Pelayanan Terbaik",
-    "bankAccount": {
-      "bankName": "Bank Mandiri",
-      "accountNumber": "123-45-67890-1",
-      "accountHolder": "PT Berkah Bintang Solusindo"
+    "config": {
+      "companyName": "Berkah Bintang Solusindo (Updated)",
+      "tagline": "Solusi Teknologi Informasi dan Pengadaan Terpercaya",
+      "description": "Melayani kebutuhan pengadaan perangkat IT, infrastruktur jaringan, server, CCTV, software, maintenance, serta konsultasi teknologi informasi untuk perusahaan, lembaga pendidikan, bisnis, dan UMKM.",
+      "address": "Jl. Cempaka Putih Barat 21 No. 10 Jakarta Pusat 10520",
+      "whatsapp": "+628131852419",
+      "email": "bbscom993@gmail.com",
+      "website": "www.berkahbintangsolusindo.com",
+      "workingHours": "Senin - Jumat: 08:30 - 17:30 WIB",
+      "logoText": "BBS",
+      "motto": "Inovasi, Integritas & Pelayanan Terbaik",
+      "bankAccount": {
+        "bankName": "Bank Mandiri",
+        "accountNumber": "123-45-67890-1",
+        "accountHolder": "PT Berkah Bintang Solusindo"
+      }
+    },
+    "reminderConfig": {
+      "autoSchedule": true,
+      "delayHours": 48,
+      "subjectTemplate": "[PENGINGAT] Menunggu Tindak Lanjut Permintaan Penawaran - {rfqNumber}",
+      "bodyTemplate": "Halo {clientName},\n\nKami ingin mengonfirmasi bahwa kami sedang menyusun penawaran terbaik untuk RFQ {rfqNumber} Anda.\n\nTim sales kami akan segera menghubungi Anda untuk mendiskusikan spesifikasi perangkat berkualitas tinggi yang Anda butuhkan.\n\nTerima kasih,\n{companyName}"
     }
   },
-  "rfqs": [
-    {
+  "rfqs": {
+    "rfq_1": {
       "id": "rfq_1",
       "rfqNumber": "RFQ-2026-0001",
       "date": "2026-06-25",
@@ -44,7 +52,7 @@
       "notes": "Sudah dihubungi via WA, tertarik dengan garansi purna jual.",
       "generatedQuotationId": "q_1"
     },
-    {
+    "rfq_jan": {
       "id": "rfq_jan",
       "rfqNumber": "RFQ-2026-0010",
       "date": "2026-01-15",
@@ -64,7 +72,7 @@
       ],
       "generatedQuotationId": "q_jan"
     },
-    {
+    "rfq_feb": {
       "id": "rfq_feb",
       "rfqNumber": "RFQ-2026-0011",
       "date": "2026-02-18",
@@ -84,7 +92,7 @@
       ],
       "generatedQuotationId": "q_feb"
     },
-    {
+    "rfq_mar": {
       "id": "rfq_mar",
       "rfqNumber": "RFQ-2026-0012",
       "date": "2026-03-10",
@@ -104,7 +112,7 @@
       ],
       "generatedQuotationId": "q_mar"
     },
-    {
+    "rfq_apr": {
       "id": "rfq_apr",
       "rfqNumber": "RFQ-2026-0013",
       "date": "2026-04-22",
@@ -124,7 +132,7 @@
       ],
       "generatedQuotationId": "q_apr"
     },
-    {
+    "rfq_may": {
       "id": "rfq_may",
       "rfqNumber": "RFQ-2026-0014",
       "date": "2026-05-05",
@@ -144,9 +152,9 @@
       ],
       "generatedQuotationId": "q_may"
     }
-  ],
-  "quotations": [
-    {
+  },
+  "quotations": {
+    "q_1": {
       "id": "q_1",
       "rfqId": "rfq_1",
       "quotationNumber": "Q-BBS-2026-0001",
@@ -183,7 +191,7 @@
       "status": "sent",
       "adminSignature": "Direktur Pengadaan BBS"
     },
-    {
+    "q_jan": {
       "id": "q_jan",
       "rfqId": "rfq_jan",
       "quotationNumber": "Q-BBS-2026-0002",
@@ -210,7 +218,7 @@
       "status": "accepted",
       "adminSignature": "Direktur Pengadaan BBS"
     },
-    {
+    "q_feb": {
       "id": "q_feb",
       "rfqId": "rfq_feb",
       "quotationNumber": "Q-BBS-2026-0003",
@@ -237,7 +245,7 @@
       "status": "accepted",
       "adminSignature": "Direktur Pengadaan BBS"
     },
-    {
+    "q_mar": {
       "id": "q_mar",
       "rfqId": "rfq_mar",
       "quotationNumber": "Q-BBS-2026-0004",
@@ -264,7 +272,7 @@
       "status": "accepted",
       "adminSignature": "Direktur Pengadaan BBS"
     },
-    {
+    "q_apr": {
       "id": "q_apr",
       "rfqId": "rfq_apr",
       "quotationNumber": "Q-BBS-2026-0005",
@@ -291,7 +299,7 @@
       "status": "accepted",
       "adminSignature": "Direktur Pengadaan BBS"
     },
-    {
+    "q_may": {
       "id": "q_may",
       "rfqId": "rfq_may",
       "quotationNumber": "Q-BBS-2026-0006",
@@ -318,6 +326,7 @@
       "status": "accepted",
       "adminSignature": "Direktur Pengadaan BBS"
     }
-  ],
-  "emails": []
+  },
+  "emails": {},
+  "reminders": {}
 }

@@ -2,11 +2,13 @@ import React, { useState, useEffect, useRef } from "react";
 import * as d3 from "d3";
 import { RFQ, ProductItem, Quotation } from "../types";
 import { PRODUCT_CATALOG } from "../data";
-import { BarChart3, TrendingUp, Info, Shield, Layers, HelpCircle, Briefcase, Building, GraduationCap, Store, Activity } from "lucide-react";
+import { BarChart3, TrendingUp, Info, Shield, Layers, HelpCircle, Briefcase, Building, GraduationCap, Store, Activity, Calendar } from "lucide-react";
 import {
   ResponsiveContainer,
   AreaChart,
   Area,
+  LineChart,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -316,6 +318,85 @@ export default function RfqAnalytics({ rfqs, catalogProducts, quotations }: RfqA
           <div className="flex justify-between items-center gap-6 text-slate-400">
             <span>Volume Proposal:</span>
             <span className="font-mono font-bold text-indigo-400">{dataPoint.count} Proposal</span>
+          </div>
+        </div>
+      );
+    }
+    return null;
+  };
+
+  // Generate 30 days request frequency for inventory forecasting
+  const get30DayRequestData = () => {
+    const last30Days = [];
+    const today = new Date();
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
+      const key = `${yyyy}-${mm}-${dd}`;
+      
+      const monthNames = [
+        "Jan", "Feb", "Mar", "Apr", "Mei", "Jun", 
+        "Jul", "Agt", "Sep", "Okt", "Nov", "Des"
+      ];
+      const label = `${dd} ${monthNames[d.getMonth()]}`;
+      
+      last30Days.push({ key, label, units: 0, rfqsCount: 0 });
+    }
+
+    rfqs.forEach((rfq) => {
+      if (!rfq.date) return;
+      let rfqDate = "";
+      const match = rfq.date.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (match) {
+        rfqDate = `${match[1]}-${match[2]}-${match[3]}`;
+      } else {
+        try {
+          const d = new Date(rfq.date);
+          if (!isNaN(d.getTime())) {
+            const yyyy = d.getFullYear();
+            const mm = String(d.getMonth() + 1).padStart(2, "0");
+            const dd = String(d.getDate()).padStart(2, "0");
+            rfqDate = `${yyyy}-${mm}-${dd}`;
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      const matched = last30Days.find(d => d.key === rfqDate);
+      if (matched) {
+        matched.rfqsCount += 1;
+        if (rfq.items && rfq.items.length > 0) {
+          const rfqUnits = rfq.items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+          matched.units += rfqUnits;
+        }
+      }
+    });
+
+    return last30Days;
+  };
+
+  const last30DaysData = get30DayRequestData();
+  const totalUnits30Days = last30DaysData.reduce((acc, d) => acc + d.units, 0);
+  const avgUnits30Days = Number((totalUnits30Days / 30).toFixed(1));
+  const peakUnits30Days = last30DaysData.reduce((max, d) => d.units > max ? d.units : max, 0);
+
+  const Custom30DayTooltip = ({ active, payload }: any) => {
+    if (active && payload && payload.length) {
+      const dataPoint = payload[0].payload;
+      return (
+        <div className="bg-slate-950/95 border border-indigo-500/30 rounded-xl p-3 shadow-xl backdrop-blur-md text-xs space-y-1.5 text-left font-sans">
+          <p className="font-extrabold text-white">{dataPoint.label} (2026)</p>
+          <div className="h-px bg-white/10 my-1"></div>
+          <div className="flex justify-between items-center gap-6 text-slate-400">
+            <span>Volume Permintaan:</span>
+            <span className="font-mono font-bold text-indigo-400">{dataPoint.units} Unit</span>
+          </div>
+          <div className="flex justify-between items-center gap-6 text-slate-400">
+            <span>Jumlah Berkas RFQ:</span>
+            <span className="font-mono font-bold text-amber-400">{dataPoint.rfqsCount} RFQ</span>
           </div>
         </div>
       );
@@ -774,6 +855,109 @@ export default function RfqAnalytics({ rfqs, catalogProducts, quotations }: RfqA
             </div>
           </div>
 
+        </div>
+      </div>
+
+      {/* CARD 3: 30-Day Product Request Frequency for Inventory Forecasting */}
+      <div className="bg-slate-900/40 border border-white/10 backdrop-blur-xl rounded-2xl p-6 shadow-2xl relative space-y-6">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/5 pb-5">
+          <div className="flex items-center space-x-3">
+            <div className="p-2.5 bg-indigo-500/10 rounded-xl border border-indigo-500/20 text-indigo-400">
+              <Calendar className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="font-extrabold text-white text-base">30-Day Product Request Frequency</h3>
+              <p className="text-xs text-slate-400">
+                Frekuensi permintaan kuantitas unit produk harian dari RFQ masuk dalam 30 hari terakhir untuk memproyeksikan kebutuhan stok/inventaris.
+              </p>
+            </div>
+          </div>
+
+          {/* Forecast Metrics Badge */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="px-3 py-1.5 bg-slate-950 border border-white/5 rounded-xl text-xs text-slate-400">
+              Total Permintaan: <span className="font-mono font-bold text-indigo-400">{totalUnits30Days} Unit</span>
+            </div>
+            <div className="px-3 py-1.5 bg-slate-950 border border-white/5 rounded-xl text-xs text-slate-400">
+              Rerata Harian: <span className="font-mono font-bold text-amber-400">{avgUnits30Days} Unit/hari</span>
+            </div>
+            <div className="px-3 py-1.5 bg-slate-950 border border-white/5 rounded-xl text-xs text-slate-400">
+              Volume Puncak: <span className="font-mono font-bold text-rose-400">{peakUnits30Days} Unit</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Chart + Insights */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+          <div className="lg:col-span-8 bg-slate-950/30 border border-white/5 rounded-2xl p-4 min-h-[300px]">
+            {totalUnits30Days === 0 ? (
+              <div className="h-[268px] flex flex-col items-center justify-center text-slate-500">
+                <HelpCircle className="h-10 w-10 text-slate-700 animate-pulse mb-2" />
+                <p className="text-sm">Tidak ada data kuantitas produk diminta dalam 30 hari terakhir</p>
+              </div>
+            ) : (
+              <div className="w-full h-[268px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={last30DaysData}
+                    margin={{ top: 15, right: 15, left: 5, bottom: 5 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.05)" />
+                    <XAxis 
+                      dataKey="label" 
+                      stroke="#94a3b8" 
+                      fontSize={10} 
+                      tickLine={false}
+                      axisLine={false}
+                      dy={8}
+                    />
+                    <YAxis 
+                      stroke="#94a3b8" 
+                      fontSize={11} 
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(val) => `${val} Un`}
+                      dx={-10}
+                    />
+                    <RechartsTooltip content={<Custom30DayTooltip />} />
+                    <Line 
+                      type="monotone" 
+                      dataKey="units" 
+                      stroke="#818cf8" 
+                      strokeWidth={3}
+                      activeDot={{ r: 6 }}
+                      dot={{ r: 3, fill: '#4f46e5', strokeWidth: 1 }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+
+          {/* Forecasting Insights Card */}
+          <div className="lg:col-span-4 space-y-4">
+            <div className="bg-slate-950/40 border border-white/5 rounded-2xl p-4 space-y-3">
+              <h4 className="text-xs font-bold text-indigo-300 uppercase tracking-wider flex items-center gap-1.5">
+                <TrendingUp className="h-4 w-4" />
+                <span>Forecasting & Inventory Insights</span>
+              </h4>
+              
+              <div className="space-y-3.5 text-xs text-slate-300 leading-relaxed">
+                <p>
+                  Berdasarkan tren penawaran 30 hari terakhir, total volume permintaan yang masuk mencapai <strong className="text-white font-bold">{totalUnits30Days} unit</strong> perangkat/layanan dengan kecepatan rata-rata harian sebesar <strong className="text-amber-400 font-bold">{avgUnits30Days} unit per hari</strong>.
+                </p>
+                <div className="p-3 bg-indigo-950/20 border border-indigo-500/20 rounded-xl space-y-1">
+                  <span className="text-[10px] uppercase font-bold text-indigo-400 tracking-wider block">Rekomendasi Manajemen Stok:</span>
+                  <p className="text-[11px] text-slate-300">
+                    Sangat direkomendasikan untuk mempertahankan persediaan aman minimal <strong className="font-bold text-white">{(avgUnits30Days * 15).toFixed(0)} unit</strong> (estimasi lead time 15 hari) untuk kategori produk dengan frekuensi penawaran tertinggi guna menghindari keterlambatan serah terima proyek.
+                  </p>
+                </div>
+                <div className="text-[10px] text-slate-500 italic">
+                  * Data ini diperbarui secara otomatis ketika klien mengirimkan RFQ baru.
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

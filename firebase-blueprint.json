@@ -126,7 +126,10 @@
         "specifications": {
           "type": "array",
           "items": { "type": "string" }
-        }
+        },
+        "stockQuantity": { "type": "number" },
+        "stockStatus": { "type": "string" },
+        "rackLocation": { "type": "string" }
       },
       "required": ["id", "name", "category", "description", "estimatedPriceRange"]
     },

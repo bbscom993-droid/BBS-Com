@@ -729,6 +729,188 @@ app.post("/api/rfqs/bulk-status", async (req, res) => {
   }
 });
 
+app.post("/api/rfqs/bulk-notify", async (req, res) => {
+  try {
+    const { rfqIds, operator } = req.body;
+    if (!rfqIds || !Array.isArray(rfqIds) || rfqIds.length === 0) {
+      return res.status(400).json({ error: "Parameter rfqIds berupa array yang tidak kosong diperlukan." });
+    }
+
+    const settingsDoc = await adminDb.collection("settings").doc("config").get();
+    const settings = settingsDoc.exists ? settingsDoc.data() || {} : {};
+    const companyEmail = settings.email || "noreply@berkahbintangsolusindo.com";
+    const companyName = settings.companyName || "Berkah Bintang Solusindo (BBS)";
+    const op = operator || "Sales Admin";
+
+    const sentEmails = [];
+    const updatedRfqs = [];
+
+    for (const rfqId of rfqIds) {
+      const rfqRef = adminDb.collection("rfqs").doc(rfqId);
+      const doc = await rfqRef.get();
+      if (doc.exists) {
+        const rfq = doc.data() || {};
+        const status = rfq.status || "pending";
+        
+        let statusTitle = "Pembaruan Status RFQ";
+        let statusDesc = "Status penawaran Anda telah diperbarui.";
+        let gradient = "linear-gradient(135deg, #4f46e5 0%, #312e81 100%)";
+        let statusBadgeColor = "#4f46e5";
+        let statusBadgeBg = "#e0e7ff";
+
+        if (status === "pending") {
+          statusTitle = "Permintaan Penawaran Dalam Antrean";
+          statusDesc = "RFQ Anda saat ini berada dalam antrean peninjauan oleh tim Sales & Technical Engineer kami. Kami akan segera menganalisis spesifikasi kebutuhan Anda.";
+          gradient = "linear-gradient(135deg, #64748b 0%, #334155 100%)";
+          statusBadgeColor = "#475569";
+          statusBadgeBg = "#f1f5f9";
+        } else if (status === "processing") {
+          statusTitle = "Permintaan Sedang Diproses Analisis";
+          statusDesc = "Sales & Technical Engineer kami sedang menganalisis spesifikasi kebutuhan perangkat dan memeriksa estimasi ketersediaan unit di database inventaris.";
+          gradient = "linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)";
+          statusBadgeColor = "#1d4ed8";
+          statusBadgeBg = "#dbeafe";
+        } else if (status === "quoted") {
+          statusTitle = "Surat Penawaran resmi (Quotation) Telah Terbit";
+          statusDesc = "Surat Penawaran Harga resmi (Quotation) untuk RFQ Anda telah berhasil diterbitkan! Anda dapat meninjau detail penawaran, PPN, dan opsi diskon langsung di platform.";
+          gradient = "linear-gradient(135deg, #10b981 0%, #047857 100%)";
+          statusBadgeColor = "#047857";
+          statusBadgeBg = "#d1fae5";
+        } else if (status === "completed") {
+          statusTitle = "Pengadaan Selesai & Berhasil Dikirim";
+          statusDesc = "Seluruh unit perangkat dalam RFQ Anda telah selesai diproses, diverifikasi melalui barcode serial number, dan dikirimkan ke alamat tujuan.";
+          gradient = "linear-gradient(135deg, #0d9488 0%, #115e59 100%)";
+          statusBadgeColor = "#115e59";
+          statusBadgeBg = "#ccfbf1";
+        } else if (status === "cancelled") {
+          statusTitle = "Permintaan Penawaran Dibatalkan";
+          statusDesc = "Permintaan Penawaran (RFQ) Anda saat ini telah dibatalkan atau ditutup. Silakan hubungi representative kami jika Anda memerlukan klarifikasi atau koreksi.";
+          gradient = "linear-gradient(135deg, #f43f5e 0%, #9f1239 100%)";
+          statusBadgeColor = "#9f1239";
+          statusBadgeBg = "#ffe4e6";
+        }
+
+        const formattedItems = rfq.items && rfq.items.length > 0
+          ? rfq.items.map((item: any, idx: number) => {
+              return `<tr>
+                <td style="padding: 10px; border-bottom: 1px solid #e2e8f0; font-family: sans-serif; font-size: 13px; color: #1e293b;">${idx + 1}. <strong>${item.name}</strong></td>
+                <td style="padding: 10px; border-bottom: 1px solid #e2e8f0; font-family: sans-serif; font-size: 13px; color: #1e293b; text-align: center;">${item.quantity} unit</td>
+                <td style="padding: 10px; border-bottom: 1px solid #e2e8f0; font-family: sans-serif; font-size: 13px; color: #64748b;">${item.description || "-"}</td>
+              </tr>`;
+            }).join("")
+          : `<tr><td colspan="3" style="padding: 15px; text-align: center; color: #64748b; font-family: sans-serif; font-size: 13px;">Tidak ada item perangkat</td></tr>`;
+
+        const emailSubject = `[PEMBERITAHUAN STATUS] RFQ ${rfq.rfqNumber} - ${statusTitle}`;
+
+        const emailHtml = `
+          <div style="background-color: #f8fafc; padding: 40px 20px; font-family: sans-serif; color: #1e293b;">
+            <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05);">
+              <!-- Header -->
+              <div style="background: ${gradient}; padding: 30px; text-align: center; color: #ffffff;">
+                <h1 style="margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -0.025em; font-family: sans-serif;">${companyName}</h1>
+                <p style="margin: 5px 0 0 0; font-size: 13px; opacity: 0.9; font-family: sans-serif;">Pemberitahuan Status Permintaan Penawaran</p>
+              </div>
+              
+              <!-- Body -->
+              <div style="padding: 30px;">
+                <p style="font-size: 15px; line-height: 1.6; font-family: sans-serif;">Halo <strong>${rfq.clientName}</strong>,</p>
+                <p style="font-size: 14px; line-height: 1.6; color: #475569; font-family: sans-serif;">
+                  Kami ingin menginformasikan pembaruan status terkini mengenai pengajuan Permintaan Penawaran (RFQ) Anda dengan nomor <strong>${rfq.rfqNumber}</strong>.
+                </p>
+
+                <div style="background-color: #f8fafc; border-radius: 12px; padding: 20px; margin: 25px 0; border-left: 4px solid ${statusBadgeColor};">
+                  <h3 style="margin: 0 0 8px 0; font-size: 13px; font-weight: 700; color: #475569; font-family: sans-serif; text-transform: uppercase; letter-spacing: 0.05em;">Status RFQ Terbaru</h3>
+                  <div style="display: inline-block; background-color: ${statusBadgeBg}; color: ${statusBadgeColor}; padding: 4px 12px; border-radius: 9999px; font-weight: bold; font-size: 11px; text-transform: uppercase; margin-bottom: 12px; font-family: monospace;">
+                    ${status.toUpperCase()}
+                  </div>
+                  <p style="margin: 0; font-size: 13px; line-height: 1.6; color: #334155; font-family: sans-serif; font-weight: 500;">
+                    ${statusDesc}
+                  </p>
+                </div>
+
+                <h4 style="margin: 20px 0 10px 0; font-size: 14px; font-weight: 700; color: #1e293b; font-family: sans-serif;">Rangkuman Kebutuhan Unit</h4>
+                <table style="width: 100%; border-collapse: collapse; margin-bottom: 25px;">
+                  <thead>
+                    <tr style="background-color: #f8fafc;">
+                      <th style="padding: 8px 10px; border-bottom: 2px solid #e2e8f0; text-align: left; font-family: sans-serif; font-size: 11px; color: #475569; text-transform: uppercase;">Nama Perangkat</th>
+                      <th style="padding: 8px 10px; border-bottom: 2px solid #e2e8f0; text-align: center; font-family: sans-serif; font-size: 11px; color: #475569; text-transform: uppercase; width: 80px;">Jumlah</th>
+                      <th style="padding: 8px 10px; border-bottom: 2px solid #e2e8f0; text-align: left; font-family: sans-serif; font-size: 11px; color: #475569; text-transform: uppercase;">Keterangan</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${formattedItems}
+                  </tbody>
+                </table>
+
+                <div style="border-top: 1px solid #e2e8f0; padding-top: 20px; margin-top: 20px;">
+                  <p style="margin: 0; font-size: 13px; line-height: 1.6; color: #64748b; font-family: sans-serif;">
+                    Butuh bantuan atau ingin mendiskusikan penawaran harga Anda secara prioritas? Anda dapat membalas email ini secara langsung atau menghubungi tim support kami di nomor WhatsApp: <a href="https://wa.me/${settings.whatsapp ? settings.whatsapp.replace(/[^0-9]/g, '') : ''}" style="color: #4f46e5; font-weight: bold; text-decoration: none;">${settings.whatsapp || ''}</a>.
+                  </p>
+                </div>
+              </div>
+              
+              <!-- Footer -->
+              <div style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 25px 30px; text-align: center; color: #64748b; font-size: 11px; line-height: 1.5;">
+                <p style="margin: 0 0 4px 0; font-weight: 700; color: #475569; font-family: sans-serif;">${companyName}</p>
+                <p style="margin: 0 0 8px 0; font-family: sans-serif;">${settings.address || ""}</p>
+                <p style="margin: 0; font-family: sans-serif;">
+                  Email: <a href="mailto:${companyEmail}" style="color: #4f46e5; text-decoration: none;">${companyEmail}</a> | 
+                  Website: <a href="http://${settings.website || ""}" style="color: #4f46e5; text-decoration: none;">${settings.website || ""}</a>
+                </p>
+                <p style="margin: 15px 0 0 0; font-size: 9px; color: #94a3b8; font-family: sans-serif;">
+                  Ini adalah email pemberitahuan simulasi otomatis yang dipicu langsung dari dashboard administrator BBS.
+                </p>
+              </div>
+            </div>
+          </div>
+        `;
+
+        const newEmail = {
+          id: "email_" + Date.now() + "_" + Math.floor(Math.random() * 1000),
+          to: rfq.email,
+          from: companyEmail,
+          subject: emailSubject,
+          body: emailHtml,
+          sentAt: new Date().toISOString(),
+          rfqNumber: rfq.rfqNumber,
+          clientName: rfq.clientName,
+          companyName: rfq.companyName,
+          status: "sent"
+        };
+
+        await adminDb.collection("emails").doc(newEmail.id).set(newEmail);
+        sentEmails.push(newEmail);
+
+        let history = rfq.history || [];
+        if (history.length === 0) {
+          history.push({
+            status: rfq.status || "pending",
+            timestamp: new Date(rfq.date || Date.now()).toISOString(),
+            note: "Permintaan Penawaran (RFQ) diajukan oleh klien.",
+            operator: "Klien"
+          });
+        }
+
+        history.push({
+          status: rfq.status,
+          timestamp: new Date().toISOString(),
+          note: `Email notifikasi status "${status.toUpperCase()}" telah dikirim ke klien (${rfq.email}).`,
+          operator: op
+        });
+
+        const updated = { ...rfq, history };
+        await rfqRef.set(updated);
+        updatedRfqs.push(updated);
+      }
+    }
+
+    res.json({ success: true, count: updatedRfqs.length, emailsSentCount: sentEmails.length });
+  } catch (error: any) {
+    console.error("Error sending bulk notification:", error);
+    res.status(500).json({ error: "Gagal mengirim notifikasi secara massal", details: error.message });
+  }
+});
+
 // API: Quotations
 app.get("/api/quotations", async (req, res) => {
   try {

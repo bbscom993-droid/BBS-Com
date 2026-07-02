@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Html5Qrcode } from "html5-qrcode";
-import { Camera, Scan, X, RotateCw, CheckCircle, AlertCircle, ShoppingCart, Info, History, Trash2, Search } from "lucide-react";
+import { Camera, Scan, X, RotateCw, CheckCircle, AlertCircle, ShoppingCart, Info, History, Trash2, Search, Filter } from "lucide-react";
 import { ProductItem } from "../types";
 
 interface BarcodeScannerProps {
@@ -25,10 +25,19 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
   const [scanHistory, setScanHistory] = useState<{ product: ProductItem; time: string }[]>([]);
   const [simulateMode, setSimulateMode] = useState<boolean>(false);
 
+  // Dynamic categories and category filter state
+  const categories = ["Semua", ...Array.from(new Set(catalogProducts.map(p => p.category)))];
+  const [selectedCategory, setSelectedCategory] = useState<string>("Semua");
+  const [categoryMismatchError, setCategoryMismatchError] = useState<{
+    productName: string;
+    productCategory: string;
+    filteredCategory: string;
+  } | null>(null);
+
   // Sorting state for Recent Scans
   const [recentScansSortBy, setRecentScansSortBy] = useState<"date_desc" | "date_asc" | "name_asc">("date_desc");
 
-  // Persistent Recent Scans (last 5 scans) in localStorage with timestamps
+  // Persistent Recent Scans (last 10 scans) in localStorage with timestamps
   const [recentScans, setRecentScans] = useState<RecentScanItem[]>(() => {
     try {
       const saved = localStorage.getItem("bbs_recent_scans");
@@ -51,10 +60,26 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
     }
   });
 
+  const [recentlyAddedIds, setRecentlyAddedIds] = useState<Record<string, boolean>>({});
+
+  const formatScannedTime = (timestamp: number) => {
+    try {
+      const now = Date.now();
+      const diffMs = now - timestamp;
+      const diffMins = Math.floor(diffMs / 60000);
+      if (diffMins < 1) return "Baru saja";
+      if (diffMins < 60) return `${diffMins}m lalu`;
+      const date = new Date(timestamp);
+      return date.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+    } catch {
+      return "";
+    }
+  };
+
   const addToRecentScans = (product: ProductItem) => {
     setRecentScans((prev) => {
       const filtered = prev.filter((item) => item.product.id !== product.id);
-      const updated = [{ product, scannedAt: Date.now() }, ...filtered].slice(0, 5);
+      const updated = [{ product, scannedAt: Date.now() }, ...filtered].slice(0, 10);
       try {
         localStorage.setItem("bbs_recent_scans", JSON.stringify(updated));
       } catch (e) {
@@ -62,6 +87,22 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
       }
       return updated;
     });
+  };
+
+  const handleQuickAddProduct = (product: ProductItem) => {
+    onScanSuccess(product);
+    addToRecentScans(product);
+    
+    // Set transient "Added!" state for visual feedback
+    setRecentlyAddedIds((prev) => ({ ...prev, [product.id]: true }));
+    setTimeout(() => {
+      setRecentlyAddedIds((prev) => ({ ...prev, [product.id]: false }));
+    }, 1500);
+
+    // Vibration feedback if supported
+    if (typeof navigator !== "undefined" && navigator.vibrate) {
+      navigator.vibrate(100);
+    }
   };
 
   const clearRecentScans = () => {
@@ -266,6 +307,18 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
     }
 
     if (matchedProduct) {
+      // Check if product belongs to the selected category (if not "Semua")
+      if (selectedCategory !== "Semua" && matchedProduct.category !== selectedCategory) {
+        setCategoryMismatchError({
+          productName: matchedProduct.name,
+          productCategory: matchedProduct.category,
+          filteredCategory: selectedCategory,
+        });
+        stopScanner();
+        return;
+      }
+
+      setCategoryMismatchError(null);
       onScanSuccess(matchedProduct);
       setLastScanned(matchedProduct);
       
@@ -287,6 +340,7 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
       stopScanner();
     } else {
       // Set unmatched state for custom fallback UI handling and stop the active scanner
+      setCategoryMismatchError(null);
       setUnmatchedCode(code);
       setManualName(`Perangkat Kustom (${code})`);
       setManualQty(1);
@@ -362,7 +416,97 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
             </div>
           </form>
 
-          {unmatchedCode ? (
+          {/* Dropdown Filter Kategori */}
+          <div className="space-y-1.5 p-3.5 bg-slate-950/60 border border-white/5 rounded-2xl">
+            <div className="flex items-center justify-between text-indigo-400 text-[10px] font-black uppercase tracking-wider mb-0.5">
+              <div className="flex items-center space-x-1.5">
+                <Filter className="h-3.5 w-3.5 text-indigo-400" />
+                <span>Filter Kategori Pemindaian</span>
+              </div>
+              {selectedCategory !== "Semua" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedCategory("Semua");
+                    setCategoryMismatchError(null);
+                  }}
+                  className="text-amber-400 hover:text-amber-300 transition-colors lowercase font-semibold text-[9px] px-1.5 py-0.5 bg-amber-500/10 rounded border border-amber-500/20 cursor-pointer"
+                >
+                  Reset Filter
+                </button>
+              )}
+            </div>
+            <div className="relative">
+              <select
+                value={selectedCategory}
+                onChange={(e) => {
+                  setSelectedCategory(e.target.value);
+                  setCategoryMismatchError(null);
+                }}
+                className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 pr-8 appearance-none font-sans font-bold cursor-pointer"
+              >
+                {categories.map((cat) => (
+                  <option key={cat} value={cat} className="bg-slate-900">
+                    {cat === "Semua" ? "Semua Kategori (Tanpa Batasan)" : cat}
+                  </option>
+                ))}
+              </select>
+              <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-slate-400">
+                <Filter className="h-3.5 w-3.5 text-slate-500" />
+              </div>
+            </div>
+          </div>
+
+          {categoryMismatchError ? (
+            /* Category Mismatch Warning UI Component with Bypass Option */
+            <div className="p-4 bg-amber-500/10 border border-amber-500/25 rounded-2xl space-y-4 animate-scaleIn">
+              <div className="flex items-start space-x-3">
+                <div className="p-2 bg-amber-500/20 text-amber-400 rounded-xl shrink-0">
+                  <Filter className="h-5 w-5" />
+                </div>
+                <div className="space-y-1">
+                  <h4 className="font-extrabold text-white text-xs uppercase tracking-wider">Kategori Produk Dibatasi</h4>
+                  <p className="text-[11px] text-slate-300">
+                    Produk <strong className="text-white">{categoryMismatchError.productName}</strong> ditemukan, tetapi termasuk dalam kategori <span className="px-1.5 py-0.5 rounded bg-slate-950 text-amber-400 border border-white/5 font-mono text-[10px] font-bold">{categoryMismatchError.productCategory}</span>.
+                  </p>
+                  <p className="text-[10px] text-slate-400 leading-normal">
+                    Filter pencarian/pemindaian Anda saat ini membatasi hasil hanya untuk kategori <strong className="text-indigo-400 font-bold">{categoryMismatchError.filteredCategory}</strong>.
+                  </p>
+                </div>
+              </div>
+
+              <div className="pt-2 flex space-x-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const matched = catalogProducts.find(p => p.name === categoryMismatchError.productName);
+                    if (matched) {
+                      onScanSuccess(matched);
+                      setLastScanned(matched);
+                      addToRecentScans(matched);
+                    }
+                    setCategoryMismatchError(null);
+                  }}
+                  className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition-colors shadow-md cursor-pointer text-center font-sans"
+                >
+                  Bypass Filter & Tambahkan
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCategoryMismatchError(null);
+                    setUnmatchedCode(null);
+                    if (!simulateMode) {
+                      startScanner();
+                    }
+                  }}
+                  className="px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/5 text-slate-300 hover:text-white text-xs font-bold rounded-lg transition-colors cursor-pointer text-center font-sans"
+                >
+                  Scan Lagi
+                </button>
+              </div>
+            </div>
+          ) : unmatchedCode ? (
             /* Custom Error Handling UI Component with Manual Add Fallback */
             <div className="p-4 bg-red-500/10 border border-red-500/25 rounded-2xl space-y-4 animate-scaleIn">
               <div className="flex items-start space-x-3">
@@ -585,7 +729,9 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
                   <div className="space-y-2">
                     <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Simulasikan Scan Label Produk:</label>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {catalogProducts.map((product) => {
+                      {catalogProducts
+                        .filter((product) => selectedCategory === "Semua" || product.category === selectedCategory)
+                        .map((product) => {
                         // Match a custom barcode mock number for each
                         const mockBarcodes: Record<string, string> = {
                           "prod_1": "8895431201",
@@ -678,8 +824,12 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
           )}
 
           {/* Recent Scans (Persistent in localStorage) */}
-          {recentScans.length > 0 && (() => {
-            const sortedRecentScans = [...recentScans].sort((a, b) => {
+          {(() => {
+            const filteredRecentScans = recentScans.filter(
+              ({ product }) => selectedCategory === "Semua" || product.category === selectedCategory
+            );
+
+            const sortedRecentScans = [...filteredRecentScans].sort((a, b) => {
               if (recentScansSortBy === "date_desc") {
                 return b.scannedAt - a.scannedAt;
               } else if (recentScansSortBy === "date_asc") {
@@ -697,58 +847,106 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
                     <History className="h-3.5 w-3.5 text-indigo-400" />
                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Recent Scans (localStorage)</span>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <select
-                      value={recentScansSortBy}
-                      onChange={(e) => setRecentScansSortBy(e.target.value as any)}
-                      className="bg-slate-950/60 text-slate-300 border border-white/10 rounded px-1.5 py-0.5 text-[9px] font-bold cursor-pointer outline-none focus:border-indigo-500/50 transition-colors"
-                    >
-                      <option value="date_desc" className="bg-slate-900">Date Newest</option>
-                      <option value="date_asc" className="bg-slate-900">Date Oldest</option>
-                      <option value="name_asc" className="bg-slate-900">Product Name</option>
-                    </select>
-                    <button 
-                      onClick={clearRecentScans} 
-                      className="text-[9px] text-slate-500 hover:text-red-400 flex items-center space-x-1 transition-colors cursor-pointer"
-                      title="Hapus riwayat permanen"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                      <span>Hapus</span>
-                    </button>
-                  </div>
+                  {recentScans.length > 0 && (
+                    <div className="flex items-center space-x-2">
+                      <select
+                        value={recentScansSortBy}
+                        onChange={(e) => setRecentScansSortBy(e.target.value as any)}
+                        className="bg-slate-950/60 text-slate-300 border border-white/10 rounded px-1.5 py-0.5 text-[9px] font-bold cursor-pointer outline-none focus:border-indigo-500/50 transition-colors"
+                      >
+                        <option value="date_desc" className="bg-slate-900">Date Newest</option>
+                        <option value="date_asc" className="bg-slate-900">Date Oldest</option>
+                        <option value="name_asc" className="bg-slate-900">Product Name</option>
+                      </select>
+                      <button 
+                        onClick={clearRecentScans} 
+                        className="text-[9px] text-slate-500 hover:text-red-400 flex items-center space-x-1 transition-colors cursor-pointer"
+                        title="Hapus riwayat permanen"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                        <span>Hapus</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
-                <div className="grid grid-cols-1 gap-1.5">
-                  {sortedRecentScans.map(({ product }) => (
-                    <button
-                      key={product.id}
-                      onClick={() => handleRevisitProduct(product)}
-                      className="flex items-center justify-between text-left p-2 bg-slate-950/40 hover:bg-indigo-500/5 rounded-xl border border-white/5 hover:border-indigo-500/20 transition-all cursor-pointer group"
-                    >
-                      <div className="flex items-center space-x-2.5 min-w-0 flex-1">
-                        {product.image ? (
-                          <img 
-                            src={product.image} 
-                            alt={product.name} 
-                            className="w-6 h-6 object-contain bg-white rounded p-0.5 shrink-0" 
-                            referrerPolicy="no-referrer"
-                          />
-                        ) : (
-                          <div className="w-6 h-6 bg-indigo-500/10 rounded flex items-center justify-center shrink-0 text-indigo-400 font-bold text-[9px]">
-                            {product.id.slice(-2)}
-                          </div>
-                        )}
-                        <div className="min-w-0">
-                          <p className="text-[11px] font-bold text-slate-200 truncate group-hover:text-indigo-300 transition-colors">{product.name}</p>
-                          <p className="text-[9px] text-slate-500 truncate">{product.category} • {product.estimatedPriceRange}</p>
+                
+                {sortedRecentScans.length > 0 ? (
+                  <div className="grid grid-cols-1 gap-1.5">
+                    {sortedRecentScans.map(({ product, scannedAt }) => {
+                      const isAdded = recentlyAddedIds[product.id];
+                      return (
+                        <div
+                          key={product.id}
+                          className="flex items-center justify-between text-left p-2 bg-slate-950/40 rounded-xl border border-white/5 hover:border-indigo-500/20 transition-all group"
+                        >
+                          {/* Left Details click area: selects the product and triggers full view / pauses camera */}
+                          <button
+                            type="button"
+                            onClick={() => handleRevisitProduct(product)}
+                            className="flex items-center space-x-2.5 min-w-0 flex-1 text-left cursor-pointer focus:outline-none"
+                            title="Klik untuk melihat detail / pause kamera"
+                          >
+                            {product.image ? (
+                              <img 
+                                src={product.image} 
+                                alt={product.name} 
+                                className="w-6 h-6 object-contain bg-white rounded p-0.5 shrink-0" 
+                                referrerPolicy="no-referrer"
+                              />
+                            ) : (
+                              <div className="w-6 h-6 bg-indigo-500/10 rounded flex items-center justify-center shrink-0 text-indigo-400 font-bold text-[9px]">
+                                {product.id.slice(-2)}
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <div className="flex items-center space-x-1.5">
+                                <p className="text-[11px] font-bold text-slate-200 truncate group-hover:text-indigo-300 transition-colors">{product.name}</p>
+                                <span className="text-[8px] font-mono text-slate-500 shrink-0">({formatScannedTime(scannedAt)})</span>
+                              </div>
+                              <p className="text-[9px] text-slate-500 truncate">{product.category} • {product.estimatedPriceRange}</p>
+                            </div>
+                          </button>
+
+                          {/* Right Quick Add Action: adds immediately without stopping the camera */}
+                          <button
+                            type="button"
+                            onClick={() => handleQuickAddProduct(product)}
+                            disabled={isAdded}
+                            className={`flex items-center space-x-1 text-[9px] font-bold px-2 py-1 rounded-lg border transition-all cursor-pointer focus:outline-none shrink-0 ${
+                              isAdded
+                                ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20 scale-[0.98]"
+                                : "text-indigo-400 bg-indigo-500/10 border-indigo-500/10 hover:bg-indigo-500/20 hover:border-indigo-500/30 hover:scale-105 active:scale-95"
+                            }`}
+                            title="Tambah langsung ke RFQ tanpa menghentikan kamera"
+                          >
+                            {isAdded ? (
+                              <>
+                                <CheckCircle className="h-3 w-3 animate-scaleIn" />
+                                <span className="animate-fadeIn">Ditambahkan!</span>
+                              </>
+                            ) : (
+                              <>
+                                <ShoppingCart className="h-3 w-3" />
+                                <span>+ Tambah</span>
+                              </>
+                            )}
+                          </button>
                         </div>
-                      </div>
-                      <div className="flex items-center space-x-1 text-[9px] font-bold text-indigo-400 bg-indigo-500/10 px-2 py-1 rounded-lg border border-indigo-500/10 opacity-70 group-hover:opacity-100 transition-opacity">
-                        <ShoppingCart className="h-3 w-3" />
-                        <span>Re-add</span>
-                      </div>
-                    </button>
-                  ))}
-                </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="p-4 border border-dashed border-white/5 rounded-xl text-center space-y-1">
+                    <p className="text-[10px] text-slate-400 font-bold">
+                      {selectedCategory !== "Semua" ? "Tidak Ada Riwayat untuk Kategori Ini" : "Belum Ada Riwayat Pemindaian"}
+                    </p>
+                    <p className="text-[9px] text-slate-500">
+                      {selectedCategory !== "Semua" 
+                        ? `Tidak ada produk dengan kategori "${selectedCategory}" di riwayat Anda.` 
+                        : "Produk yang baru saja Anda pindai atau cari akan tercatat di sini untuk re-add cepat."}
+                    </p>
+                  </div>
+                )}
               </div>
             );
           })()}

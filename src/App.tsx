@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { motion } from "motion/react";
 import * as Icons from "lucide-react";
+import { jsPDF } from "jspdf";
+import "jspdf-autotable";
 import { 
   Laptop, 
   ShoppingCart, 
@@ -360,6 +362,54 @@ export default function App() {
   }, [rfqCart, customCartItems, rfqForm]);
   const [emailError, setEmailError] = useState("");
 
+  // Budget threshold and estimation state
+  const [budgetThreshold, setBudgetThreshold] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem("bbs_budget_threshold");
+      return saved ? parseInt(saved, 10) : 100000000; // default 100 million IDR
+    } catch (e) {
+      return 100000000;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("bbs_budget_threshold", budgetThreshold.toString());
+    } catch (e) {
+      console.error("Error saving budgetThreshold to localStorage", e);
+    }
+  }, [budgetThreshold]);
+
+  const estimatedCartTotal = useMemo(() => {
+    const parsePrice = (priceRange: string): number => {
+      const firstPart = priceRange.split("-")[0] || "";
+      const clean = firstPart.replace(/\D/g, "");
+      const num = parseInt(clean, 10);
+      return isNaN(num) ? 0 : num;
+    };
+
+    let total = 0;
+    rfqCart.forEach((item) => {
+      const price = parsePrice(item.product.estimatedPriceRange);
+      total += price * item.quantity;
+    });
+    customCartItems.forEach((item) => {
+      const itemNameLower = item.name.toLowerCase();
+      const matched = catalogProducts.find((p) => {
+        const pNameLower = p.name.toLowerCase();
+        return pNameLower.includes(itemNameLower) || itemNameLower.includes(pNameLower);
+      });
+      let price = matched ? parsePrice(matched.estimatedPriceRange) : 5000000;
+      if (price === 0) price = 5000000;
+      total += price * item.quantity;
+    });
+    return total;
+  }, [rfqCart, customCartItems, catalogProducts]);
+
+  const isBudgetExceeded = useMemo(() => {
+    return (rfqCart.length > 0 || customCartItems.length > 0) && estimatedCartTotal > budgetThreshold;
+  }, [estimatedCartTotal, budgetThreshold, rfqCart, customCartItems]);
+
   // Admin Portal Auth (just a simple lock to simulate security)
   const [adminAuthenticated, setAdminAuthenticated] = useState(false);
   const [adminPassword, setAdminPassword] = useState("");
@@ -661,6 +711,7 @@ export default function App() {
   const [printSearch, setPrintSearch] = useState("");
   const [comparisonDetailMode, setComparisonDetailMode] = useState<"summary" | "detail">("detail");
   const [collapsedCompareProductIds, setCollapsedCompareProductIds] = useState<Record<string, boolean>>({});
+  const [showOnlyDifferences, setShowOnlyDifferences] = useState(false);
 
   // Chat History
   const [chatMessages, setChatMessages] = useState<ConsultMessage[]>([
@@ -1110,6 +1161,37 @@ export default function App() {
   };
 
   const [isBulkUpdating, setIsBulkUpdating] = useState(false);
+  const [isBulkNotifying, setIsBulkNotifying] = useState(false);
+
+  const handleBulkNotifyClients = async () => {
+    if (selectedRfqIds.length === 0) return;
+    setIsBulkNotifying(true);
+    try {
+      const res = await fetch("/api/rfqs/bulk-notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rfqIds: selectedRfqIds,
+          operator: adminDisplayName || adminUsername || "Staf BBS"
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        showToast(`Berhasil mengirimkan ${data.emailsSentCount} email notifikasi status ke klien!`, "success");
+        setSelectedRfqIds([]);
+        fetchRfqs(); // Refresh lists
+        fetchEmails(); // Refresh emails
+      } else {
+        showToast("Gagal mengirim notifikasi secara massal", "error");
+      }
+    } catch (err) {
+      console.error("Bulk client notification failed:", err);
+      showToast("Kesalahan koneksi ke server", "error");
+    } finally {
+      setIsBulkNotifying(false);
+    }
+  };
+
   const handleBulkStatusUpdate = async (status: string) => {
     if (selectedRfqIds.length === 0) return;
     setIsBulkUpdating(true);
@@ -1321,6 +1403,226 @@ export default function App() {
   const removeCustomItem = (index: number) => {
     setCustomCartItems(customCartItems.filter((_, i) => i !== index));
     showToast("Item custom dihapus.", "info");
+  };
+
+  // Export RFQ Cart Items to PDF using jsPDF and jsPDF-AutoTable
+  const exportRfqCartToPdf = () => {
+    if (rfqCart.length === 0 && customCartItems.length === 0) {
+      showToast("Keranjang RFQ kosong. Tambahkan barang terlebih dahulu untuk mengekspor ke PDF.", "error");
+      return;
+    }
+
+    try {
+      const doc = new jsPDF();
+
+      // Title & Brand Header
+      // Left vertical accent bar in indigo
+      doc.setFillColor(79, 70, 229); // indigo-600
+      doc.rect(14, 15, 4, 16, "F");
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(15);
+      doc.setTextColor(15, 23, 42); // slate-900
+      doc.text("PT. BERKAH BINTANG SOLUSINDO", 22, 21);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(71, 85, 105); // slate-600
+      doc.text("Solusi IT Terintegrasi, Jaringan, Hardware Supply, CCTV & Jasa Maintenance Sistem", 22, 26);
+      doc.text("Hubungi: support@berkahbintangsolusindo.co.id | Telp: 0812-3456-7890 | Web: www.bbs.co.id", 22, 30);
+
+      // Decorative divider line
+      doc.setDrawColor(226, 232, 240); // slate-200
+      doc.setLineWidth(0.5);
+      doc.line(14, 35, 196, 35);
+
+      // Document Title
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(79, 70, 229); // indigo-600
+      doc.text("RINGKASAN ESTIMASI KERANJANG PENGAJUAN RFQ", 14, 44);
+
+      // Timestamp of generation
+      const currentDateString = new Date().toLocaleDateString('id-ID', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      }) + " WIB";
+      
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(100, 116, 139); // slate-500
+      doc.text(`Waktu Cetak: ${currentDateString}`, 14, 49);
+
+      // Client Info Block (Subtle box)
+      doc.setFillColor(248, 250, 252); // slate-50
+      doc.setDrawColor(226, 232, 240); // slate-200
+      doc.roundedRect(14, 53, 182, 36, 3, 3, "FD");
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8.5);
+      doc.setTextColor(15, 23, 42); // slate-900
+      doc.text("INFORMASI KLIEN (PERMINTAAN AWAL)", 18, 59);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(51, 65, 85); // slate-700
+      doc.text(`Nama Kontak  : ${rfqForm.clientName || "(Belum diisi)"}`, 18, 65);
+      doc.text(`No WhatsApp  : ${rfqForm.whatsapp || "(Belum diisi)"}`, 18, 70);
+      doc.text(`Alamat Email : ${rfqForm.email || "(Belum diisi)"}`, 18, 75);
+
+      doc.text(`Perusahaan/Instansi : ${rfqForm.companyName || "-"}`, 110, 65);
+      doc.text(`Kategori Klien      : ${(rfqForm.clientCategory || "Retail").toUpperCase()}`, 110, 70);
+      doc.text(`Alamat Pengiriman   : ${rfqForm.address || "(Belum diisi)"}`, 110, 75);
+
+      // Prepare Items Data for Table
+      const tableRows: any[] = [];
+      let itemIndex = 1;
+
+      // Standard Catalog Items
+      rfqCart.forEach((item) => {
+        tableRows.push([
+          itemIndex.toString(),
+          item.product.name,
+          "Katalog: " + item.product.category,
+          item.product.serialNumber || "-",
+          item.quantity.toString(),
+          item.product.estimatedPriceRange || "-"
+        ]);
+        itemIndex++;
+      });
+
+      // Custom Manual Items
+      customCartItems.forEach((item) => {
+        tableRows.push([
+          itemIndex.toString(),
+          item.name,
+          item.description || "Kustom Khusus",
+          item.serialNumber || "-",
+          item.quantity.toString(),
+          "-"
+        ]);
+        itemIndex++;
+      });
+
+      // Draw table using jspdf-autotable
+      (doc as any).autoTable({
+        startY: 95,
+        head: [['No', 'Nama Perangkat / Jasa', 'Kategori / Deskripsi', 'Serial Number', 'Jumlah', 'Estimasi Harga']],
+        body: tableRows,
+        theme: 'striped',
+        headStyles: {
+          fillColor: [79, 70, 229], // indigo-600
+          textColor: [255, 255, 255],
+          fontSize: 8,
+          fontStyle: 'bold',
+          halign: 'left'
+        },
+        bodyStyles: {
+          fontSize: 7.5,
+          textColor: [15, 23, 42]
+        },
+        columnStyles: {
+          0: { cellWidth: 10, halign: 'center' },
+          1: { cellWidth: 55 },
+          2: { cellWidth: 50 },
+          3: { cellWidth: 28 },
+          4: { cellWidth: 15, halign: 'center' },
+          5: { cellWidth: 24 }
+        },
+        margin: { left: 14, right: 14 },
+        styles: {
+          overflow: 'linebreak',
+          cellPadding: 3
+        }
+      });
+
+      // Get Y coordinate after table
+      let finalY = (doc as any).lastAutoTable.finalY || 130;
+
+      // Special Requirements (if filled)
+      if (rfqForm.customRequirements && rfqForm.customRequirements.trim()) {
+        if (finalY > 230) {
+          doc.addPage();
+          finalY = 20;
+        } else {
+          finalY += 8;
+        }
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8.5);
+        doc.setTextColor(15, 23, 42);
+        doc.text("Kebutuhan Khusus / Catatan Tambahan Klien:", 14, finalY);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.5);
+        doc.setTextColor(71, 85, 105);
+        const splitNote = doc.splitTextToSize(rfqForm.customRequirements.trim(), 182);
+        doc.text(splitNote, 14, finalY + 4);
+        
+        finalY += (splitNote.length * 3.5) + 6;
+      }
+
+      // Check if signature section fits, if not, add a new page
+      if (finalY > 210) {
+        doc.addPage();
+        finalY = 20;
+      } else {
+        finalY += 12;
+      }
+
+      // Legal disclaimer / Note text
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(7);
+      doc.setTextColor(148, 163, 184); // slate-400
+      const noteText = "Catatan Penting: Dokumen PDF ini diunduh langsung secara mandiri oleh klien melalui portal web sebagai draft/ringkasan acuan pengadaan. Penawaran resmi (Surat Penawaran Harga resmi lengkap dengan kop surat resmi PT, tanda tangan basah/digital, nomor SPH legal, dan PPN 11%) akan dikirimkan secara formal oleh representatif PT. Berkah Bintang Solusindo setelah pengajuan RFQ ini terekam di database.";
+      const splitNoteText = doc.splitTextToSize(noteText, 182);
+      doc.text(splitNoteText, 14, finalY);
+
+      finalY += (splitNoteText.length * 3.5) + 12;
+
+      // Signature blocks
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(71, 85, 105);
+
+      // Client Signature
+      doc.text("Tanda Tangan Pengaju / Klien,", 20, finalY);
+      doc.line(20, finalY + 20, 75, finalY + 20);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(15, 23, 42);
+      doc.text(rfqForm.clientName || "(Nama Pengaju)", 20, finalY + 24);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      doc.setTextColor(148, 163, 184);
+      doc.text(rfqForm.companyName || "Instansi Klien", 20, finalY + 28);
+
+      // BBS Signature
+      doc.setFontSize(8);
+      doc.setTextColor(71, 85, 105);
+      doc.text("Diterbitkan Otomatis Oleh,", 130, finalY);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(79, 70, 229);
+      doc.text("BBS RFQ System", 130, finalY + 10);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(71, 85, 105);
+      doc.line(130, finalY + 20, 185, finalY + 20);
+      doc.text("PT. Berkah Bintang Solusindo", 130, finalY + 24);
+      doc.setFontSize(7);
+      doc.setTextColor(148, 163, 184);
+      doc.text("Integrated AI Procurement Engine", 130, finalY + 28);
+
+      // Save File
+      const filename = `RFQ_Summary_BBS_${new Date().toISOString().slice(0,10)}_${Math.floor(1000 + Math.random() * 9000)}.pdf`;
+      doc.save(filename);
+      showToast("Dokumen PDF Ringkasan RFQ berhasil di-generate dan diunduh!", "success");
+    } catch (error) {
+      console.error("Error generating PDF:", error);
+      showToast("Gagal menerbitkan dokumen PDF: " + (error as any).message, "error");
+    }
   };
 
   // Submit Final RFQ Form
@@ -1881,6 +2183,7 @@ export default function App() {
         setCurrentTab={setCurrentTab} 
         rfqCartCount={rfqCart.length + customCartItems.length}
         settings={settings}
+        isBudgetExceeded={isBudgetExceeded}
       />
 
       {/* Toast Alert Banner */}
@@ -2435,8 +2738,8 @@ export default function App() {
                               if (selectedCompareIds.includes(prod.id)) {
                                 setSelectedCompareIds(prev => prev.filter(id => id !== prod.id));
                               } else {
-                                if (selectedCompareIds.length >= 3) {
-                                  showToast("Maksimal 3 produk dapat dibandingkan sekaligus", "error");
+                                if (selectedCompareIds.length >= 4) {
+                                  showToast("Maksimal 4 produk dapat dibandingkan sekaligus", "error");
                                   return;
                                 }
                                 setSelectedCompareIds(prev => [...prev, prod.id]);
@@ -2498,8 +2801,8 @@ export default function App() {
                             if (selectedCompareIds.includes(prod.id)) {
                               setSelectedCompareIds(prev => prev.filter(id => id !== prod.id));
                             } else {
-                              if (selectedCompareIds.length >= 3) {
-                                showToast("Maksimal 3 produk dapat dibandingkan sekaligus", "error");
+                              if (selectedCompareIds.length >= 4) {
+                                showToast("Maksimal 4 produk dapat dibandingkan sekaligus", "error");
                                 return;
                               }
                               setSelectedCompareIds(prev => [...prev, prod.id]);
@@ -3043,6 +3346,104 @@ export default function App() {
                       ) : null}
                     </div>
 
+                    {/* Budget Management Panel */}
+                    <div className="bg-slate-950/50 border border-white/5 rounded-2xl p-4 space-y-3.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-slate-400 uppercase font-extrabold tracking-wider flex items-center gap-1.5">
+                          <Icons.Scale className="h-4 w-4 text-indigo-400" />
+                          <span>Manajemen Anggaran Klien</span>
+                        </span>
+                        
+                        {/* Status Badge */}
+                        {isBudgetExceeded ? (
+                          <span className="px-2 py-0.5 rounded-full bg-rose-500/15 border border-rose-500/35 text-[9px] font-black text-rose-400 animate-pulse flex items-center gap-1">
+                            <Icons.AlertTriangle className="h-2.5 w-2.5 text-rose-500" />
+                            <span>MELAMPAUI BATAS</span>
+                          </span>
+                        ) : (rfqCart.length > 0 || customCartItems.length > 0) ? (
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-[9px] font-black text-emerald-400 flex items-center gap-1">
+                            <Icons.CheckCircle2 className="h-2.5 w-2.5 text-emerald-400" />
+                            <span>AMAN / DALAM BUDGET</span>
+                          </span>
+                        ) : (
+                          <span className="text-[9px] text-slate-500 font-bold">Keranjang Kosong</span>
+                        )}
+                      </div>
+
+                      {/* Estimasi vs Limit */}
+                      <div className="grid grid-cols-2 gap-3.5">
+                        <div className="space-y-0.5">
+                          <span className="text-[9px] text-slate-500 font-bold">Total Estimasi Nilai:</span>
+                          <p className="text-xs font-black font-mono text-indigo-300">
+                            {formatRupiah(estimatedCartTotal)}
+                          </p>
+                        </div>
+                        <div className="space-y-0.5">
+                          <span className="text-[9px] text-slate-500 font-bold">Target Batas Anggaran:</span>
+                          <p className="text-xs font-black font-mono text-amber-400">
+                            {formatRupiah(budgetThreshold)}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Threshold Configurator */}
+                      <div className="space-y-2 pt-2 border-t border-white/5">
+                        <div className="flex items-center justify-between text-[10px]">
+                          <label className="text-slate-400 font-semibold">Ubah Batas Anggaran:</label>
+                          <span className="text-slate-500 font-mono">Geser untuk mengubah</span>
+                        </div>
+                        
+                        <div className="flex items-center gap-3">
+                          <input 
+                            type="range"
+                            min="10000000" // 10M
+                            max="500000000" // 500M
+                            step="10000000" // 10M steps
+                            value={budgetThreshold}
+                            onChange={(e) => setBudgetThreshold(parseInt(e.target.value))}
+                            className="flex-1 h-1 bg-slate-900 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                          />
+                          <input 
+                            type="number"
+                            value={budgetThreshold}
+                            onChange={(e) => setBudgetThreshold(Math.max(0, parseInt(e.target.value) || 0))}
+                            className="w-24 px-2 py-0.5 bg-slate-900 border border-white/10 rounded-md text-[10px] font-mono font-bold text-slate-300 text-right focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                          />
+                        </div>
+
+                        {/* Quick select presets */}
+                        <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                          {[25000000, 50000000, 100000000, 250000000].map((preset) => (
+                            <button
+                              key={preset}
+                              type="button"
+                              onClick={() => setBudgetThreshold(preset)}
+                              className={`px-2 py-0.5 rounded text-[9px] font-bold font-mono transition-colors ${
+                                budgetThreshold === preset
+                                  ? "bg-indigo-600 text-white border border-indigo-500"
+                                  : "bg-slate-900 text-slate-400 hover:text-slate-200 border border-white/5"
+                              }`}
+                            >
+                              {preset >= 1000000000 ? `${preset / 1000000000}M` : preset >= 1000000 ? `${preset / 1000000} Jt` : preset}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Exceeded Warning Alert Banner */}
+                      {isBudgetExceeded && (
+                        <div className="bg-red-500/10 border border-red-500/25 rounded-xl p-3 flex gap-2.5 items-start text-[11px] text-red-300 animate-pulse shadow-md shadow-red-500/5">
+                          <Icons.AlertOctagon className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
+                          <div className="space-y-0.5">
+                            <span className="font-extrabold text-red-400 block uppercase tracking-wider text-[10px]">Peringatan Anggaran Terlampaui!</span>
+                            <p className="text-slate-300 text-[10px] leading-relaxed">
+                              Estimasi nilai keranjang penawaran Anda (<strong className="text-white">{formatRupiah(estimatedCartTotal)}</strong>) telah melewati batas anggaran yang Anda tetapkan (<strong className="text-white">{formatRupiah(budgetThreshold)}</strong>) sebesar <strong className="text-rose-400 font-bold">{formatRupiah(estimatedCartTotal - budgetThreshold)}</strong>.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
                     {/* Scan Barcode / QR Trigger Button */}
                     <button
                       type="button"
@@ -3163,6 +3564,18 @@ export default function App() {
                           Silakan tambahkan barang dari <strong>Katalog Acuan</strong> di Halaman Beranda, atau masukkan item custom di bawah ini.
                         </p>
                       </div>
+                    )}
+
+                    {/* Export to PDF button if cart is not empty */}
+                    {(rfqCart.length > 0 || customCartItems.length > 0) && (
+                      <button
+                        type="button"
+                        onClick={exportRfqCartToPdf}
+                        className="w-full mt-3 py-2.5 bg-indigo-600/20 hover:bg-indigo-600 border border-indigo-500/30 hover:border-indigo-500 text-indigo-200 hover:text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center space-x-2 shadow-md cursor-pointer group"
+                      >
+                        <FileText className="h-4 w-4 text-indigo-400 group-hover:text-white transition-colors" />
+                        <span>Ekspor & Unduh Keranjang ke PDF</span>
+                      </button>
                     )}
                   </div>
 
@@ -4584,12 +4997,14 @@ export default function App() {
                                   <div className="flex items-center gap-1.5">
                                     <span>No RFQ</span>
                                     {selectedRfqIds.length > 0 && (
-                                      <div className="relative inline-block text-left text-[10px] normal-case">
+                                      <div className="flex items-center gap-1.5 relative inline-block text-left text-[10px] normal-case">
                                         <select
-                                          disabled={isBulkUpdating}
+                                          disabled={isBulkUpdating || isBulkNotifying}
                                           value=""
                                           onChange={(e) => {
-                                            if (e.target.value) {
+                                            if (e.target.value === "notify") {
+                                              handleBulkNotifyClients();
+                                            } else if (e.target.value) {
                                               handleBulkStatusUpdate(e.target.value);
                                             }
                                           }}
@@ -4601,7 +5016,30 @@ export default function App() {
                                           <option value="quoted">Ubah ke Quoted</option>
                                           <option value="completed">Ubah ke Completed</option>
                                           <option value="cancelled">Ubah ke Cancelled</option>
+                                          <option value="notify">✉ Notify Klien (Kirim Email)</option>
                                         </select>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleBulkNotifyClients()}
+                                          disabled={isBulkUpdating || isBulkNotifying}
+                                          className="bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-800 disabled:opacity-50 text-white font-extrabold rounded px-2 py-0.5 flex items-center gap-1.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer transition-colors"
+                                          title="Kirim email status terbaru ke semua klien yang dipilih"
+                                        >
+                                          {isBulkNotifying ? (
+                                            <span className="flex items-center gap-1">
+                                              <svg className="animate-spin h-3 w-3 text-white" fill="none" viewBox="0 0 24 24">
+                                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                              </svg>
+                                              Kirim...
+                                            </span>
+                                          ) : (
+                                            <>
+                                              <Icons.Mail className="h-3 w-3" />
+                                              <span>Notify Klien</span>
+                                            </>
+                                          )}
+                                        </button>
                                       </div>
                                     )}
                                   </div>
@@ -7139,8 +7577,8 @@ export default function App() {
                                   if (selectedCompareIds.includes(prod.id)) {
                                     setSelectedCompareIds(prev => prev.filter(id => id !== prod.id));
                                   } else {
-                                    if (selectedCompareIds.length >= 3) {
-                                      showToast("Maksimal 3 produk dapat dibandingkan sekaligus", "error");
+                                    if (selectedCompareIds.length >= 4) {
+                                      showToast("Maksimal 4 produk dapat dibandingkan sekaligus", "error");
                                       return;
                                     }
                                     setSelectedCompareIds(prev => [...prev, prod.id]);
@@ -7945,7 +8383,7 @@ export default function App() {
       {/* ==================================== */}
       {showComparisonModal && (
         <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-fadeIn no-print" id="product_comparison_modal">
-          <div className="bg-slate-900 border border-white/10 text-white rounded-3xl w-full max-w-5xl p-6 sm:p-8 shadow-2xl relative max-h-[90vh] overflow-y-auto font-sans flex flex-col justify-between">
+          <div className={`bg-slate-900 border border-white/10 text-white rounded-3xl w-full ${selectedCompareIds.length >= 4 ? "max-w-7xl" : "max-w-5xl"} p-6 sm:p-8 shadow-2xl relative max-h-[90vh] overflow-y-auto font-sans flex flex-col justify-between`}>
             <div>
               {/* Header */}
               <div className="flex items-center justify-between border-b border-white/10 pb-4 mb-6 animate-headerFadeScale">
@@ -7984,46 +8422,62 @@ export default function App() {
                     <p className="text-[10px] text-slate-400">Pilih antara ringkasan spesifikasi atau detail teknis penuh beserta penjelasan manfaatnya.</p>
                   </div>
                 </div>
-                <div className="flex items-center bg-slate-950 border border-white/10 rounded-xl p-1 shrink-0 self-start sm:self-center">
+                <div className="flex flex-wrap items-center gap-3 self-start sm:self-center">
+                  {/* Show Only Differences Toggle */}
                   <button
-                    onClick={() => {
-                      setComparisonDetailMode("summary");
-                      // Simultaneously collapse all products for unified summary feel
-                      const collapsed: Record<string, boolean> = {};
-                      selectedCompareIds.forEach(id => {
-                        collapsed[id] = true;
-                      });
-                      setCollapsedCompareProductIds(collapsed);
-                    }}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-200 flex items-center gap-1.5 cursor-pointer ${
-                      comparisonDetailMode === "summary"
-                        ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/25"
-                        : "text-slate-400 hover:text-slate-200"
+                    onClick={() => setShowOnlyDifferences(!showOnlyDifferences)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all duration-200 flex items-center gap-1.5 border cursor-pointer ${
+                      showOnlyDifferences
+                        ? "bg-amber-500/10 text-amber-300 border-amber-500/30 shadow-md shadow-amber-500/5"
+                        : "bg-slate-950 border-white/10 text-slate-400 hover:text-slate-200"
                     }`}
+                    title="Saring tabel untuk hanya memperlihatkan parameter spesifikasi yang memiliki perbedaan di antara produk terpilih"
                   >
-                    <Icons.Layers className="h-3.5 w-3.5" />
-                    <span>Tampilan Ringkas</span>
+                    <Icons.AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
+                    <span>Hanya Perbedaan</span>
                   </button>
-                  <button
-                    onClick={() => {
-                      setComparisonDetailMode("detail");
-                      // Expand all products for detail view
-                      setCollapsedCompareProductIds({});
-                    }}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-200 flex items-center gap-1.5 cursor-pointer ${
-                      comparisonDetailMode === "detail"
-                        ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/25"
-                        : "text-slate-400 hover:text-slate-200"
-                    }`}
-                  >
-                    <Icons.BookOpen className="h-3.5 w-3.5" />
-                    <span>Detail Teknis Penuh</span>
-                  </button>
+
+                  <div className="flex items-center bg-slate-950 border border-white/10 rounded-xl p-1 shrink-0">
+                    <button
+                      onClick={() => {
+                        setComparisonDetailMode("summary");
+                        // Simultaneously collapse all products for unified summary feel
+                        const collapsed: Record<string, boolean> = {};
+                        selectedCompareIds.forEach(id => {
+                          collapsed[id] = true;
+                        });
+                        setCollapsedCompareProductIds(collapsed);
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-200 flex items-center gap-1.5 cursor-pointer ${
+                        comparisonDetailMode === "summary"
+                          ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/25"
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      <Icons.Layers className="h-3.5 w-3.5" />
+                      <span>Tampilan Ringkas</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setComparisonDetailMode("detail");
+                        // Expand all products for detail view
+                        setCollapsedCompareProductIds({});
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-200 flex items-center gap-1.5 cursor-pointer ${
+                        comparisonDetailMode === "detail"
+                          ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/25"
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      <Icons.BookOpen className="h-3.5 w-3.5" />
+                      <span>Detail Teknis Penuh</span>
+                    </button>
+                  </div>
                 </div>
               </div>
 
               {/* Grid content */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className={`grid grid-cols-1 sm:grid-cols-2 ${selectedCompareIds.length >= 4 ? "lg:grid-cols-4 md:grid-cols-2" : "md:grid-cols-3"} gap-6`}>
                 {selectedCompareIds.map(id => {
                   const prod = catalogProducts.find(p => p.id === id);
                   if (!prod) return null;
@@ -8136,8 +8590,8 @@ export default function App() {
                   );
                 })}
 
-                {/* Placeholder empty states if < 3 products selected */}
-                {Array.from({ length: Math.max(0, 3 - selectedCompareIds.length) }).map((_, idx) => (
+                {/* Placeholder empty states if < 4 products selected */}
+                {Array.from({ length: Math.max(0, 4 - selectedCompareIds.length) }).map((_, idx) => (
                   <div key={idx} className="border border-dashed border-white/10 rounded-2xl p-6 flex flex-col items-center justify-center text-center text-slate-500 space-y-2 min-h-[300px] bg-white/5">
                     <Icons.PlusCircle className="h-8 w-8 text-slate-600 animate-pulse" />
                     <p className="text-xs font-bold text-slate-400">Slot Perbandingan Kosong</p>
@@ -8154,30 +8608,179 @@ export default function App() {
 
                 if (selectedProducts.length === 0) return null;
 
-                const comparisonRows = [
+                const getProductAttributes = (p: ProductItem) => {
+                  const id = p.id;
+                  if (id === "prod_1") {
+                    return {
+                      processor: "Intel Core i5 / i7 Generasi Terbaru",
+                      memory: "RAM 8GB / 16GB DDR5 High Speed",
+                      storage: "Storage 512GB / 1TB SSD NVMe PCIe",
+                      display: "Layar 14\" IPS WUXGA Anti-Glare",
+                      system: "Windows 11 Pro Original",
+                      dimension: "Compact Business (14 inch)",
+                      weight: "Ringan (~1.4 kg)",
+                      warranty: "Garansi Resmi Lenovo Indonesia 2 Tahun"
+                    };
+                  }
+                  if (id === "prod_2") {
+                    return {
+                      processor: "Intel Core i3 / i5 Processor",
+                      memory: "RAM 8GB DDR4 (Expandable to 128GB)",
+                      storage: "Storage 512GB SSD NVMe",
+                      display: "Monitor ASUS 21.5\" FHD",
+                      system: "Sudah termasuk Keyboard & Mouse USB ASUS",
+                      dimension: "Mini Tower Desktop",
+                      weight: "Desktop Standard (~5.5 kg)",
+                      warranty: "Garansi Resmi ASUS Indonesia 2 Tahun"
+                    };
+                  }
+                  if (id === "prod_3") {
+                    return {
+                      processor: "Intel Xeon E-2314 2.8GHz",
+                      memory: "RAM 16GB UDIMM ECC Server Memory",
+                      storage: "Storage 2x 2TB SATA 7.2K Enterprise HDD (RAID 1)",
+                      display: "Dual Gigabit Ethernet Ports",
+                      system: "Dell iDRAC9 Basic Remote Management",
+                      dimension: "1U Rackmount Server",
+                      weight: "Server Rack (~11 kg)",
+                      warranty: "Garansi ProSupport 24/7 Dell 3 Tahun"
+                    };
+                  }
+                  if (id === "prod_4") {
+                    return {
+                      processor: "AMD Ryzen R1600 Dual-Core 2.6GHz",
+                      memory: "RAM 4GB DDR4 ECC (Upgradable to 32GB)",
+                      storage: "4-Bay Drive (Mendukung HDD/SSD 3.5\" & 2.5\")",
+                      display: "Built-in 2x M.2 NVMe Slot untuk SSD Cache",
+                      system: "Synology DiskStation Manager (DSM) OS",
+                      dimension: "Compact Desktop NAS",
+                      weight: "Sasis NAS (~2.2 kg)",
+                      warranty: "Garansi Resmi Synology 3 Tahun"
+                    };
+                  }
+                  if (id === "prod_5") {
+                    return {
+                      processor: "Marvell Armada Quad-core 1.4GHz CPU",
+                      memory: "1GB RAM DDR4 & 512MB NAND Storage",
+                      storage: "7x Gigabit Ethernet Ports & 1x 2.5G Port",
+                      display: "1x 10G SFP+ Cage untuk koneksi FO",
+                      system: "MikroTik RouterOS v7 License Level 5",
+                      dimension: "Compact Metal Enclosure",
+                      weight: "Ringan Jaringan (~0.8 kg)",
+                      warranty: "Garansi Resmi Mikrotik 1 Tahun"
+                    };
+                  }
+                  if (id === "prod_6") {
+                    return {
+                      processor: "Wi-Fi 6 (802.11ax) Dual-Band High Speed",
+                      memory: "Kecepatan s.d 1.5 Gbps (5GHz & 2.4GHz)",
+                      storage: "Cakupan Sinyal s.d 115 m² (1,250 ft²)",
+                      display: "Mendukung 300+ Koneksi Client Bersamaan",
+                      system: "Powered by PoE (Power over Ethernet)",
+                      dimension: "Ceiling-Mount Dome AP",
+                      weight: "Ringan AP (~0.3 kg)",
+                      warranty: "Garansi Resmi Ubiquiti 1 Tahun"
+                    };
+                  }
+                  if (id === "prod_7") {
+                    return {
+                      processor: "Resolusi Full HD 1080p (2 Megapixel)",
+                      memory: "Lensa Wide Angle 2.8mm (Sudut pandang luas)",
+                      storage: "Night Vision Smart IR s.d Jarak 30 Meter",
+                      display: "Sertifikasi Tahan Air IP67 & Vandal-proof IK10",
+                      system: "Teknologi Kompresi Hemat Bandwidth H.265+",
+                      dimension: "Vandal-proof Dome",
+                      weight: "Kamera Solid (~0.5 kg)",
+                      warranty: "Garansi Resmi Hikvision 2 Tahun"
+                    };
+                  }
+                  if (id === "prod_8") {
+                    return {
+                      processor: "Aplikasi Premium: Word, Excel, PowerPoint, Outlook",
+                      memory: "Email Bisnis Exchange dengan Storage 50GB per user",
+                      storage: "Penyimpanan Cloud OneDrive for Business 1TB",
+                      display: "Microsoft Teams untuk meeting online up to 300 orang",
+                      system: "Bisa diinstal di 5 perangkat (PC/Mac/HP) per user",
+                      dimension: "Lisensi Cloud Digital",
+                      weight: "Tidak Ada (Cloud)",
+                      warranty: "Dukungan Teknis SLA Microsoft Resmi"
+                    };
+                  }
+
+                  // Fallback for custom products
+                  return {
+                    processor: p.specifications[0] || "-",
+                    memory: p.specifications[1] || "-",
+                    storage: p.specifications[2] || "-",
+                    display: p.specifications[3] || "-",
+                    system: p.specifications[4] || "-",
+                    dimension: p.specifications[5] || "Standar",
+                    weight: p.specifications[6] || "Menyesuaikan",
+                    warranty: p.specifications[7] || "Hubungi Sales"
+                  };
+                };
+
+                const allRows = [
                   {
+                    key: "category",
                     label: "Kategori Perangkat",
                     getValue: (p: ProductItem) => p.category,
                   },
                   {
+                    key: "estimatedPriceRange",
                     label: "Estimasi Rentang Harga",
                     getValue: (p: ProductItem) => p.estimatedPriceRange,
                   },
-                  ...(comparisonDetailMode === "detail" ? [
-                    {
-                      label: "Spesifikasi Teknis Utama #1",
-                      getValue: (p: ProductItem) => p.specifications[0] || "-",
-                    },
-                    {
-                      label: "Spesifikasi Teknis Utama #2",
-                      getValue: (p: ProductItem) => p.specifications[1] || "-",
-                    },
-                    {
-                      label: "Spesifikasi Teknis Utama #3",
-                      getValue: (p: ProductItem) => p.specifications[2] || "-",
-                    },
-                  ] : []),
+                  {
+                    key: "processor",
+                    label: "Prosesor / Inti Fitur",
+                    getValue: (p: ProductItem) => getProductAttributes(p).processor,
+                  },
+                  {
+                    key: "memory",
+                    label: "RAM / Memori Kecepatan",
+                    getValue: (p: ProductItem) => getProductAttributes(p).memory,
+                  },
+                  {
+                    key: "storage",
+                    label: "Penyimpanan / Kapasitas Utama",
+                    getValue: (p: ProductItem) => getProductAttributes(p).storage,
+                  },
+                  {
+                    key: "display",
+                    label: "Tampilan / Koneksi Tambahan",
+                    getValue: (p: ProductItem) => getProductAttributes(p).display,
+                  },
+                  {
+                    key: "system",
+                    label: "Sistem Operasi / Standar Daya",
+                    getValue: (p: ProductItem) => getProductAttributes(p).system,
+                  },
+                  {
+                    key: "dimension",
+                    label: "Dimensi Fisik",
+                    getValue: (p: ProductItem) => getProductAttributes(p).dimension,
+                  },
+                  {
+                    key: "weight",
+                    label: "Berat Perangkat",
+                    getValue: (p: ProductItem) => getProductAttributes(p).weight,
+                  },
+                  {
+                    key: "warranty",
+                    label: "Jaminan & Garansi",
+                    getValue: (p: ProductItem) => getProductAttributes(p).warranty,
+                  },
                 ];
+
+                // Filter rows if "showOnlyDifferences" is enabled
+                const comparisonRows = allRows.filter(row => {
+                  if (!showOnlyDifferences) return true;
+                  // If only 1 product is selected, we show all rows since you can't have differences
+                  if (selectedProducts.length <= 1) return true;
+                  const values = selectedProducts.map(p => row.getValue(p).trim().toLowerCase());
+                  return new Set(values).size > 1;
+                });
 
                 return (
                   <div className="mt-8 border border-white/10 rounded-2xl overflow-hidden bg-slate-950/40">
@@ -8192,17 +8795,17 @@ export default function App() {
                       </span>
                     </div>
                     <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse min-w-[600px]">
+                      <table className="w-full text-left border-collapse min-w-[700px]">
                         <thead>
                           <tr className="bg-white/5 text-slate-400 uppercase font-bold text-[10px] tracking-wider border-b border-white/10">
-                            <th className="p-3.5 w-1/4">Parameter</th>
+                            <th className="p-3.5 w-1/5">Parameter</th>
                             {selectedProducts.map(prod => (
-                              <th key={prod.id} className="p-3.5 w-1/4 text-indigo-300 font-bold">
+                              <th key={prod.id} className="p-3.5 w-1/5 text-indigo-300 font-bold">
                                 {prod.name}
                               </th>
                             ))}
-                            {Array.from({ length: Math.max(0, 3 - selectedProducts.length) }).map((_, idx) => (
-                              <th key={idx} className="p-3.5 w-1/4 text-slate-600 italic">
+                            {Array.from({ length: Math.max(0, 4 - selectedProducts.length) }).map((_, idx) => (
+                              <th key={idx} className="p-3.5 w-1/5 text-slate-600 italic">
                                 (Slot Kosong)
                               </th>
                             ))}
@@ -8216,7 +8819,7 @@ export default function App() {
 
                             return (
                               <tr 
-                                key={rIdx} 
+                                key={row.key} 
                                 className={`border-b border-white/5 transition-colors text-xs ${
                                   isDifferent 
                                     ? "bg-amber-500/10 hover:bg-amber-500/15 border-l-4 border-l-amber-500" 
@@ -8233,15 +8836,15 @@ export default function App() {
                                 </td>
                                 {selectedProducts.map(p => {
                                   const val = row.getValue(p);
-                                  const isSpecRow = row.label.startsWith("Spesifikasi");
-                                  const explanation = isSpecRow && val !== "-" ? getSpecExplanation(val) : null;
+                                  // For tooltips, try to match the explanation of specifications
+                                  const explanation = val !== "-" ? getSpecExplanation(val) : null;
 
                                   return (
                                     <td 
                                       key={p.id} 
                                       className={`p-3.5 relative group transition-colors duration-200 ${
                                         isDifferent 
-                                          ? "text-amber-200 font-medium" 
+                                          ? "text-amber-200 font-medium animate-pulse" 
                                           : "text-slate-300"
                                       } ${explanation ? "cursor-help hover:bg-white/5" : ""}`}
                                     >
@@ -8264,7 +8867,7 @@ export default function App() {
                                     </td>
                                   );
                                 })}
-                                {Array.from({ length: Math.max(0, 3 - selectedProducts.length) }).map((_, idx) => (
+                                {Array.from({ length: Math.max(0, 4 - selectedProducts.length) }).map((_, idx) => (
                                   <td key={idx} className="p-3.5 text-slate-600 italic">
                                     -
                                   </td>
@@ -8355,7 +8958,7 @@ export default function App() {
 
             {/* Footer */}
             <div className="border-t border-white/10 pt-4 mt-8 flex justify-between items-center text-xs text-slate-400">
-              <span>Bandingkan hingga maksimal 3 perangkat berdampingan.</span>
+              <span>Bandingkan hingga maksimal 4 perangkat berdampingan.</span>
               <button
                 onClick={() => setShowComparisonModal(false)}
                 className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white border border-white/10 rounded-xl font-bold transition-all cursor-pointer"
