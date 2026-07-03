@@ -41,7 +41,7 @@ const DEFAULT_DB = {
     companyName: "Berkah Bintang Solusindo",
     tagline: "Solusi Teknologi Informasi dan Pengadaan Terpercaya",
     description: "Melayani kebutuhan pengadaan perangkat IT, infrastruktur jaringan, server, CCTV, software, maintenance, serta konsultasi teknologi informasi untuk perusahaan, umum, pendidikan, dan UMKM.",
-    address: "Jl.Cempaka putih barat 21 no.10",
+    address: "Jl.Raya Cempaka No 10 Jakarta",
     whatsapp: "+6281234567890",
     email: "bbscom993@gmail.com",
     website: "www.berkahbintangsolusindo.com",
@@ -52,7 +52,8 @@ const DEFAULT_DB = {
       bankName: "Bank Mandiri",
       accountNumber: "123-45-67890-1",
       accountHolder: "PT Berkah Bintang Solusindo"
-    }
+    },
+    customRfqStatuses: []
   },
   rfqs: [
     {
@@ -128,14 +129,44 @@ async function seedFirestoreIfNeeded() {
       for (const q of DEFAULT_DB.quotations) {
         await adminDb.collection("quotations").doc(q.id).set(q);
       }
+
+      const sampleOrder = {
+        id: "order_1",
+        orderNumber: "TRX-2026-0001",
+        date: "2026-07-02",
+        status: "processing",
+        paymentStatus: "paid",
+        clientName: "Andi Wijaya",
+        companyName: "PT Bintang Timur",
+        whatsapp: "081122334455",
+        email: "andi.wijaya@bintangtimur.com",
+        address: "Ruko Harmony Blok C-4, Kebon Jeruk, Jakarta Barat",
+        items: [
+          { productId: "prod_1", name: "Laptop Kantor Lenovo ThinkBook 14 G6", quantity: 2, price: 11450000, totalPrice: 22900000 }
+        ],
+        subtotal: 22900000,
+        tax: 2519000,
+        discount: 1145000,
+        shippingCost: 150000,
+        total: 24424000,
+        paymentMethod: "bank_transfer",
+        deliveryMethod: "bbs_delivery"
+      };
+      await adminDb.collection("orders").doc(sampleOrder.id).set(sampleOrder);
+
       console.log("[Firebase Seeding] Default data seeded successfully!");
     } else {
-      // If document exists, migrate the address if it contains the old Slipi value
+      // If document exists, migrate the address if it contains old values
       const data = doc.data();
-      if (data && data.address && (data.address.includes("Grand Slipi") || data.address.includes("Slipi"))) {
-        console.log("[Firebase Seeding] Migrating old Grand Slipi address to: Jl.Cempaka putih barat 21 no.10");
+      if (data && data.address && (
+        data.address.includes("Grand Slipi") || 
+        data.address.includes("Slipi") || 
+        data.address.includes("Cempaka putih") || 
+        data.address.includes("Cempaka Putih")
+      )) {
+        console.log("[Firebase Seeding] Migrating old address to: Jl.Raya Cempaka No 10 Jakarta");
         await configRef.update({
-          address: "Jl.Cempaka putih barat 21 no.10"
+          address: "Jl.Raya Cempaka No 10 Jakarta"
         });
       }
     }
@@ -989,6 +1020,66 @@ app.put("/api/quotations/:id", async (req, res) => {
     }
   } catch (error: any) {
     res.status(500).json({ error: "Gagal memperbarui Quotation", details: error.message });
+  }
+});
+
+// API: Orders (Online Store Beli Langsung)
+app.get("/api/orders", async (req, res) => {
+  try {
+    const snapshot = await adminDb.collection("orders").get();
+    const orders = snapshot.docs.map(doc => doc.data());
+    // Sort reverse chronological
+    orders.sort((a: any, b: any) => {
+      const dateA = a.date || "";
+      const dateB = b.date || "";
+      if (dateA !== dateB) return dateB.localeCompare(dateA);
+      return (b.id || "").localeCompare(a.id || "");
+    });
+    res.json(orders);
+  } catch (error: any) {
+    console.error("Error fetching orders:", error);
+    res.status(500).json({ error: "Gagal mengambil data pesanan", details: error.message });
+  }
+});
+
+app.post("/api/orders", async (req, res) => {
+  try {
+    const ordersSnapshot = await adminDb.collection("orders").get();
+    const totalCount = ordersSnapshot.size;
+
+    const id = "order_" + Date.now();
+    const orderNumber = `TRX-${new Date().getFullYear()}-${String(totalCount + 1).padStart(4, "0")}`;
+    const newOrder = {
+      id,
+      orderNumber,
+      date: new Date().toISOString().split("T")[0],
+      status: "pending", // pending, processing, shipped, completed, cancelled
+      paymentStatus: req.body.paymentMethod === "credit_card" ? "paid" : "unpaid", // unpaid, paid
+      ...req.body
+    };
+
+    await adminDb.collection("orders").doc(id).set(newOrder);
+    res.json(newOrder);
+  } catch (error: any) {
+    console.error("Error creating order:", error);
+    res.status(500).json({ error: "Gagal menyimpan pesanan baru", details: error.message });
+  }
+});
+
+app.put("/api/orders/:id", async (req, res) => {
+  try {
+    const orderRef = adminDb.collection("orders").doc(req.params.id);
+    const doc = await orderRef.get();
+    if (doc.exists) {
+      const updated = { ...doc.data(), ...req.body };
+      await orderRef.set(updated);
+      res.json(updated);
+    } else {
+      res.status(404).json({ error: "Pesanan tidak ditemukan" });
+    }
+  } catch (error: any) {
+    console.error("Error updating order:", error);
+    res.status(500).json({ error: "Gagal memperbarui data pesanan", details: error.message });
   }
 });
 

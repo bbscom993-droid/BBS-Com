@@ -108,6 +108,7 @@ export interface CompanySettings {
     accountNumber: string;
     accountHolder: string;
   };
+  customRfqStatuses?: Array<{ value: string; label: string; desc: string; color: string }>;
 }
 
 export interface ConsultMessage {

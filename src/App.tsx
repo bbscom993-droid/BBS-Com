@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
-import { motion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 import * as Icons from "lucide-react";
 import { jsPDF } from "jspdf";
 import "jspdf-autotable";
@@ -203,7 +203,7 @@ export default function App() {
     companyName: "Berkah Bintang Solusindo",
     tagline: "Solusi Teknologi Informasi dan Pengadaan Terpercaya",
     description: "Melayani kebutuhan pengadaan perangkat IT, infrastruktur jaringan, server, CCTV, software, maintenance, serta konsultasi teknologi informasi untuk perusahaan, lembaga pendidikan, bisnis, dan UMKM.",
-    address: "Jl. Cempaka Putih Barat 21 No. 10 Jakarta Pusat 10520",
+    address: "Jl.Raya Cempaka No 10 Jakarta",
     whatsapp: "+628131852419",
     email: "bbscom993@gmail.com",
     website: "www.berkahbintangsolusindo.com",
@@ -215,7 +215,8 @@ export default function App() {
       bankName: "Bank Mandiri",
       accountNumber: "123-45-67890-1",
       accountHolder: "PT Berkah Bintang Solusindo"
-    }
+    },
+    customRfqStatuses: []
   });
 
   // State Management
@@ -415,6 +416,8 @@ export default function App() {
   const [adminPassword, setAdminPassword] = useState("");
   const [activeAdminSubTab, setActiveAdminSubTab] = useState<"rfqs" | "quotations" | "emails" | "reminders" | "settings" | "users" | "catalog">("rfqs");
   const [adminRfqSearch, setAdminRfqSearch] = useState("");
+  const [newCustomStatusName, setNewCustomStatusName] = useState("");
+  const [newCustomStatusColor, setNewCustomStatusColor] = useState("purple");
   const [adminRfqClientFilter, setAdminRfqClientFilter] = useState("");
   const [adminRfqStartDate, setAdminRfqStartDate] = useState("");
   const [adminRfqEndDate, setAdminRfqEndDate] = useState("");
@@ -443,6 +446,47 @@ export default function App() {
   }, [adminRfqStatuses]);
 
   const [isStatusFilterOpen, setIsStatusFilterOpen] = useState(false);
+  const [hoveredStatusItem, setHoveredStatusItem] = useState<string | null>(null);
+  const [statusKeywordSearch, setStatusKeywordSearch] = useState("");
+  const [draggingStatus, setDraggingStatus] = useState<string | null>(null);
+  const [legendStatusOrder, setLegendStatusOrder] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem("bbs_rfq_status_priority");
+      if (stored) {
+        return JSON.parse(stored);
+      }
+    } catch (e) {
+      console.error("Error reading rfq_status_priority", e);
+    }
+    return ["pending", "processing", "quoted", "completed", "cancelled"];
+  });
+
+  const orderedLegendStatuses = useMemo(() => {
+    const defaultStatuses = [
+      { value: "pending", label: "Amber = Pending", color: "amber", isCustom: false },
+      { value: "processing", label: "Biru = Processing", color: "blue", isCustom: false },
+      { value: "quoted", label: "Indigo = Quoted", color: "indigo", isCustom: false },
+      { value: "completed", label: "Hijau = Completed", color: "emerald", isCustom: false },
+      { value: "cancelled", label: "Merah = Cancelled", color: "rose", isCustom: false },
+    ];
+    
+    const customStatuses = (settings.customRfqStatuses || []).map(cs => ({
+      value: cs.value,
+      label: cs.label,
+      color: cs.color || "#a855f7",
+      isCustom: true
+    }));
+    
+    const allStatuses = [...defaultStatuses, ...customStatuses];
+    
+    return [...allStatuses].sort((a, b) => {
+      let idxA = legendStatusOrder.indexOf(a.value);
+      let idxB = legendStatusOrder.indexOf(b.value);
+      if (idxA === -1) idxA = 9999;
+      if (idxB === -1) idxB = 9999;
+      return idxA - idxB;
+    });
+  }, [settings.customRfqStatuses, legendStatusOrder]);
   const statusFilterRef = useRef<HTMLDivElement>(null);
 
   // Subtle pulse animation state whenever applied filters change
@@ -452,7 +496,7 @@ export default function App() {
     setIsFilterPulsing(true);
     const timer = setTimeout(() => setIsFilterPulsing(false), 800);
     return () => clearTimeout(timer);
-  }, [adminRfqSearch, adminRfqStartDate, adminRfqEndDate, adminRfqClientFilter, adminRfqStatuses]);
+  }, [adminRfqSearch, adminRfqStartDate, adminRfqEndDate, adminRfqClientFilter, adminRfqStatuses, statusKeywordSearch]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -488,6 +532,44 @@ export default function App() {
   const [oauthStep, setOauthStep] = useState<"select" | "custom">("select");
   const [emails, setEmails] = useState<any[]>([]);
   const [selectedEmail, setSelectedEmail] = useState<any | null>(null);
+
+  // Online Store & Directly Buy State
+  const [orders, setOrders] = useState<any[]>([]);
+  const [shopCart, setShopCart] = useState<{ product: ProductItem; quantity: number }[]>(() => {
+    try {
+      const saved = localStorage.getItem("bbs_shop_cart");
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+  const [couponCodeInput, setCouponCodeInput] = useState("");
+  const [appliedDiscountPercent, setAppliedDiscountPercent] = useState(0);
+  const [appliedCouponCode, setAppliedCouponCode] = useState("");
+  const [checkoutForm, setCheckoutForm] = useState({
+    clientName: "",
+    companyName: "",
+    whatsapp: "",
+    email: "",
+    address: "",
+    deliveryMethod: "bbs_delivery", // bbs_delivery, jne, TIKI, pickup
+    paymentMethod: "bank_transfer" // bank_transfer, virtual_account, credit_card
+  });
+  const [isOrderSuccessOpen, setIsOrderSuccessOpen] = useState(false);
+  const [latestPlacedOrder, setLatestPlacedOrder] = useState<any | null>(null);
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+  const [adminOrderSearch, setAdminOrderSearch] = useState("");
+  const [adminOrderStatusFilter, setAdminOrderStatusFilter] = useState("Semua");
+  const [adminOrderPaymentFilter, setAdminOrderPaymentFilter] = useState("Semua");
+  const [selectedAdminOrder, setSelectedAdminOrder] = useState<any | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("bbs_shop_cart", JSON.stringify(shopCart));
+    } catch (e) {
+      console.error("Error saving shopCart to localStorage", e);
+    }
+  }, [shopCart]);
   const [reminders, setReminders] = useState<any[]>([]);
   const [reminderConfig, setReminderConfig] = useState<any>({
     autoSchedule: true,
@@ -859,6 +941,7 @@ export default function App() {
     fetchEmails();
     fetchReminders();
     fetchReminderConfig();
+    fetchOrders();
   }, []);
 
   useEffect(() => {
@@ -1069,11 +1152,32 @@ export default function App() {
       return false;
     }
 
+    // 5. Filter by Status Keyword Search
+    if (statusKeywordSearch) {
+      const qStatus = statusKeywordSearch.toLowerCase().trim();
+      const statusLabels: Record<string, string> = {
+        pending: "menunggu proposal pending amber",
+        processing: "sedang diproses processing blue biru",
+        quoted: "sudah di-quoted quoted indigo",
+        completed: "selesai completed emerald hijau",
+        cancelled: "dibatalkan cancelled rose merah"
+      };
+      if (settings.customRfqStatuses) {
+        settings.customRfqStatuses.forEach((cs) => {
+          statusLabels[cs.value] = `${cs.label.toLowerCase()} ${cs.desc.toLowerCase()} ${cs.value.toLowerCase()} ${cs.color || "purple"}`;
+        });
+      }
+      const rfqStatusText = statusLabels[rfq.status] || "";
+      if (!rfq.status.toLowerCase().includes(qStatus) && !rfqStatusText.includes(qStatus)) {
+        return false;
+      }
+    }
+
     return true;
   });
 
   const adminRfqStatusCounts = useMemo(() => {
-    const counts = {
+    const counts: Record<string, number> = {
       "": 0,
       pending: 0,
       processing: 0,
@@ -1081,6 +1185,12 @@ export default function App() {
       completed: 0,
       cancelled: 0,
     };
+
+    if (settings.customRfqStatuses) {
+      settings.customRfqStatuses.forEach((st) => {
+        counts[st.value] = 0;
+      });
+    }
 
     rfqs.forEach((rfq) => {
       // Apply Search query filter
@@ -1120,14 +1230,17 @@ export default function App() {
       }
 
       // Increment matching status
-      if (rfq.status && rfq.status in counts) {
-        counts[rfq.status as keyof typeof counts]++;
+      if (rfq.status) {
+        if (!(rfq.status in counts)) {
+          counts[rfq.status] = 0;
+        }
+        counts[rfq.status]++;
       }
       counts[""]++;
     });
 
     return counts;
-  }, [rfqs, adminRfqSearch, adminRfqStartDate, adminRfqEndDate, adminRfqClientFilter]);
+  }, [rfqs, adminRfqSearch, adminRfqStartDate, adminRfqEndDate, adminRfqClientFilter, settings]);
 
   const showToast = (message: string, type: "success" | "error" | "info" = "success") => {
     setToast({ message, type });
@@ -1154,6 +1267,363 @@ export default function App() {
       } catch (err) {
         showToast("Gagal menyalin link portal.", "error");
       }
+    }
+  };
+
+  // Online Store Operations
+  const getProductPrice = (id: string): number => {
+    switch (id) {
+      case "prod_1": return 11450000;
+      case "prod_2": return 8950000;
+      case "prod_3": return 27800000;
+      case "prod_4": return 13200000;
+      case "prod_5": return 3900000;
+      case "prod_6": return 2150000;
+      case "prod_7": return 1150000;
+      case "prod_8": return 210000;
+      default: return 500000;
+    }
+  };
+
+  const addToShopCart = (product: ProductItem) => {
+    setShopCart(prev => {
+      const existing = prev.find(item => item.product.id === product.id);
+      if (existing) {
+        return prev.map(item => item.product.id === product.id ? { ...item, quantity: item.quantity + 1 } : item);
+      }
+      return [...prev, { product, quantity: 1 }];
+    });
+    showToast(`${product.name} berhasil ditambahkan ke keranjang`, "success");
+  };
+
+  const removeFromShopCart = (productId: string) => {
+    setShopCart(prev => prev.filter(item => item.product.id !== productId));
+    showToast("Item dihapus dari keranjang", "info");
+  };
+
+  const updateShopCartQuantity = (productId: string, quantity: number) => {
+    if (quantity <= 0) {
+      removeFromShopCart(productId);
+      return;
+    }
+    setShopCart(prev => prev.map(item => item.product.id === productId ? { ...item, quantity } : item));
+  };
+
+  const clearShopCart = () => {
+    setShopCart([]);
+  };
+
+  const handleApplyCoupon = () => {
+    const code = couponCodeInput.trim().toUpperCase();
+    if (!code) {
+      showToast("Masukkan kode kupon terlebih dahulu", "info");
+      return;
+    }
+    if (code === "BBSMERDEKA") {
+      setAppliedDiscountPercent(10);
+      setAppliedCouponCode(code);
+      showToast("Kupon BBSMERDEKA berhasil! Diskon 10% diterapkan.", "success");
+    } else if (code === "DISKON20") {
+      setAppliedDiscountPercent(20);
+      setAppliedCouponCode(code);
+      showToast("Kupon DISKON20 berhasil! Diskon 20% diterapkan.", "success");
+    } else if (code === "GRANDOPENING") {
+      setAppliedDiscountPercent(15);
+      setAppliedCouponCode(code);
+      showToast("Kupon GRANDOPENING berhasil! Diskon 15% diterapkan.", "success");
+    } else {
+      showToast("Kode kupon tidak valid", "error");
+    }
+  };
+
+  const handleRemoveCoupon = () => {
+    setAppliedDiscountPercent(0);
+    setAppliedCouponCode("");
+    setCouponCodeInput("");
+    showToast("Kupon dihapus", "info");
+  };
+
+  const getDeliveryCost = (method: string): number => {
+    switch (method) {
+      case "bbs_delivery": return 100000;
+      case "jne": return 150000;
+      case "tiki": return 130000;
+      case "pickup": return 0;
+      default: return 0;
+    }
+  };
+
+  const getDeliveryLabel = (method: string): string => {
+    switch (method) {
+      case "bbs_delivery": return "Kurir Toko BBS (Rekomendasi)";
+      case "jne": return "JNE Express";
+      case "tiki": return "TIKI Regular";
+      case "pickup": return "Ambil Sendiri di Kantor BBS";
+      default: return "";
+    }
+  };
+
+  const getPaymentLabel = (method: string): string => {
+    switch (method) {
+      case "bank_transfer": return "Transfer Bank Manual (Mandiri)";
+      case "virtual_account": return "Virtual Account (Konfirmasi Instan)";
+      case "credit_card": return "Kartu Kredit (Simulasi Aman)";
+      default: return "";
+    }
+  };
+
+  const handlePlaceOrder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (shopCart.length === 0) {
+      showToast("Keranjang belanja kosong", "error");
+      return;
+    }
+    if (!checkoutForm.clientName || !checkoutForm.whatsapp || !checkoutForm.email || !checkoutForm.address) {
+      showToast("Mohon lengkapi seluruh kolom wajib", "error");
+      return;
+    }
+
+    setIsSubmittingOrder(true);
+    try {
+      const subtotal = shopCart.reduce((sum, item) => sum + (getProductPrice(item.product.id) * item.quantity), 0);
+      const discount = Math.round(subtotal * (appliedDiscountPercent / 100));
+      const tax = Math.round((subtotal - discount) * 0.11);
+      const shippingCost = getDeliveryCost(checkoutForm.deliveryMethod);
+      const total = subtotal - discount + tax + shippingCost;
+
+      const orderData = {
+        clientName: checkoutForm.clientName,
+        companyName: checkoutForm.companyName || "",
+        whatsapp: checkoutForm.whatsapp,
+        email: checkoutForm.email,
+        address: checkoutForm.address,
+        deliveryMethod: checkoutForm.deliveryMethod,
+        paymentMethod: checkoutForm.paymentMethod,
+        items: shopCart.map(item => ({
+          productId: item.product.id,
+          name: item.product.name,
+          quantity: item.quantity,
+          price: getProductPrice(item.product.id),
+          totalPrice: getProductPrice(item.product.id) * item.quantity
+        })),
+        subtotal,
+        discount,
+        tax,
+        shippingCost,
+        total
+      };
+
+      const res = await fetch("/api/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(orderData)
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setLatestPlacedOrder(data);
+        setIsOrderSuccessOpen(true);
+        clearShopCart();
+        setAppliedDiscountPercent(0);
+        setAppliedCouponCode("");
+        setCouponCodeInput("");
+        setCheckoutForm({
+          clientName: "",
+          companyName: "",
+          whatsapp: "",
+          email: "",
+          address: "",
+          deliveryMethod: "bbs_delivery",
+          paymentMethod: "bank_transfer"
+        });
+        showToast("Pesanan berhasil dikirim!", "success");
+        fetchOrders();
+      } else {
+        showToast("Gagal memproses pesanan Anda", "error");
+      }
+    } catch (err) {
+      console.error("Error creating order:", err);
+      showToast("Kesalahan koneksi ke server", "error");
+    } finally {
+      setIsSubmittingOrder(false);
+    }
+  };
+
+  const downloadOrderInvoicePdf = (order: any) => {
+    if (!order) return;
+    try {
+      const doc = new jsPDF();
+
+      // Title & Brand Header
+      doc.setFillColor(79, 70, 229); // indigo-600
+      doc.rect(14, 15, 4, 16, "F");
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(15);
+      doc.setTextColor(15, 23, 42); // slate-900
+      doc.text((settings?.companyName || "PT. BERKAH BINTANG SOLUSINDO").toUpperCase(), 22, 21);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(71, 85, 105); // slate-600
+      doc.text(settings?.tagline || "Solusi Teknologi Informasi dan Pengadaan Terpercaya", 22, 26);
+      doc.text(`Hubungi: ${settings?.email || 'bbscom993@gmail.com'} | WhatsApp: ${settings?.whatsapp || '+6281234567890'} | Web: ${settings?.website || 'www.berkahbintangsolusindo.com'}`, 22, 30);
+
+      // Decorative divider line
+      doc.setDrawColor(226, 232, 240); // slate-200
+      doc.setLineWidth(0.5);
+      doc.line(14, 35, 196, 35);
+
+      // Document Title
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(12);
+      doc.setTextColor(79, 70, 229); // indigo-600
+      doc.text(`INVOICE PEMBELIAN ONLINE`, 14, 44);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(100, 116, 139); // slate-500
+      doc.text(`Nomor Invoice : ${order.orderNumber}`, 14, 49);
+      doc.text(`Tanggal Order : ${order.date}`, 14, 53);
+
+      // Statuses Block
+      doc.setFont("helvetica", "bold");
+      doc.text(`Status Pembayaran : ${order.paymentStatus === 'paid' ? 'LUNAS' : 'BELUM BAYAR'}`, 130, 44);
+      doc.text(`Status Pengiriman : ${order.status.toUpperCase()}`, 130, 49);
+
+      // Customer Info Box
+      doc.setFillColor(248, 250, 252); // slate-50
+      doc.setDrawColor(226, 232, 240); // slate-200
+      doc.roundedRect(14, 58, 182, 38, 3, 3, "FD");
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8.5);
+      doc.setTextColor(15, 23, 42); // slate-900
+      doc.text("INFORMASI PELANGGAN & ALAMAT PENGIRIMAN", 18, 64);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(51, 65, 85); // slate-700
+      doc.text(`Nama Pemesan : ${order.clientName}`, 18, 70);
+      if (order.companyName) {
+        doc.text(`Perusahaan    : ${order.companyName}`, 18, 75);
+      } else {
+        doc.text(`Perusahaan    : -`, 18, 75);
+      }
+      doc.text(`No WhatsApp   : ${order.whatsapp}`, 18, 80);
+      doc.text(`Alamat Email  : ${order.email}`, 18, 85);
+      doc.text(`Alamat Kirim  : ${order.address}`, 18, 90);
+
+      // Table mapping
+      const tableRows: any[] = [];
+      order.items.forEach((item: any, idx: number) => {
+        tableRows.push([
+          (idx + 1).toString(),
+          item.name,
+          item.quantity.toString(),
+          `Rp ${item.price.toLocaleString("id-ID")}`,
+          `Rp ${item.totalPrice.toLocaleString("id-ID")}`
+        ]);
+      });
+
+      (doc as any).autoTable({
+        startY: 102,
+        head: [['No', 'Nama Barang / Perangkat IT', 'Qty', 'Harga Satuan', 'Total']],
+        body: tableRows,
+        theme: 'striped',
+        headStyles: {
+          fillColor: [79, 70, 229],
+          textColor: [255, 255, 255],
+          fontSize: 8.5,
+          fontStyle: 'bold',
+          halign: 'left'
+        },
+        bodyStyles: {
+          fontSize: 8,
+          textColor: [15, 23, 42]
+        },
+        columnStyles: {
+          0: { cellWidth: 10, halign: 'center' },
+          1: { cellWidth: 92 },
+          2: { cellWidth: 15, halign: 'center' },
+          3: { cellWidth: 32 },
+          4: { cellWidth: 33 }
+        },
+        margin: { left: 14, right: 14 },
+        styles: {
+          overflow: 'linebreak',
+          cellPadding: 3
+        }
+      });
+
+      // Bottom section calculation placement
+      let finalY = (doc as any).lastAutoTable.finalY + 8;
+      
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(51, 65, 85);
+      
+      // Right side totals
+      doc.text(`Subtotal :`, 130, finalY);
+      doc.text(`Rp ${order.subtotal.toLocaleString("id-ID")}`, 162, finalY);
+
+      if (order.discount > 0) {
+        finalY += 5;
+        doc.text(`Diskon :`, 130, finalY);
+        doc.text(`- Rp ${order.discount.toLocaleString("id-ID")}`, 162, finalY);
+      }
+
+      finalY += 5;
+      doc.text(`PPN (11%) :`, 130, finalY);
+      doc.text(`Rp ${order.tax.toLocaleString("id-ID")}`, 162, finalY);
+
+      finalY += 5;
+      doc.text(`Ongkos Kirim :`, 130, finalY);
+      doc.text(`Rp ${order.shippingCost.toLocaleString("id-ID")}`, 162, finalY);
+
+      finalY += 6;
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(15, 23, 42);
+      doc.text(`TOTAL BAYAR :`, 130, finalY);
+      doc.text(`Rp ${order.total.toLocaleString("id-ID")}`, 162, finalY);
+
+      // Bank account instructions on the left bottom
+      const leftY = (doc as any).lastAutoTable.finalY + 8;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8.5);
+      doc.setTextColor(79, 70, 229);
+      doc.text("INSTRUKSI PEMBAYARAN:", 14, leftY);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(51, 65, 85);
+      doc.text(`Metode: ${getPaymentLabel(order.paymentMethod)}`, 14, leftY + 5);
+      doc.text(`Kurir: ${getDeliveryLabel(order.deliveryMethod)}`, 14, leftY + 10);
+      
+      if (order.paymentMethod === "bank_transfer") {
+        doc.text(`Silakan transfer ke rekening resmi kami:`, 14, leftY + 16);
+        doc.setFont("helvetica", "bold");
+        doc.text(`${settings?.bankAccount?.bankName || 'Bank Mandiri'}`, 14, leftY + 21);
+        doc.text(`No. Rek: ${settings?.bankAccount?.accountNumber || '123-45-67890-1'}`, 14, leftY + 26);
+        doc.text(`A.N: ${settings?.bankAccount?.accountHolder || 'PT Berkah Bintang Solusindo'}`, 14, leftY + 31);
+        doc.setFont("helvetica", "normal");
+        doc.text(`*Kirim bukti transfer ke WhatsApp ${settings?.whatsapp || '+6281234567890'} untuk konfirmasi.`, 14, leftY + 37);
+      } else {
+        doc.text(`Pembayaran diproses secara instan dan otomatis melalui sistem.`, 14, leftY + 16);
+        doc.text(`Status: Terverifikasi (Lunas).`, 14, leftY + 21);
+      }
+
+      // Footer brand block
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(7.5);
+      doc.setTextColor(148, 163, 184);
+      doc.text("Terima kasih atas kepercayaan Anda berbelanja langsung di Berkah Bintang Solusindo.", 14, 280);
+
+      doc.save(`Invoice-${order.orderNumber}.pdf`);
+      showToast("Invoice PDF berhasil diunduh!", "success");
+    } catch (err: any) {
+      console.error("Error generating PDF:", err);
+      showToast("Gagal mencetak Invoice ke PDF", "error");
     }
   };
 
@@ -1229,6 +1699,74 @@ export default function App() {
     }
   };
 
+  const handleCreateCustomStatus = async () => {
+    const trimmedName = newCustomStatusName.trim();
+    if (!trimmedName) {
+      showToast("Nama status tidak boleh kosong!", "error");
+      return;
+    }
+    
+    const value = trimmedName.toLowerCase().replace(/\s+/g, '_');
+    const standardValues = ["pending", "processing", "quoted", "completed", "cancelled"];
+    const existingCustom = settings.customRfqStatuses || [];
+    
+    if (standardValues.includes(value) || existingCustom.some(c => c.value === value)) {
+      showToast("Status dengan nama tersebut sudah ada!", "error");
+      return;
+    }
+    
+    const newStatusItem = {
+      value,
+      label: trimmedName,
+      desc: `Status kustom: ${trimmedName}`,
+      color: newCustomStatusColor
+    };
+    
+    const updatedCustomStatuses = [...existingCustom, newStatusItem];
+    
+    await updateSettings({
+      ...settings,
+      customRfqStatuses: updatedCustomStatuses
+    });
+    
+    setNewCustomStatusName("");
+    showToast(`Status kustom "${trimmedName}" berhasil dibuat!`, "success");
+  };
+
+  const handleDeleteCustomStatus = async (valueToDelete: string) => {
+    if (!confirm("Apakah Anda yakin ingin menghapus status kustom ini?")) {
+      return;
+    }
+    const existingCustom = settings.customRfqStatuses || [];
+    const updatedCustomStatuses = existingCustom.filter(c => c.value !== valueToDelete);
+    
+    if (adminRfqStatuses.includes(valueToDelete)) {
+      setAdminRfqStatuses(adminRfqStatuses.filter(s => s !== valueToDelete));
+    }
+    
+    await updateSettings({
+      ...settings,
+      customRfqStatuses: updatedCustomStatuses
+    });
+    showToast("Status kustom berhasil dihapus!", "success");
+  };
+
+  const handleUpdateCustomStatusColor = async (statusValue: string, newColor: string) => {
+    const existingCustom = settings.customRfqStatuses || [];
+    const updatedCustomStatuses = existingCustom.map(c => {
+      if (c.value === statusValue) {
+        return { ...c, color: newColor };
+      }
+      return c;
+    });
+    
+    await updateSettings({
+      ...settings,
+      customRfqStatuses: updatedCustomStatuses
+    });
+    showToast("Warna status kustom berhasil diperbarui!", "success");
+  };
+
   const fetchRfqs = async () => {
     try {
       const res = await fetch("/api/rfqs");
@@ -1262,6 +1800,18 @@ export default function App() {
       }
     } catch (err) {
       console.error("Failed to fetch simulated emails", err);
+    }
+  };
+
+  const fetchOrders = async () => {
+    try {
+      const res = await fetch("/api/orders");
+      if (res.ok) {
+        const data = await res.json();
+        setOrders(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch orders", err);
     }
   };
 
@@ -2997,6 +3547,470 @@ export default function App() {
         )}
 
         {/* ==================================== */}
+        {/* TAB: ONLINE STORE & DIRECT PURCHASE  */}
+        {/* ==================================== */}
+        {currentTab === "shop" && (
+          <div className="space-y-8 animate-fadeIn max-w-7xl mx-auto">
+            {/* Header / Hero */}
+            <div className="relative overflow-hidden bg-slate-900/40 border border-white/10 rounded-2xl p-6 sm:p-8 shadow-xl">
+              <div className="absolute top-0 right-0 -mt-8 -mr-8 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+              <div className="absolute bottom-0 left-0 -mb-8 -ml-8 w-64 h-64 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
+              
+              <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-6">
+                <div>
+                  <div className="inline-flex items-center space-x-2 px-3 py-1 bg-indigo-500/10 border border-indigo-500/20 rounded-full text-indigo-300 text-[11px] font-semibold uppercase tracking-wider mb-3">
+                    <Icons.Store className="h-3 w-3 text-indigo-400" />
+                    <span>Layanan Beli Langsung</span>
+                  </div>
+                  <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white mb-2 font-sans">
+                    Toko Online BBS
+                  </h1>
+                  <p className="text-sm text-slate-300 max-w-2xl leading-relaxed">
+                    Beli berbagai perangkat hardware IT, server, jaringan, CCTV, dan lisensi software resmi bergaransi penuh dengan sistem checkout langsung dari portal kami.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="bg-slate-950/60 border border-white/5 rounded-xl px-4 py-3 text-center min-w-[120px]">
+                    <div className="text-xs text-slate-400">Keranjang Belanja</div>
+                    <div className="text-lg font-extrabold text-indigo-400 flex items-center justify-center gap-1.5 mt-0.5">
+                      <Icons.ShoppingBag className="h-4.5 w-4.5 text-indigo-400" />
+                      <span>{shopCart.reduce((sum, i) => sum + i.quantity, 0)} Item</span>
+                    </div>
+                  </div>
+                  
+                  {shopCart.length > 0 && (
+                    <button
+                      onClick={() => {
+                        const cartEl = document.getElementById("shop_checkout_panel");
+                        if (cartEl) cartEl.scrollIntoView({ behavior: "smooth" });
+                      }}
+                      className="px-4 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-indigo-600/20 transition-all flex items-center gap-2 cursor-pointer"
+                    >
+                      <span>Checkout</span>
+                      <Icons.ArrowRight className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Main Store Layout (Split screen on large screens, single column on small) */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+              
+              {/* Left Column: Product Selection */}
+              <div className="lg:col-span-8 space-y-6">
+                
+                {/* Search & Category Filter */}
+                <div className="bg-slate-900/20 border border-white/5 rounded-xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  
+                  {/* Category Buttons */}
+                  <div className="flex flex-wrap gap-1.5">
+                    {["Semua", "Komputer & Laptop", "Server & Storage", "Infrastruktur Jaringan", "CCTV & Security", "Software & Lisensi"].map(cat => {
+                      const isActive = (catalogCategory === "Semua" && cat === "Semua") || catalogCategory === cat;
+                      return (
+                        <button
+                          key={cat}
+                          onClick={() => setCatalogCategory(cat)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold tracking-wide transition-all ${
+                            isActive
+                              ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/10"
+                              : "bg-slate-900/60 text-slate-400 hover:text-white border border-white/5"
+                          }`}
+                        >
+                          {cat}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Search Bar */}
+                  <div className="relative max-w-xs w-full">
+                    <Icons.Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+                    <input
+                      type="text"
+                      placeholder="Cari perangkat..."
+                      value={catalogSearch}
+                      onChange={(e) => setCatalogSearch(e.target.value)}
+                      className="w-full bg-slate-950/80 border border-white/10 rounded-lg pl-9 pr-4 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                    />
+                  </div>
+                </div>
+
+                {/* Product Grid */}
+                {(() => {
+                  const filtered = PRODUCT_CATALOG.filter(prod => {
+                    const matchesCategory = catalogCategory === "Semua" || prod.category === catalogCategory;
+                    const matchesSearch = prod.name.toLowerCase().includes(catalogSearch.toLowerCase()) ||
+                      prod.description.toLowerCase().includes(catalogSearch.toLowerCase());
+                    return matchesCategory && matchesSearch;
+                  });
+
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="text-center py-16 bg-slate-900/10 border border-dashed border-white/10 rounded-xl">
+                        <Icons.PackageOpen className="mx-auto h-12 w-12 text-slate-600 mb-3" />
+                        <h3 className="text-sm font-bold text-slate-400 mb-1">Produk Tidak Ditemukan</h3>
+                        <p className="text-xs text-slate-500">Coba ganti filter kategori atau kata kunci pencarian Anda.</p>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {filtered.map(prod => {
+                        const fixedPrice = getProductPrice(prod.id);
+                        return (
+                          <div key={prod.id} className="bg-slate-900/30 border border-white/10 rounded-xl overflow-hidden hover:border-indigo-500/30 transition-all duration-300 flex flex-col group hover:shadow-lg hover:shadow-indigo-500/2">
+                            {/* Product Image Panel */}
+                            <div className="relative h-44 bg-slate-950 flex items-center justify-center p-4 border-b border-white/5">
+                              {prod.image ? (
+                                <img
+                                  src={prod.image}
+                                  alt={prod.name}
+                                  className="max-h-full max-w-full object-contain group-hover:scale-105 transition-transform duration-500"
+                                  referrerPolicy="no-referrer"
+                                />
+                              ) : (
+                                <Icons.Laptop className="h-16 w-16 text-slate-700" />
+                              )}
+                              <span className="absolute top-3 left-3 bg-slate-900/90 text-[10px] font-bold uppercase text-indigo-400 tracking-wider px-2 py-0.5 rounded border border-indigo-500/20">
+                                {prod.category}
+                              </span>
+                            </div>
+
+                            {/* Info */}
+                            <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
+                              <div className="space-y-2">
+                                <h3 className="font-bold text-sm text-white group-hover:text-indigo-400 transition-colors line-clamp-1">
+                                  {prod.name}
+                                </h3>
+                                <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">
+                                  {prod.description}
+                                </p>
+
+                                {/* Specs Bullet points */}
+                                <div className="pt-2 border-t border-white/5 space-y-1">
+                                  {prod.specifications?.slice(0, 3).map((spec, sidx) => (
+                                    <div key={sidx} className="flex items-start text-[11px] text-slate-400">
+                                      <Icons.Check className="h-3 w-3 text-emerald-500 mr-1.5 mt-0.5 flex-shrink-0" />
+                                      <span className="line-clamp-1">{spec}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+
+                              <div className="flex items-center justify-between pt-2 border-t border-white/5">
+                                <div>
+                                  <div className="text-[10px] text-slate-500">Harga Retail Direct</div>
+                                  <div className="text-base font-extrabold text-white">
+                                    Rp {fixedPrice.toLocaleString("id-ID")}
+                                  </div>
+                                </div>
+
+                                <button
+                                  onClick={() => addToShopCart(prod)}
+                                  className="px-3 py-2 bg-indigo-600/15 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/30 hover:border-indigo-500 font-bold text-xs uppercase tracking-wider rounded-lg transition-all flex items-center gap-1.5 cursor-pointer"
+                                >
+                                  <Icons.Plus className="h-3.5 w-3.5" />
+                                  <span>Beli</span>
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+
+              </div>
+
+              {/* Right Column: Checkout & Shopping Cart panel */}
+              <div id="shop_checkout_panel" className="lg:col-span-4 space-y-6">
+                
+                {/* Shopping Cart Header */}
+                <div className="bg-slate-900/30 border border-white/10 rounded-xl p-5 shadow-xl space-y-4">
+                  <h2 className="text-sm font-bold text-white flex items-center justify-between border-b border-white/5 pb-3">
+                    <span className="flex items-center gap-2">
+                      <Icons.ShoppingBag className="h-4 w-4 text-indigo-400" />
+                      <span>Daftar Belanja Anda</span>
+                    </span>
+                    <span className="text-xs bg-indigo-500/15 text-indigo-300 px-2 py-0.5 rounded-full border border-indigo-500/20 font-bold">
+                      {shopCart.reduce((sum, i) => sum + i.quantity, 0)} Item
+                    </span>
+                  </h2>
+
+                  {shopCart.length === 0 ? (
+                    <div className="text-center py-10 space-y-2">
+                      <Icons.ShoppingCart className="mx-auto h-8 w-8 text-slate-600 animate-pulse" />
+                      <p className="text-xs text-slate-400 font-medium">Keranjang Belanja Kosong</p>
+                      <p className="text-[11px] text-slate-500">Klik tombol "Beli" pada katalog untuk menambahkan perangkat IT.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {/* Cart List */}
+                      <div className="max-h-60 overflow-y-auto pr-1 space-y-3 divide-y divide-white/5">
+                        {shopCart.map((item, index) => {
+                          const itemPrice = getProductPrice(item.product.id);
+                          return (
+                            <div key={item.product.id} className={`flex items-center justify-between gap-3 ${index > 0 ? "pt-3" : ""}`}>
+                              <div className="flex-1 space-y-0.5">
+                                <h4 className="text-xs font-bold text-slate-200 line-clamp-1">{item.product.name}</h4>
+                                <div className="text-[11px] text-slate-400">
+                                  Rp {itemPrice.toLocaleString("id-ID")}
+                                </div>
+                              </div>
+
+                              {/* Quantity controls */}
+                              <div className="flex items-center gap-2 bg-slate-950/80 border border-white/5 rounded-lg px-1.5 py-1">
+                                <button
+                                  onClick={() => updateShopCartQuantity(item.product.id, item.quantity - 1)}
+                                  className="p-0.5 hover:bg-white/5 rounded text-slate-400 hover:text-white transition-colors"
+                                >
+                                  <Icons.Minus className="h-3 w-3" />
+                                </button>
+                                <span className="text-xs font-bold text-white min-w-[14px] text-center">{item.quantity}</span>
+                                <button
+                                  onClick={() => updateShopCartQuantity(item.product.id, item.quantity + 1)}
+                                  className="p-0.5 hover:bg-white/5 rounded text-slate-400 hover:text-white transition-colors"
+                                >
+                                  <Icons.Plus className="h-3 w-3" />
+                                </button>
+                              </div>
+
+                              {/* Remove Button */}
+                              <button
+                                onClick={() => removeFromShopCart(item.product.id)}
+                                className="p-1 hover:bg-rose-500/10 text-slate-400 hover:text-rose-400 rounded transition-colors"
+                                title="Hapus dari Keranjang"
+                              >
+                                <Icons.Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Coupon Code section */}
+                      <div className="pt-3 border-t border-white/5 space-y-2">
+                        {appliedCouponCode ? (
+                          <div className="flex items-center justify-between bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-2 text-xs">
+                            <span className="text-emerald-300 flex items-center gap-1">
+                              <Icons.Ticket className="h-3.5 w-3.5" />
+                              <span>Kupon Terpasang: <strong>{appliedCouponCode}</strong> ({appliedDiscountPercent}%)</span>
+                            </span>
+                            <button
+                              onClick={handleRemoveCoupon}
+                              className="text-[10px] text-slate-400 hover:text-rose-400 underline"
+                            >
+                              Hapus
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5">
+                            <div className="relative flex-1">
+                              <Icons.Ticket className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500" />
+                              <input
+                                type="text"
+                                placeholder="KODE KUPON (BBSMERDEKA)"
+                                value={couponCodeInput}
+                                onChange={(e) => setCouponCodeInput(e.target.value)}
+                                className="w-full bg-slate-950 border border-white/10 rounded-lg pl-8 pr-2 py-1.5 text-xs text-white uppercase placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                              />
+                            </div>
+                            <button
+                              onClick={handleApplyCoupon}
+                              className="px-3 py-1.5 bg-slate-800 hover:bg-indigo-600 text-slate-300 hover:text-white text-xs font-bold rounded-lg border border-white/5 transition-all cursor-pointer"
+                            >
+                              Gunakan
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Calculations */}
+                      {(() => {
+                        const subtotal = shopCart.reduce((sum, item) => sum + (getProductPrice(item.product.id) * item.quantity), 0);
+                        const discount = Math.round(subtotal * (appliedDiscountPercent / 100));
+                        const tax = Math.round((subtotal - discount) * 0.11);
+                        const shippingCost = getDeliveryCost(checkoutForm.deliveryMethod);
+                        const total = subtotal - discount + tax + shippingCost;
+
+                        return (
+                          <div className="pt-3 border-t border-white/5 space-y-2 text-xs">
+                            <div className="flex justify-between text-slate-400">
+                              <span>Subtotal</span>
+                              <span>Rp {subtotal.toLocaleString("id-ID")}</span>
+                            </div>
+
+                            {discount > 0 && (
+                              <div className="flex justify-between text-emerald-400 font-medium">
+                                <span>Diskon ({appliedDiscountPercent}%)</span>
+                                <span>- Rp {discount.toLocaleString("id-ID")}</span>
+                              </div>
+                            )}
+
+                            <div className="flex justify-between text-slate-400">
+                              <span>PPN (11%)</span>
+                              <span>Rp {tax.toLocaleString("id-ID")}</span>
+                            </div>
+
+                            <div className="flex justify-between text-slate-400">
+                              <span>Ongkos Kirim ({getDeliveryLabel(checkoutForm.deliveryMethod)})</span>
+                              <span>{shippingCost > 0 ? `Rp ${shippingCost.toLocaleString("id-ID")}` : "GRATIS"}</span>
+                            </div>
+
+                            <div className="flex justify-between text-sm font-extrabold text-white pt-2 border-t border-white/5">
+                              <span>Total Pembayaran</span>
+                              <span className="text-indigo-400">Rp {total.toLocaleString("id-ID")}</span>
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                    </div>
+                  )}
+                </div>
+
+                {/* Checkout Form - Only shown if cart has items */}
+                {shopCart.length > 0 && (
+                  <form onSubmit={handlePlaceOrder} className="bg-slate-900/30 border border-white/10 rounded-xl p-5 shadow-xl space-y-4">
+                    <h3 className="text-xs font-bold text-white uppercase tracking-wider border-b border-white/5 pb-2">
+                      Informasi Pengiriman & Pembayaran
+                    </h3>
+
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-400 mb-1">
+                          NAMA LENGKAP PENERIMA <span className="text-rose-400">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={checkoutForm.clientName}
+                          onChange={(e) => setCheckoutForm(prev => ({ ...prev, clientName: e.target.value }))}
+                          placeholder="Contoh: Andi Wijaya"
+                          className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-400 mb-1">
+                          NAMA PERUSAHAAN / INSTANSI (OPSIONAL)
+                        </label>
+                        <input
+                          type="text"
+                          value={checkoutForm.companyName}
+                          onChange={(e) => setCheckoutForm(prev => ({ ...prev, companyName: e.target.value }))}
+                          placeholder="Contoh: PT Bintang Timur"
+                          className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-400 mb-1">
+                            NO WHATSAPP <span className="text-rose-400">*</span>
+                          </label>
+                          <input
+                            type="tel"
+                            required
+                            value={checkoutForm.whatsapp}
+                            onChange={(e) => setCheckoutForm(prev => ({ ...prev, whatsapp: e.target.value }))}
+                            placeholder="Contoh: 0811223344"
+                            className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-400 mb-1">
+                            ALAMAT EMAIL <span className="text-rose-400">*</span>
+                          </label>
+                          <input
+                            type="email"
+                            required
+                            value={checkoutForm.email}
+                            onChange={(e) => setCheckoutForm(prev => ({ ...prev, email: e.target.value }))}
+                            placeholder="andi.w@email.com"
+                            className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-400 mb-1">
+                          ALAMAT PENGIRIMAN LENGKAP <span className="text-rose-400">*</span>
+                        </label>
+                        <textarea
+                          required
+                          rows={2}
+                          value={checkoutForm.address}
+                          onChange={(e) => setCheckoutForm(prev => ({ ...prev, address: e.target.value }))}
+                          placeholder="Tulis alamat kirim jalan, ruko, kecamatan, kota, kode pos secara detil."
+                          className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 resize-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-400 mb-1">
+                          METODE PENGIRIMAN <span className="text-rose-400">*</span>
+                        </label>
+                        <select
+                          value={checkoutForm.deliveryMethod}
+                          onChange={(e) => setCheckoutForm(prev => ({ ...prev, deliveryMethod: e.target.value }))}
+                          className="w-full bg-slate-950 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-indigo-500 cursor-pointer"
+                        >
+                          <option value="bbs_delivery">Kurir Toko BBS - Rp 100.000 (Rekomendasi Aman)</option>
+                          <option value="jne">JNE Express - Rp 150.000</option>
+                          <option value="tiki">TIKI Regular - Rp 130.000</option>
+                          <option value="pickup">Ambil Mandiri di Kantor BBS - Rp 0</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-400 mb-1">
+                          METODE PEMBAYARAN <span className="text-rose-400">*</span>
+                        </label>
+                        <select
+                          value={checkoutForm.paymentMethod}
+                          onChange={(e) => setCheckoutForm(prev => ({ ...prev, paymentMethod: e.target.value }))}
+                          className="w-full bg-slate-950 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-indigo-500 cursor-pointer"
+                        >
+                          <option value="bank_transfer">Transfer Bank Mandiri (Verifikasi Bukti Transfer)</option>
+                          <option value="virtual_account">Virtual Account Mandiri / BCA (Simulasi Instan)</option>
+                          <option value="credit_card">Kartu Kredit Visa / Mastercard (Simulasi Instan Aman)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={isSubmittingOrder}
+                      className="w-full py-3 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-indigo-600/20 hover:shadow-indigo-600/35 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed mt-2"
+                    >
+                      {isSubmittingOrder ? (
+                        <>
+                          <Icons.RefreshCw className="h-4 w-4 animate-spin" />
+                          <span>Sedang Memproses...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Icons.Check className="h-4 w-4" />
+                          <span>Buat Pesanan & Bayar</span>
+                        </>
+                      )}
+                    </button>
+                  </form>
+                )}
+
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* ==================================== */}
         {/* TAB 2: AI CONSULTATION CHATBOT        */}
         {/* ==================================== */}
         {currentTab === "consult" && (
@@ -4334,6 +5348,18 @@ export default function App() {
                     <span>Pengaturan Katalog ({catalogProducts.length})</span>
                   </button>
 
+                  <button
+                    onClick={() => setActiveAdminSubTab("orders")}
+                    className={`px-5 py-3 text-sm font-bold border-b-2 transition-all flex items-center gap-2 ${
+                      activeAdminSubTab === "orders" 
+                        ? "border-indigo-500 text-indigo-400" 
+                        : "border-transparent text-slate-400 hover:text-white"
+                    }`}
+                  >
+                    <Icons.ShoppingBag className="h-4.5 w-4.5" />
+                    <span>Pesanan Toko ({orders.length})</span>
+                  </button>
+
                   {adminRole === "superadmin" && (
                     <button
                       onClick={() => setActiveAdminSubTab("users")}
@@ -4498,7 +5524,35 @@ export default function App() {
                               <Icons.Filter className="h-4 w-4 text-emerald-400" />
                               <span>Status RFQ:</span>
                             </div>
-                            <div className="relative" ref={statusFilterRef}>
+                            <div className="flex flex-col gap-1.5">
+                              <div className="relative flex flex-col sm:flex-row items-stretch sm:items-center gap-2" ref={statusFilterRef} id="rfq_status_filter_container">
+                              {/* Glowing border animation overlay when active filters are detected */}
+                              {(adminRfqStatuses.length > 0 || !!adminRfqSearch || !!adminRfqStartDate || !!adminRfqEndDate || !!adminRfqClientFilter || !!statusKeywordSearch) && (
+                                <motion.div
+                                  className="absolute inset-0 rounded-xl pointer-events-none z-0"
+                                  animate={{
+                                    boxShadow: [
+                                      "0 0 0px 0px rgba(99, 102, 241, 0)",
+                                      "0 0 6px 1.5px rgba(99, 102, 241, 0.45)",
+                                      "0 0 0px 0px rgba(99, 102, 241, 0)"
+                                    ],
+                                    borderColor: [
+                                      "rgba(99, 102, 241, 0.2)",
+                                      "rgba(99, 102, 241, 0.7)",
+                                      "rgba(99, 102, 241, 0.2)"
+                                    ]
+                                  }}
+                                  style={{
+                                    borderWidth: "1px",
+                                    borderStyle: "solid"
+                                  }}
+                                  transition={{
+                                    repeat: Infinity,
+                                    duration: 2.2,
+                                    ease: "easeInOut"
+                                  }}
+                                />
+                              )}
                               {/* Hidden select for standard DOM API and integration compatibility */}
                               <select
                                 id="rfq_status_filter"
@@ -4518,127 +5572,442 @@ export default function App() {
                                 <option value="cancelled">Dibatalkan (Cancelled) ({adminRfqStatusCounts["cancelled"]})</option>
                               </select>
 
-                              {/* Custom trigger button styled professionally */}
-                              <button
-                                type="button"
-                                onClick={() => setIsStatusFilterOpen(!isStatusFilterOpen)}
-                                className={`flex items-center justify-between border rounded-xl px-3 py-1.5 text-xs font-semibold cursor-pointer transition-all gap-2 min-w-[210px] text-left ${
-                                  adminRfqStatuses.length === 0
-                                    ? "bg-slate-950 border-white/10 text-slate-200 hover:border-indigo-500/40 hover:bg-slate-900"
-                                    : adminRfqStatuses.length === 1
-                                    ? adminRfqStatuses[0] === "pending"
-                                      ? "bg-amber-950/40 border-amber-500/50 text-amber-400 hover:bg-amber-950/60"
-                                      : adminRfqStatuses[0] === "processing"
-                                      ? "bg-blue-950/40 border-blue-500/50 text-blue-400 hover:bg-blue-950/60"
-                                      : adminRfqStatuses[0] === "quoted"
-                                      ? "bg-indigo-950/40 border-indigo-500/50 text-indigo-400 hover:bg-indigo-950/60"
-                                      : adminRfqStatuses[0] === "completed"
-                                      ? "bg-emerald-950/40 border-emerald-500/50 text-emerald-400 hover:bg-emerald-950/60"
-                                      : adminRfqStatuses[0] === "cancelled"
-                                      ? "bg-rose-950/40 border-rose-500/50 text-rose-400 hover:bg-rose-950/60"
-                                      : "bg-slate-950 border-white/10 text-slate-200 hover:border-indigo-500/40 hover:bg-slate-900"
-                                    : "bg-indigo-950/30 border-indigo-500/40 text-indigo-300 hover:bg-indigo-950/50"
-                                }`}
-                              >
-                                <div className="flex items-center gap-2">
-                                  {adminRfqStatuses.length === 0 ? (
-                                    <span className="h-2 w-2 rounded-full bg-slate-400" />
-                                  ) : adminRfqStatuses.length === 1 ? (
-                                    <span className={`h-2 w-2 rounded-full ${
-                                      adminRfqStatuses[0] === "pending"
-                                        ? "bg-amber-400 animate-pulse"
-                                        : adminRfqStatuses[0] === "processing"
-                                        ? "bg-blue-400 animate-pulse"
-                                        : adminRfqStatuses[0] === "quoted"
-                                        ? "bg-indigo-400"
-                                        : adminRfqStatuses[0] === "completed"
-                                        ? "bg-emerald-400"
-                                        : "bg-rose-400"
-                                    }`} />
-                                  ) : (
-                                    <div className="flex -space-x-1 items-center">
-                                      {adminRfqStatuses.map((st) => (
-                                        <span key={st} className={`h-2 w-2 rounded-full border border-slate-950 ${
-                                          st === "pending" ? "bg-amber-400 animate-pulse" :
-                                          st === "processing" ? "bg-blue-400 animate-pulse" :
-                                          st === "quoted" ? "bg-indigo-400" :
-                                          st === "completed" ? "bg-emerald-400" :
-                                          st === "cancelled" ? "bg-rose-400" : "bg-slate-400"
-                                        }`} />
-                                      ))}
-                                    </div>
-                                  )}
-                                  <span>
-                                    {adminRfqStatuses.length === 0
-                                      ? `Semua Status (${adminRfqStatusCounts[""]})`
+                              {/* Keyword search input directly inside the filter container */}
+                              <div className="relative shrink-0 z-10">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                                <input
+                                  type="text"
+                                  placeholder="Cari kata kunci status..."
+                                  value={statusKeywordSearch}
+                                  onChange={(e) => setStatusKeywordSearch(e.target.value)}
+                                  className="w-full sm:w-[180px] pl-9 pr-8 py-1.5 bg-slate-950 border border-white/10 hover:border-indigo-500/40 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-all font-medium"
+                                />
+                                {statusKeywordSearch && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setStatusKeywordSearch("")}
+                                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-0.5 cursor-pointer z-20"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                )}
+                              </div>
+
+                              {/* Inline Quick Custom Status Creator for Admins */}
+                              <div className="flex items-center gap-2 bg-slate-900/60 border border-white/10 rounded-xl px-2.5 py-1 z-10 shrink-0">
+                                <input
+                                  type="text"
+                                  placeholder="+ Status kustom..."
+                                  value={newCustomStatusName}
+                                  onChange={(e) => setNewCustomStatusName(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      handleCreateCustomStatus();
+                                    }
+                                  }}
+                                  className="bg-transparent text-xs text-white placeholder-slate-500 focus:outline-none w-[110px] sm:w-[130px] font-medium"
+                                />
+                                
+                                {/* Quick Color Dot Radio Buttons */}
+                                <div className="flex items-center gap-1.5 border-l border-white/5 pl-2">
+                                  {[
+                                    { name: "purple", color: "bg-purple-400 shadow-[0_0_4px_rgba(168,85,247,0.4)]" },
+                                    { name: "violet", color: "bg-violet-400 shadow-[0_0_4px_rgba(139,92,246,0.4)]" },
+                                    { name: "pink", color: "bg-pink-400 shadow-[0_0_4px_rgba(236,72,153,0.4)]" },
+                                    { name: "cyan", color: "bg-cyan-400 shadow-[0_0_4px_rgba(6,182,212,0.4)]" },
+                                    { name: "amber", color: "bg-amber-400 shadow-[0_0_4px_rgba(245,158,11,0.4)]" },
+                                    { name: "blue", color: "bg-blue-400 shadow-[0_0_4px_rgba(59,130,246,0.4)]" },
+                                    { name: "emerald", color: "bg-emerald-400 shadow-[0_0_4px_rgba(16,185,129,0.4)]" }
+                                  ].map((col) => (
+                                    <button
+                                      key={col.name}
+                                      type="button"
+                                      onClick={() => setNewCustomStatusColor(col.name)}
+                                      className={`h-2.5 w-2.5 rounded-full transition-all duration-200 cursor-pointer ${col.color} ${
+                                        newCustomStatusColor === col.name 
+                                          ? "scale-135 ring-1 ring-indigo-500/85" 
+                                          : "hover:scale-125 opacity-60 hover:opacity-100"
+                                      }`}
+                                      title={`Pilih warna ${col.name}`}
+                                    />
+                                  ))}
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={handleCreateCustomStatus}
+                                  className="p-1 bg-indigo-600/20 hover:bg-indigo-600/45 border border-indigo-500/30 text-indigo-300 rounded-lg transition-all cursor-pointer flex items-center justify-center hover:scale-105"
+                                  title="Tambah status kustom baru"
+                                >
+                                  <Plus className="h-3 w-3" />
+                                </button>
+                              </div>
+
+                              {/* Relative wrapper for custom trigger and popover list to align perfectly */}
+                              <div className="relative flex-1 sm:flex-initial z-10">
+                                {/* Custom trigger button styled professionally */}
+                                <button
+                                  type="button"
+                                  onClick={() => setIsStatusFilterOpen(!isStatusFilterOpen)}
+                                  className={`flex items-center justify-between border rounded-xl px-3 py-1.5 text-xs font-semibold cursor-pointer transition-all gap-2 w-full sm:min-w-[210px] text-left ${
+                                    adminRfqStatuses.length === 0
+                                      ? "bg-slate-950 border-white/10 text-slate-200 hover:border-indigo-500/40 hover:bg-slate-900"
                                       : adminRfqStatuses.length === 1
                                       ? adminRfqStatuses[0] === "pending"
-                                        ? `Menunggu Proposal (${adminRfqStatusCounts["pending"]})`
+                                        ? "bg-amber-950/40 border-amber-500/50 text-amber-400 hover:bg-amber-950/60"
                                         : adminRfqStatuses[0] === "processing"
-                                        ? `Sedang Diproses (${adminRfqStatusCounts["processing"]})`
+                                        ? "bg-blue-950/40 border-blue-500/50 text-blue-400 hover:bg-blue-950/60"
                                         : adminRfqStatuses[0] === "quoted"
-                                        ? `Sudah Di-Quoted (${adminRfqStatusCounts["quoted"]})`
+                                        ? "bg-indigo-950/40 border-indigo-500/50 text-indigo-400 hover:bg-indigo-950/60"
                                         : adminRfqStatuses[0] === "completed"
-                                        ? `Selesai (${adminRfqStatusCounts["completed"]})`
+                                        ? "bg-emerald-950/40 border-emerald-500/50 text-emerald-400 hover:bg-emerald-950/60"
                                         : adminRfqStatuses[0] === "cancelled"
-                                        ? `Dibatalkan (${adminRfqStatusCounts["cancelled"]})`
-                                        : `Semua Status`
-                                      : `${adminRfqStatuses.length} Status Terpilih`}
-                                  </span>
-                                </div>
-                                <ChevronDown className={`h-3 w-3 text-slate-400 transition-transform duration-200 ${isStatusFilterOpen ? "rotate-180" : ""}`} />
-                              </button>
-
-                              {/* Custom Styled Dropdown Options with pills and subtexts */}
-                              {isStatusFilterOpen && (
-                                <div 
-                                  className="absolute top-full left-0 mt-1.5 w-[260px] bg-slate-950 border border-white/10 rounded-xl shadow-2xl z-50 p-1 divide-y divide-white/5 backdrop-blur-md"
-                                  onClick={(e) => e.stopPropagation()}
+                                        ? "bg-rose-950/40 border-rose-500/50 text-rose-400 hover:bg-rose-950/60"
+                                        : (() => {
+                                            const found = (settings.customRfqStatuses || []).find(cs => cs.value === adminRfqStatuses[0]);
+                                            const col = found ? found.color : "purple";
+                                            if (col && col.startsWith("#")) {
+                                              return "bg-slate-950 border-white/10 text-slate-200 hover:border-indigo-500/40 hover:bg-slate-900";
+                                            }
+                                            return col === "purple" ? "bg-purple-950/40 border-purple-500/50 text-purple-400 hover:bg-purple-950/60" :
+                                                   col === "violet" ? "bg-violet-950/40 border-violet-500/50 text-violet-400 hover:bg-violet-950/60" :
+                                                   col === "pink" ? "bg-pink-950/40 border-pink-500/50 text-pink-400 hover:bg-pink-950/60" :
+                                                   col === "cyan" ? "bg-cyan-950/40 border-cyan-500/50 text-cyan-400 hover:bg-cyan-950/60" :
+                                                   col === "amber" ? "bg-amber-950/40 border-amber-500/50 text-amber-400 hover:bg-amber-950/60" :
+                                                   col === "blue" ? "bg-blue-950/40 border-blue-500/50 text-blue-400 hover:bg-blue-950/60" :
+                                                   col === "emerald" ? "bg-emerald-950/40 border-emerald-500/50 text-emerald-400 hover:bg-emerald-950/60" :
+                                                   "bg-slate-950 border-white/10 text-slate-200 hover:border-indigo-500/40 hover:bg-slate-900";
+                                          })()
+                                      : "bg-indigo-950/30 border-indigo-500/40 text-indigo-300 hover:bg-indigo-950/50"
+                                  }`}
+                                  style={adminRfqStatuses.length === 1 && (() => {
+                                    const found = (settings.customRfqStatuses || []).find(cs => cs.value === adminRfqStatuses[0]);
+                                    const col = found ? found.color : null;
+                                    if (col && col.startsWith("#")) {
+                                      return {
+                                        backgroundColor: `${col}15`,
+                                        borderColor: `${col}50`,
+                                        color: col
+                                      };
+                                    }
+                                    return undefined;
+                                  })() || undefined}
                                 >
-                                  {/* Color Legend Header */}
-                                  <div className="px-2.5 py-2 bg-slate-900/80 rounded-t-lg border-b border-white/5 text-[10px] text-slate-300">
-                                    <div className="flex items-center gap-1 mb-1.5 font-bold text-slate-200 uppercase tracking-wider text-[9px]">
-                                      <Icons.Info className="h-3 w-3 text-indigo-400" />
-                                      <span>Panduan Warna / Legend</span>
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-y-1 gap-x-2 text-slate-400 font-medium">
-                                      <div className="flex items-center gap-1.5">
-                                        <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shadow-[0_0_4px_rgba(245,158,11,0.5)]" />
-                                        <span>Amber = Pending</span>
+                                  <div className="flex items-center gap-2">
+                                    {adminRfqStatuses.length === 0 ? (
+                                      <span className="h-2 w-2 rounded-full bg-slate-400" />
+                                    ) : adminRfqStatuses.length === 1 ? (
+                                      <span 
+                                        className={`h-2 w-2 rounded-full ${
+                                          adminRfqStatuses[0] === "pending"
+                                            ? "bg-amber-400 animate-pulse"
+                                            : adminRfqStatuses[0] === "processing"
+                                            ? "bg-blue-400 animate-pulse"
+                                            : adminRfqStatuses[0] === "quoted"
+                                            ? "bg-indigo-400"
+                                            : adminRfqStatuses[0] === "completed"
+                                            ? "bg-emerald-400"
+                                            : adminRfqStatuses[0] === "cancelled"
+                                            ? "bg-rose-400"
+                                            : (() => {
+                                                const found = (settings.customRfqStatuses || []).find(cs => cs.value === adminRfqStatuses[0]);
+                                                const col = found ? found.color : "purple";
+                                                if (col && col.startsWith("#")) {
+                                                  return "animate-pulse";
+                                                }
+                                                return col === "purple" ? "bg-purple-400 animate-pulse" :
+                                                       col === "violet" ? "bg-violet-400 animate-pulse" :
+                                                       col === "pink" ? "bg-pink-400 animate-pulse" :
+                                                       col === "cyan" ? "bg-cyan-400 animate-pulse" :
+                                                       col === "amber" ? "bg-amber-400" :
+                                                       col === "blue" ? "bg-blue-400" :
+                                                       col === "emerald" ? "bg-emerald-400" : "bg-purple-400 animate-pulse";
+                                              })()
+                                        }`}
+                                        style={(() => {
+                                          const found = (settings.customRfqStatuses || []).find(cs => cs.value === adminRfqStatuses[0]);
+                                          const col = found ? found.color : null;
+                                          if (col && col.startsWith("#")) {
+                                            return {
+                                              backgroundColor: col,
+                                              boxShadow: `0 0 8px ${col}`
+                                            };
+                                          }
+                                          return undefined;
+                                        })()}
+                                      />
+                                    ) : (
+                                      <div className="flex -space-x-1 items-center">
+                                        {adminRfqStatuses.map((st) => {
+                                          const found = (settings.customRfqStatuses || []).find(cs => cs.value === st);
+                                          const col = found ? found.color : null;
+                                          const isHex = col && col.startsWith("#");
+                                          return (
+                                            <span 
+                                              key={st} 
+                                              className={`h-2 w-2 rounded-full border border-slate-950 ${
+                                                st === "pending" ? "bg-amber-400 animate-pulse" :
+                                                st === "processing" ? "bg-blue-400 animate-pulse" :
+                                                st === "quoted" ? "bg-indigo-400" :
+                                                st === "completed" ? "bg-emerald-400" :
+                                                st === "cancelled" ? "bg-rose-400" :
+                                                isHex ? "animate-pulse" : "bg-purple-400 animate-pulse"
+                                              }`}
+                                              style={isHex ? {
+                                                backgroundColor: col,
+                                                boxShadow: `0 0 4px ${col}`
+                                              } : undefined}
+                                            />
+                                          );
+                                        })}
                                       </div>
-                                      <div className="flex items-center gap-1.5">
-                                        <span className="h-1.5 w-1.5 rounded-full bg-blue-400 shadow-[0_0_4px_rgba(59,130,246,0.5)]" />
-                                        <span>Biru = Processing</span>
-                                      </div>
-                                      <div className="flex items-center gap-1.5">
-                                        <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 shadow-[0_0_4px_rgba(99,102,241,0.5)]" />
-                                        <span>Indigo = Quoted</span>
-                                      </div>
-                                      <div className="flex items-center gap-1.5">
-                                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_4px_rgba(16,185,129,0.5)]" />
-                                        <span>Hijau = Completed</span>
-                                      </div>
-                                      <div className="flex items-center gap-1.5 col-span-2">
-                                        <span className="h-1.5 w-1.5 rounded-full bg-rose-400 shadow-[0_0_4px_rgba(239,68,68,0.5)]" />
-                                        <span>Merah = Cancelled</span>
-                                      </div>
-                                    </div>
+                                    )}
+                                    <span>
+                                      {adminRfqStatuses.length === 0
+                                        ? `Semua Status (${adminRfqStatusCounts[""]})`
+                                        : adminRfqStatuses.length === 1
+                                        ? (() => {
+                                            const st = adminRfqStatuses[0];
+                                            if (st === "pending") return `Menunggu Proposal (${adminRfqStatusCounts["pending"]})`;
+                                            if (st === "processing") return `Sedang Diproses (${adminRfqStatusCounts["processing"]})`;
+                                            if (st === "quoted") return `Sudah Di-Quoted (${adminRfqStatusCounts["quoted"]})`;
+                                            if (st === "completed") return `Selesai (${adminRfqStatusCounts["completed"]})`;
+                                            if (st === "cancelled") return `Dibatalkan (${adminRfqStatusCounts["cancelled"]})`;
+                                            
+                                            const found = (settings.customRfqStatuses || []).find(cs => cs.value === st);
+                                            return `${found ? found.label : st} (${adminRfqStatusCounts[st] || 0})`;
+                                          })()
+                                        : `${adminRfqStatuses.length} Status Terpilih`}
+                                    </span>
                                   </div>
-                                  <div className="py-1 space-y-0.5">
-                                    {[
-                                      { value: "", label: "Semua Status", desc: "Tampilkan semua RFQ", color: "slate" },
-                                      { value: "pending", label: "Menunggu Proposal", desc: "RFQ baru butuh penawaran", color: "amber" },
-                                      { value: "processing", label: "Sedang Diproses", desc: "Sedang dipersiapkan sales", color: "blue" },
-                                      { value: "quoted", label: "Sudah Di-Quoted", desc: "Proposal penawaran terkirim", color: "indigo" },
-                                      { value: "completed", label: "Selesai", desc: "Transaksi berhasil tuntas", color: "emerald" },
-                                      { value: "cancelled", label: "Dibatalkan", desc: "RFQ ditolak atau batal", color: "rose" }
-                                    ].map((item) => {
+                                  <ChevronDown className={`h-3 w-3 text-slate-400 transition-transform duration-200 ${isStatusFilterOpen ? "rotate-180" : ""}`} />
+                                </button>
+
+                                {/* Custom Styled Dropdown Options with pills and subtexts */}
+                                {isStatusFilterOpen && (
+                                  <div 
+                                    className="absolute top-full right-0 sm:left-0 mt-1.5 w-[260px] bg-slate-950 border border-white/10 rounded-xl shadow-2xl z-50 p-1 divide-y divide-white/5 backdrop-blur-md"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    {/* Color Legend Header */}
+                                    <div className="px-2.5 py-2 bg-slate-900/80 rounded-t-lg border-b border-white/5 text-[10px] text-slate-300">
+                                      <div className="flex items-center justify-between mb-1.5 font-bold text-slate-200 uppercase tracking-wider text-[9px]">
+                                        <div className="flex items-center gap-1">
+                                          <Icons.Info className="h-3 w-3 text-indigo-400" />
+                                          <span>Prioritas Warna / Legend (Geser untuk Urutkan)</span>
+                                        </div>
+                                      </div>
+                                      
+                                      <div className="space-y-1.5 mt-1 max-h-[160px] overflow-y-auto pr-0.5 custom-scrollbar">
+                                        {orderedLegendStatuses.map((item) => {
+                                          const isCustom = item.isCustom;
+                                          const isHexColor = isCustom && (item.color || "").startsWith("#");
+                                          
+                                          // Determine dot style
+                                          let dotStyle = undefined;
+                                          let dotClass = "h-1.5 w-1.5 rounded-full shrink-0";
+                                          
+                                          if (isCustom) {
+                                            dotClass += " animate-pulse";
+                                            if (isHexColor) {
+                                              dotStyle = {
+                                                backgroundColor: item.color,
+                                                boxShadow: `0 0 4px ${item.color}`
+                                              };
+                                            } else {
+                                              const tailwindColorMap: Record<string, string> = {
+                                                purple: "bg-purple-400 shadow-[0_0_4px_rgba(168,85,247,0.5)]",
+                                                violet: "bg-violet-400 shadow-[0_0_4px_rgba(139,92,246,0.5)]",
+                                                pink: "bg-pink-400 shadow-[0_0_4px_rgba(236,72,153,0.5)]",
+                                                cyan: "bg-cyan-400 shadow-[0_0_4px_rgba(6,182,212,0.5)]",
+                                                amber: "bg-amber-400 shadow-[0_0_4px_rgba(245,158,11,0.5)]",
+                                                blue: "bg-blue-400 shadow-[0_0_4px_rgba(59,130,246,0.5)]",
+                                                emerald: "bg-emerald-400 shadow-[0_0_4px_rgba(16,185,129,0.5)]",
+                                                slate: "bg-slate-400 shadow-[0_0_4px_rgba(100,116,139,0.5)]"
+                                              };
+                                              dotClass += ` ${tailwindColorMap[item.color] || "bg-purple-400 shadow-[0_0_4px_rgba(168,85,247,0.5)]"}`;
+                                            }
+                                          } else {
+                                            const defaultDotMap: Record<string, string> = {
+                                              pending: "bg-amber-400 shadow-[0_0_4px_rgba(245,158,11,0.5)]",
+                                              processing: "bg-blue-400 shadow-[0_0_4px_rgba(59,130,246,0.5)]",
+                                              quoted: "bg-indigo-400 shadow-[0_0_4px_rgba(99,102,241,0.5)]",
+                                              completed: "bg-emerald-400 shadow-[0_0_4px_rgba(16,185,129,0.5)]",
+                                              cancelled: "bg-rose-400 shadow-[0_0_4px_rgba(239,68,68,0.5)]"
+                                            };
+                                            dotClass += ` ${defaultDotMap[item.value] || ""}`;
+                                          }
+
+                                          return (
+                                            <div 
+                                              key={item.value}
+                                              draggable
+                                              onDragStart={(e) => {
+                                                e.dataTransfer.setData("text/plain", item.value);
+                                                e.currentTarget.classList.add("opacity-40", "scale-[0.98]", "border-indigo-500/50");
+                                                setDraggingStatus(item.value);
+                                              }}
+                                              onDragEnd={(e) => {
+                                                e.currentTarget.classList.remove("opacity-40", "scale-[0.98]", "border-indigo-500/50");
+                                                setDraggingStatus(null);
+                                              }}
+                                              onDragOver={(e) => {
+                                                e.preventDefault();
+                                                e.currentTarget.classList.add("bg-indigo-950/20", "border-indigo-500/30");
+                                              }}
+                                              onDragLeave={(e) => {
+                                                e.currentTarget.classList.remove("bg-indigo-950/20", "border-indigo-500/30");
+                                              }}
+                                              onDrop={(e) => {
+                                                e.preventDefault();
+                                                e.currentTarget.classList.remove("bg-indigo-950/20", "border-indigo-500/30");
+                                                const draggedValue = e.dataTransfer.getData("text/plain");
+                                                const targetValue = item.value;
+                                                if (draggedValue && draggedValue !== targetValue) {
+                                                  const currentOrder = orderedLegendStatuses.map(s => s.value);
+                                                  const draggedIdx = currentOrder.indexOf(draggedValue);
+                                                  const targetIdx = currentOrder.indexOf(targetValue);
+                                                  if (draggedIdx !== -1 && targetIdx !== -1) {
+                                                    const newOrder = [...currentOrder];
+                                                    newOrder.splice(draggedIdx, 1);
+                                                    newOrder.splice(targetIdx, 0, draggedValue);
+                                                    setLegendStatusOrder(newOrder);
+                                                    localStorage.setItem("bbs_rfq_status_priority", JSON.stringify(newOrder));
+                                                  }
+                                                }
+                                              }}
+                                              className={`flex items-center justify-between gap-2 bg-slate-900/50 hover:bg-slate-900 px-2 py-1.5 rounded-lg border transition-all cursor-grab active:cursor-grabbing select-none ${
+                                                draggingStatus === item.value 
+                                                  ? "border-indigo-500/50 bg-indigo-950/20" 
+                                                  : "border-white/5 hover:border-white/10"
+                                              }`}
+                                            >
+                                              <div className="flex items-center gap-1.5 min-w-0">
+                                                <Icons.GripVertical className="h-3 w-3 text-slate-600 hover:text-slate-400 shrink-0 cursor-grab" />
+                                                <span className={dotClass} style={dotStyle} />
+                                                <span className="truncate text-slate-300 font-bold text-[10px]">
+                                                  {isCustom ? item.label : (
+                                                    item.value === "pending" ? "Amber = Pending" :
+                                                    item.value === "processing" ? "Biru = Processing" :
+                                                    item.value === "quoted" ? "Indigo = Quoted" :
+                                                    item.value === "completed" ? "Hijau = Completed" :
+                                                    item.value === "cancelled" ? "Merah = Cancelled" : item.label
+                                                  )}
+                                                </span>
+                                              </div>
+                                              
+                                              {isCustom ? (
+                                                <div className="flex items-center gap-1 shrink-0">
+                                                  <input 
+                                                    type="color"
+                                                    value={isHexColor ? item.color : "#a855f7"}
+                                                    onChange={(e) => handleUpdateCustomStatusColor(item.value, e.target.value)}
+                                                    className="h-3.5 w-3.5 rounded-sm cursor-pointer border-0 bg-transparent p-0 flex-shrink-0"
+                                                    title={`Ubah warna status ${item.label}`}
+                                                    onClick={(e) => e.stopPropagation()}
+                                                  />
+                                                  <span className="text-[8.5px] font-mono text-slate-500 uppercase">
+                                                    {isHexColor ? item.color : "PRESET"}
+                                                  </span>
+                                                </div>
+                                              ) : (
+                                                <span className="text-[8.5px] font-semibold text-slate-600 uppercase shrink-0 px-1 py-0.5 bg-slate-950/40 rounded border border-white/5">
+                                                  Standard
+                                                </span>
+                                              )}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                    <div className="py-1 space-y-0.5">
+                                      {/* Select All Checkbox */}
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          const allAvailable = ["pending", "processing", "quoted", "completed", "cancelled"];
+                                          const areAllSelected = allAvailable.every(s => adminRfqStatuses.includes(s));
+                                          if (areAllSelected) {
+                                            setAdminRfqStatuses([]);
+                                          } else {
+                                            setAdminRfqStatuses(allAvailable);
+                                          }
+                                        }}
+                                        className="w-full flex items-center justify-between text-left px-2.5 py-1.5 rounded-lg text-xs transition-all cursor-pointer border border-transparent hover:bg-slate-900 text-slate-200 hover:text-white"
+                                      >
+                                        <div className="flex items-center gap-2">
+                                          <div className={`h-4 w-4 rounded border flex items-center justify-center transition-all ${
+                                            adminRfqStatuses.length === 5 
+                                              ? "bg-indigo-600 border-indigo-500 text-white" 
+                                              : adminRfqStatuses.length > 0
+                                              ? "bg-slate-800 border-indigo-500/50 text-indigo-400"
+                                              : "border-white/20 bg-slate-900 text-transparent"
+                                          }`}>
+                                            {adminRfqStatuses.length === 5 ? (
+                                              <Check className="h-3 w-3 stroke-[3]" />
+                                            ) : adminRfqStatuses.length > 0 ? (
+                                              <div className="h-0.5 w-2 bg-indigo-400 rounded-sm" />
+                                            ) : null}
+                                          </div>
+                                          <div className="flex flex-col">
+                                            <span className="font-bold text-slate-200">Pilih Semua (Select All)</span>
+                                            <span className="text-[9px] text-slate-500">Aktifkan atau matikan semua status</span>
+                                          </div>
+                                        </div>
+                                        <span className="text-[10px] font-mono px-1.5 py-0.5 bg-slate-900 text-slate-400 rounded border border-white/5 font-bold">
+                                          {adminRfqStatuses.length}/5
+                                        </span>
+                                      </button>
+
+                                      <div className="h-px bg-white/5 my-1" />
+
+                                      {(() => {
+                                        const allOptionItems = [
+                                          { value: "pending", label: "Menunggu Proposal", desc: "RFQ baru butuh penawaran", color: "amber", isCustom: false },
+                                          { value: "processing", label: "Sedang Diproses", desc: "Sedang dipersiapkan sales", color: "blue", isCustom: false },
+                                          { value: "quoted", label: "Sudah Di-Quoted", desc: "Proposal penawaran terkirim", color: "indigo", isCustom: false },
+                                          { value: "completed", label: "Selesai", desc: "Transaksi berhasil tuntas", color: "emerald", isCustom: false },
+                                          { value: "cancelled", label: "Dibatalkan", desc: "RFQ ditolak atau batal", color: "rose", isCustom: false },
+                                          ...(settings.customRfqStatuses || []).map((cs) => ({
+                                            value: cs.value,
+                                            label: cs.label,
+                                            desc: cs.desc,
+                                            color: cs.color || "purple",
+                                            isCustom: true
+                                          }))
+                                        ];
+
+                                        const sortedOptionItems = [...allOptionItems].sort((a, b) => {
+                                          let idxA = legendStatusOrder.indexOf(a.value);
+                                          let idxB = legendStatusOrder.indexOf(b.value);
+                                          if (idxA === -1) idxA = 9999;
+                                          if (idxB === -1) idxB = 9999;
+                                          return idxA - idxB;
+                                        });
+
+                                        const finalOptionItems = [
+                                          { value: "", label: "Semua Status", desc: "Tampilkan semua RFQ", color: "slate", isCustom: false },
+                                          ...sortedOptionItems
+                                        ];
+
+                                        return finalOptionItems.filter(item => {
+                                          const q = statusKeywordSearch.toLowerCase().trim();
+                                          if (!q) return true;
+                                          return item.label.toLowerCase().includes(q) || 
+                                                 item.desc.toLowerCase().includes(q) || 
+                                                 item.value.toLowerCase().includes(q);
+                                        });
+                                      })().map((item) => {
                                       const isSelected = item.value === "" ? adminRfqStatuses.length === 0 : adminRfqStatuses.includes(item.value);
                                       const count = adminRfqStatusCounts[item.value as keyof typeof adminRfqStatusCounts] || 0;
                                       return (
                                         <button
                                           key={item.value}
                                           type="button"
+                                          onMouseEnter={() => setHoveredStatusItem(item.value)}
+                                          onMouseLeave={() => setHoveredStatusItem(null)}
                                           onClick={(e) => {
                                             e.stopPropagation();
                                             if (item.value === "") {
@@ -4651,7 +6020,7 @@ export default function App() {
                                               }
                                             }
                                           }}
-                                          className={`w-full flex items-center justify-between text-left px-2.5 py-1.5 rounded-lg text-xs transition-all cursor-pointer ${
+                                          className={`relative w-full flex items-center justify-between text-left px-2.5 py-1.5 rounded-lg text-xs transition-all cursor-pointer ${
                                             isSelected 
                                               ? item.color === "amber"
                                                 ? "bg-amber-950/50 text-amber-300 border border-amber-500/20"
@@ -4663,20 +6032,45 @@ export default function App() {
                                                 ? "bg-emerald-950/50 text-emerald-300 border border-emerald-500/20"
                                                 : item.color === "rose"
                                                 ? "bg-rose-950/50 text-rose-300 border border-rose-500/20"
+                                                : item.color === "purple"
+                                                ? "bg-purple-950/50 text-purple-300 border border-purple-500/20"
+                                                : item.color === "violet"
+                                                ? "bg-violet-950/50 text-violet-300 border border-violet-500/20"
+                                                : item.color === "pink"
+                                                ? "bg-pink-950/50 text-pink-300 border border-pink-500/20"
+                                                : item.color === "cyan"
+                                                ? "bg-cyan-950/50 text-cyan-300 border border-cyan-500/20"
+                                                : item.color.startsWith("#")
+                                                ? "border border-white/10"
                                                 : "bg-slate-800 text-white border border-white/10"
                                               : "text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-transparent"
                                           }`}
+                                          style={isSelected && item.color.startsWith("#") ? {
+                                            backgroundColor: `${item.color}15`,
+                                            borderColor: `${item.color}35`,
+                                            color: item.color
+                                          } : undefined}
                                         >
                                           <div className="flex items-center gap-2">
                                             {/* Pill / side indicator */}
-                                            <span className={`h-2.5 w-2.5 rounded-full flex-shrink-0 ${
-                                              item.color === "amber" ? "bg-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.5)]" :
-                                              item.color === "blue" ? "bg-blue-400 shadow-[0_0_8px_rgba(59,130,246,0.5)]" :
-                                              item.color === "indigo" ? "bg-indigo-400 shadow-[0_0_8px_rgba(99,102,241,0.5)]" :
-                                              item.color === "emerald" ? "bg-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.5)]" :
-                                              item.color === "rose" ? "bg-rose-400 shadow-[0_0_8px_rgba(239,68,68,0.5)]" :
-                                              "bg-slate-500"
-                                            }`} />
+                                            <span 
+                                              className={`h-2.5 w-2.5 rounded-full flex-shrink-0 ${
+                                                item.color === "amber" ? "bg-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.5)]" :
+                                                item.color === "blue" ? "bg-blue-400 shadow-[0_0_8px_rgba(59,130,246,0.5)]" :
+                                                item.color === "indigo" ? "bg-indigo-400 shadow-[0_0_8px_rgba(99,102,241,0.5)]" :
+                                                item.color === "emerald" ? "bg-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.5)]" :
+                                                item.color === "rose" ? "bg-rose-400 shadow-[0_0_8px_rgba(239,68,68,0.5)]" :
+                                                item.color === "purple" ? "bg-purple-400 shadow-[0_0_8px_rgba(168,85,247,0.5)]" :
+                                                item.color === "violet" ? "bg-violet-400 shadow-[0_0_8px_rgba(139,92,246,0.5)]" :
+                                                item.color === "pink" ? "bg-pink-400 shadow-[0_0_8px_rgba(236,72,153,0.5)]" :
+                                                item.color === "cyan" ? "bg-cyan-400 shadow-[0_0_8px_rgba(6,182,212,0.5)]" :
+                                                item.color.startsWith("#") ? "" : "bg-slate-500 shadow-[0_0_8px_rgba(100,116,139,0.5)]"
+                                              }`} 
+                                              style={item.color.startsWith("#") ? {
+                                                backgroundColor: item.color,
+                                                boxShadow: `0 0 8px ${item.color}`
+                                              } : undefined}
+                                            />
                                             <div className="flex flex-col">
                                               <span className="font-semibold text-slate-200">
                                                 {item.label} <span className="opacity-75 font-normal">({count})</span>
@@ -4686,27 +6080,118 @@ export default function App() {
                                           </div>
                                           {/* Mini pill name & selection status */}
                                           <div className="flex items-center gap-1.5">
-                                            <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wider ${
-                                              item.color === "amber" ? "bg-amber-500/10 text-amber-400" :
-                                              item.color === "blue" ? "bg-blue-500/10 text-blue-400" :
-                                              item.color === "indigo" ? "bg-indigo-500/10 text-indigo-400" :
-                                              item.color === "emerald" ? "bg-emerald-500/10 text-emerald-400" :
-                                              item.color === "rose" ? "bg-rose-500/10 text-rose-400" :
-                                              "bg-slate-500/10 text-slate-400"
-                                            }`}>
+                                            {item.isCustom && (
+                                              <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  handleDeleteCustomStatus(item.value);
+                                                }}
+                                                className="p-1 hover:bg-rose-500/20 text-slate-500 hover:text-rose-400 rounded-md transition-colors cursor-pointer mr-0.5"
+                                                title="Hapus status kustom ini"
+                                              >
+                                                <Trash2 className="h-3.5 w-3.5" />
+                                              </button>
+                                            )}
+                                            <span 
+                                              className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wider ${
+                                                item.color === "amber" ? "bg-amber-500/10 text-amber-400" :
+                                                item.color === "blue" ? "bg-blue-500/10 text-blue-400" :
+                                                item.color === "indigo" ? "bg-indigo-500/10 text-indigo-400" :
+                                                item.color === "emerald" ? "bg-emerald-500/10 text-emerald-400" :
+                                                item.color === "rose" ? "bg-rose-500/10 text-rose-400" :
+                                                item.color === "purple" ? "bg-purple-500/10 text-purple-400" :
+                                                item.color === "violet" ? "bg-violet-500/10 text-violet-400" :
+                                                item.color === "pink" ? "bg-pink-500/10 text-pink-400" :
+                                                item.color === "cyan" ? "bg-cyan-500/10 text-cyan-400" :
+                                                item.color.startsWith("#") ? "" : "bg-slate-500/10 text-slate-400"
+                                              }`}
+                                              style={item.color.startsWith("#") ? {
+                                                backgroundColor: `${item.color}15`,
+                                                color: item.color
+                                              } : undefined}
+                                            >
                                               {item.value || "All"}
                                             </span>
                                             {isSelected && <Check className="h-3.5 w-3.5 text-emerald-400 flex-shrink-0" />}
                                           </div>
+
+                                          {/* Beautiful custom-styled floating tooltip */}
+                                          <AnimatePresence>
+                                            {hoveredStatusItem === item.value && (
+                                              <motion.div
+                                                initial={{ opacity: 0, x: -6 }}
+                                                animate={{ opacity: 1, x: 0 }}
+                                                exit={{ opacity: 0, x: -6 }}
+                                                transition={{ duration: 0.15 }}
+                                                className="absolute left-full top-1/2 -translate-y-1/2 ml-3.5 z-[100] px-3 py-2 bg-slate-950 border border-indigo-500/30 rounded-lg text-[11px] text-slate-300 shadow-[0_10px_30px_rgba(0,0,0,0.8)] whitespace-nowrap pointer-events-none flex flex-col gap-0.5 backdrop-blur-xl border-l-4"
+                                                style={{
+                                                  borderLeftColor: 
+                                                    item.color === "amber" ? "#f59e0b" :
+                                                    item.color === "blue" ? "#3b82f6" :
+                                                    item.color === "indigo" ? "#6366f1" :
+                                                    item.color === "emerald" ? "#10b981" :
+                                                    item.color === "rose" ? "#ef4444" :
+                                                    item.color === "purple" ? "#a855f7" :
+                                                    item.color === "violet" ? "#8b5cf6" :
+                                                    item.color === "pink" ? "#ec4899" :
+                                                    item.color === "cyan" ? "#06b6d4" :
+                                                    item.color.startsWith("#") ? item.color : "#64748b"
+                                                }}
+                                              >
+                                                <div className="flex items-center gap-1.5 font-bold text-white">
+                                                  <span className="font-mono text-indigo-400 font-black">{count}</span>
+                                                  <span>RFQ</span>
+                                                </div>
+                                                <div className="text-[9.5px] text-slate-500 font-medium">
+                                                  {item.value === "" ? "Semua request terdaftar" : `Status: ${item.label}`}
+                                                </div>
+                                              </motion.div>
+                                            )}
+                                          </AnimatePresence>
                                         </button>
                                       );
                                     })}
                                   </div>
                                 </div>
                               )}
+                              </div>
                             </div>
+                            {/* Visually Distinct Color-Coded Legend */}
+                            <div className="flex flex-wrap gap-x-2.5 gap-y-1 items-center text-[10px] text-slate-400 bg-slate-900/30 border border-white/5 rounded-lg px-2 py-1 select-none backdrop-blur-sm shadow-inner mt-0.5">
+                              <div className="flex items-center gap-1.5">
+                                <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shadow-[0_0_4px_rgba(245,158,11,0.6)] animate-pulse" />
+                                <span className="font-semibold text-slate-300">Pending</span>
+                                <span className="text-slate-500 text-[8.5px]">(Menunggu)</span>
+                              </div>
+                              <span className="text-white/10 text-[8px]">•</span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="h-1.5 w-1.5 rounded-full bg-blue-400 shadow-[0_0_4px_rgba(59,130,246,0.6)] animate-pulse" />
+                                <span className="font-semibold text-slate-300">Processing</span>
+                                <span className="text-slate-500 text-[8.5px]">(Diproses)</span>
+                              </div>
+                              <span className="text-white/10 text-[8px]">•</span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 shadow-[0_0_4px_rgba(99,102,241,0.6)]" />
+                                <span className="font-semibold text-slate-300">Quoted</span>
+                                <span className="text-slate-500 text-[8.5px]">(Penawaran)</span>
+                              </div>
+                              <span className="text-white/10 text-[8px]">•</span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_4px_rgba(16,185,129,0.6)]" />
+                                <span className="font-semibold text-slate-300">Completed</span>
+                                <span className="text-slate-500 text-[8.5px]">(Selesai)</span>
+                              </div>
+                              <span className="text-white/10 text-[8px]">•</span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="h-1.5 w-1.5 rounded-full bg-rose-400 shadow-[0_0_4px_rgba(239,68,68,0.6)]" />
+                                <span className="font-semibold text-slate-300">Cancelled</span>
+                                <span className="text-slate-500 text-[8.5px]">(Batal)</span>
+                              </div>
+                            </div>
+                          </div>
 
-                            {/* Summary count displaying how many RFQs are visible in the table */}
+                          {/* Summary count displaying how many RFQs are visible in the table */}
                             <div className="flex items-center gap-1.5 text-[11px] font-mono px-2.5 py-1.5 bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 rounded-xl font-bold shrink-0">
                               <span>Visible:</span>
                               <motion.span
@@ -5126,6 +6611,21 @@ export default function App() {
                                         <div className="font-extrabold text-white text-xs flex items-center gap-1.5">
                                           {(() => {
                                             const stat = rfq.status || "pending";
+                                            const foundCustom = (settings.customRfqStatuses || []).find(cs => cs.value === stat);
+                                            if (foundCustom) {
+                                              const customCol = foundCustom.color || "#a855f7";
+                                              const isHex = customCol.startsWith("#");
+                                              return (
+                                                <span 
+                                                  className="h-1.5 w-1.5 rounded-full shrink-0 animate-pulse" 
+                                                  style={isHex ? {
+                                                    backgroundColor: customCol,
+                                                    boxShadow: `0 0 5px ${customCol}`
+                                                  } : undefined}
+                                                />
+                                              );
+                                            }
+
                                             const dotColors: Record<string, string> = {
                                               pending: "bg-amber-400 shadow-[0_0_5px_rgba(245,158,11,0.6)]",
                                               processing: "bg-blue-400 shadow-[0_0_5px_rgba(59,130,246,0.6)]",
@@ -5181,6 +6681,63 @@ export default function App() {
                                       <td className="p-4">
                                         {(() => {
                                           const status = rfq.status || "pending";
+                                          const foundCustom = (settings.customRfqStatuses || []).find(cs => cs.value === status);
+                                          
+                                          if (foundCustom) {
+                                            const customCol = foundCustom.color || "#a855f7";
+                                            const isHex = customCol.startsWith("#");
+                                            
+                                            // Determine colors based on preset or hexadecimal
+                                            let bg = "bg-purple-500/15";
+                                            let border = "border-purple-500/30";
+                                            let text = "text-purple-400";
+                                            let dot = "bg-purple-400";
+                                            
+                                            if (isHex) {
+                                              // Hexadecimal status tag - apply inline style below, fallback values here
+                                              bg = "";
+                                              border = "";
+                                              text = "";
+                                              dot = "";
+                                            } else {
+                                              // Color string matching presets
+                                              const mapping: Record<string, { bg: string; text: string; border: string; dot: string }> = {
+                                                purple: { bg: "bg-purple-500/15", text: "text-purple-400", border: "border-purple-500/30", dot: "bg-purple-400" },
+                                                violet: { bg: "bg-violet-500/15", text: "text-violet-400", border: "border-violet-500/30", dot: "bg-violet-400" },
+                                                pink: { bg: "bg-pink-500/15", text: "text-pink-400", border: "border-pink-500/30", dot: "bg-pink-400" },
+                                                cyan: { bg: "bg-cyan-500/15", text: "text-cyan-400", border: "border-cyan-500/30", dot: "bg-cyan-400" },
+                                                amber: { bg: "bg-amber-500/15", text: "text-amber-400", border: "border-amber-500/30", dot: "bg-amber-400" },
+                                                blue: { bg: "bg-blue-500/15", text: "text-blue-400", border: "border-blue-500/30", dot: "bg-blue-400" },
+                                                emerald: { bg: "bg-emerald-500/15", text: "text-emerald-400", border: "border-emerald-500/30", dot: "bg-emerald-400" }
+                                              };
+                                              const map = mapping[customCol] || mapping.purple;
+                                              bg = map.bg;
+                                              border = map.border;
+                                              text = map.text;
+                                              dot = map.dot;
+                                            }
+
+                                            return (
+                                              <span 
+                                                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border ${bg} ${border} ${text}`}
+                                                style={isHex ? {
+                                                  backgroundColor: `${customCol}15`,
+                                                  borderColor: `${customCol}30`,
+                                                  color: customCol
+                                                } : undefined}
+                                              >
+                                                <span 
+                                                  className={`h-1.5 w-1.5 rounded-full animate-pulse ${dot}`} 
+                                                  style={isHex ? {
+                                                    backgroundColor: customCol,
+                                                    boxShadow: `0 0 5px ${customCol}`
+                                                  } : undefined}
+                                                />
+                                                <span>{foundCustom.label}</span>
+                                              </span>
+                                            );
+                                          }
+
                                           const statusConfigs: Record<string, { bg: string; text: string; border: string; label: string; dot: string }> = {
                                             pending: {
                                               bg: "bg-amber-500/15",
@@ -6666,6 +8223,304 @@ export default function App() {
                           </tbody>
                         </table>
                       </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ================================== */}
+                {/* ADMIN T7: ONLINE STORE ORDERS      */}
+                {/* ================================== */}
+                {activeAdminSubTab === "orders" && (
+                  <div className="space-y-6 animate-fadeIn">
+                    {/* KPI Analytics */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                      {/* Card 1: Total Revenue (Paid) */}
+                      <div className="p-5 bg-gradient-to-br from-emerald-950/30 to-slate-900/40 border border-emerald-500/20 rounded-2xl flex items-center space-x-4">
+                        <div className="p-3 bg-emerald-500/10 rounded-xl border border-emerald-500/20 text-emerald-400">
+                          <Icons.DollarSign className="h-6 w-6" />
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400 font-medium">Total Omset Toko (Lunas)</p>
+                          <h4 className="text-xl font-extrabold text-white mt-1">
+                            Rp {orders.filter(o => o.paymentStatus === 'paid').reduce((sum, o) => sum + o.total, 0).toLocaleString("id-ID")}
+                          </h4>
+                        </div>
+                      </div>
+
+                      {/* Card 2: Pending Processing */}
+                      <div className="p-5 bg-slate-900/40 border border-white/10 rounded-2xl flex items-center space-x-4">
+                        <div className="p-3 bg-amber-500/10 rounded-xl border border-amber-500/20 text-amber-400">
+                          <Icons.Clock className="h-6 w-6" />
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400 font-medium">Order Pending/Proses</p>
+                          <h4 className="text-xl font-extrabold text-white mt-1">
+                            {orders.filter(o => o.status === 'pending' || o.status === 'processing').length} <span className="text-xs text-slate-500 font-normal">Pesanan</span>
+                          </h4>
+                        </div>
+                      </div>
+
+                      {/* Card 3: Unpaid Invoice Count */}
+                      <div className="p-5 bg-slate-900/40 border border-white/10 rounded-2xl flex items-center space-x-4">
+                        <div className="p-3 bg-rose-500/10 rounded-xl border border-rose-500/20 text-rose-400">
+                          <Icons.AlertTriangle className="h-6 w-6" />
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400 font-medium">Invoices Belum Bayar</p>
+                          <h4 className="text-xl font-extrabold text-white mt-1">
+                            {orders.filter(o => o.paymentStatus === 'unpaid').length} <span className="text-xs text-slate-500 font-normal">Belum Bayar</span>
+                          </h4>
+                        </div>
+                      </div>
+
+                      {/* Card 4: Total Successful Orders */}
+                      <div className="p-5 bg-slate-900/40 border border-white/10 rounded-2xl flex items-center space-x-4">
+                        <div className="p-3 bg-indigo-500/10 rounded-xl border border-indigo-500/20 text-indigo-400">
+                          <Icons.CheckCircle className="h-6 w-6" />
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400 font-medium">Total Sukses Selesai</p>
+                          <h4 className="text-xl font-extrabold text-white mt-1">
+                            {orders.filter(o => o.status === 'delivered').length} <span className="text-xs text-slate-500 font-normal">Selesai</span>
+                          </h4>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Filter and Search Bar */}
+                    <div className="bg-slate-900/40 border border-white/10 backdrop-blur-xl rounded-2xl p-4 flex flex-col md:flex-row gap-4 items-center justify-between">
+                      <div className="relative flex-1 w-full">
+                        <Icons.Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+                        <input
+                          type="text"
+                          placeholder="Cari pesanan berdasarkan nama pembeli, email, atau nomor invoice..."
+                          value={adminOrderSearch}
+                          onChange={(e) => setAdminOrderSearch(e.target.value)}
+                          className="w-full bg-slate-950 border border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+
+                      <div className="flex flex-wrap gap-3 items-center w-full md:w-auto">
+                        {/* Status Filter */}
+                        <div className="flex items-center gap-1.5 bg-slate-950 border border-white/10 rounded-xl px-2.5 py-1.5">
+                          <span className="text-[10px] font-bold uppercase text-slate-500">Status:</span>
+                          <select
+                            value={adminOrderStatusFilter}
+                            onChange={(e) => setAdminOrderStatusFilter(e.target.value)}
+                            className="bg-transparent text-xs text-slate-200 focus:outline-none cursor-pointer text-slate-300"
+                          >
+                            <option value="all">Semua Pengiriman</option>
+                            <option value="pending">Pending</option>
+                            <option value="processing">Diproses</option>
+                            <option value="shipped">Dikirim</option>
+                            <option value="delivered">Diterima</option>
+                            <option value="cancelled">Dibatalkan</option>
+                          </select>
+                        </div>
+
+                        {/* Payment Filter */}
+                        <div className="flex items-center gap-1.5 bg-slate-950 border border-white/10 rounded-xl px-2.5 py-1.5">
+                          <span className="text-[10px] font-bold uppercase text-slate-500">Bayar:</span>
+                          <select
+                            value={adminOrderPaymentFilter}
+                            onChange={(e) => setAdminOrderPaymentFilter(e.target.value)}
+                            className="bg-transparent text-xs text-slate-200 focus:outline-none cursor-pointer text-slate-300"
+                          >
+                            <option value="all">Semua Status</option>
+                            <option value="paid">Lunas</option>
+                            <option value="unpaid">Belum Bayar</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Orders Table List */}
+                    <div className="bg-slate-900/40 border border-white/10 backdrop-blur-xl rounded-2xl overflow-hidden shadow-xl">
+                      {(() => {
+                        const filtered = orders.filter(o => {
+                          const matchesSearch = o.clientName.toLowerCase().includes(adminOrderSearch.toLowerCase()) ||
+                            o.email.toLowerCase().includes(adminOrderSearch.toLowerCase()) ||
+                            o.orderNumber.toLowerCase().includes(adminOrderSearch.toLowerCase());
+                          const matchesStatus = adminOrderStatusFilter === "all" || o.status === adminOrderStatusFilter;
+                          const matchesPayment = adminOrderPaymentFilter === "all" || o.paymentStatus === adminOrderPaymentFilter;
+                          return matchesSearch && matchesStatus && matchesPayment;
+                        });
+
+                        if (filtered.length === 0) {
+                          return (
+                            <div className="text-center py-16 space-y-3">
+                              <Icons.Inbox className="mx-auto h-12 w-12 text-slate-600 animate-pulse" />
+                              <h4 className="text-sm font-bold text-slate-400">Tidak Ada Pesanan Ditemukan</h4>
+                              <p className="text-xs text-slate-500">Sesuaikan kriteria filter atau hubungi helpdesk jika terjadi kesalahan.</p>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-left border-collapse">
+                              <thead>
+                                <tr className="border-b border-white/10 bg-slate-950/40 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                                  <th className="py-4 px-5">Nomor Order / Tanggal</th>
+                                  <th className="py-4 px-5">Data Pelanggan</th>
+                                  <th className="py-4 px-5">Rincian Item</th>
+                                  <th className="py-4 px-5">Total Pembayaran</th>
+                                  <th className="py-4 px-5">Status Bayar & Kirim</th>
+                                  <th className="py-4 px-5 text-right">Aksi</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-white/5 text-xs text-slate-300">
+                                {filtered.map(order => (
+                                  <tr key={order.id} className="hover:bg-white/2 transition-colors">
+                                    {/* Order number */}
+                                    <td className="py-4 px-5 space-y-1">
+                                      <span className="font-extrabold text-white text-[12px] font-mono tracking-wide">{order.orderNumber}</span>
+                                      <div className="text-[10px] text-slate-400 flex items-center gap-1">
+                                        <Icons.Calendar className="h-3.5 w-3.5 text-slate-500" />
+                                        <span>{order.date}</span>
+                                      </div>
+                                    </td>
+
+                                    {/* Client */}
+                                    <td className="py-4 px-5 space-y-1">
+                                      <p className="font-bold text-white text-[12px]">{order.clientName}</p>
+                                      {order.companyName && (
+                                        <div className="text-[10px] text-slate-400 font-medium">Perusahaan: {order.companyName}</div>
+                                      )}
+                                      <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1.5">
+                                        <Icons.Mail className="h-3 w-3 text-slate-500" />
+                                        <span>{order.email}</span>
+                                      </div>
+                                      <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1.5">
+                                        <Icons.Phone className="h-3 w-3 text-emerald-500" />
+                                        <span>{order.whatsapp}</span>
+                                      </div>
+                                    </td>
+
+                                    {/* Items summary */}
+                                    <td className="py-4 px-5 space-y-1.5 max-w-xs">
+                                      {order.items.map((it: any, idx: number) => (
+                                        <div key={idx} className="flex justify-between text-[11px] bg-slate-950/30 p-1.5 rounded-lg border border-white/5">
+                                          <span className="line-clamp-1 font-medium text-slate-300">{it.name}</span>
+                                          <span className="font-bold text-indigo-400 ml-2">x{it.quantity}</span>
+                                        </div>
+                                      ))}
+                                      <div className="text-[10px] text-slate-400 italic">
+                                        Metode: {getDeliveryLabel(order.deliveryMethod)} / {getPaymentLabel(order.paymentMethod)}
+                                      </div>
+                                    </td>
+
+                                    {/* Total cost */}
+                                    <td className="py-4 px-5">
+                                      <div className="font-mono font-extrabold text-white text-sm">
+                                        Rp {order.total.toLocaleString("id-ID")}
+                                      </div>
+                                      <div className="text-[9px] text-slate-500">
+                                        Subtotal: Rp {order.subtotal.toLocaleString("id-ID")}
+                                      </div>
+                                    </td>
+
+                                    {/* Status modifiers */}
+                                    <td className="py-4 px-5 space-y-3">
+                                      {/* Payment status badge */}
+                                      <div className="flex items-center gap-2">
+                                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wide border ${
+                                          order.paymentStatus === 'paid'
+                                            ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                                            : "bg-amber-500/10 border-amber-500/30 text-amber-400"
+                                        }`}>
+                                          {order.paymentStatus === 'paid' ? "Lunas" : "Belum Bayar"}
+                                        </span>
+
+                                        <button
+                                          onClick={async () => {
+                                            const nextStatus = order.paymentStatus === 'paid' ? 'unpaid' : 'paid';
+                                            try {
+                                              const res = await fetch(`/api/orders?id=${order.id}`, {
+                                                method: "PUT",
+                                                headers: { "Content-Type": "application/json" },
+                                                body: JSON.stringify({ paymentStatus: nextStatus })
+                                              });
+                                              if (res.ok) {
+                                                showToast(`Status pembayaran order ${order.orderNumber} diubah ke ${nextStatus === 'paid' ? 'LUNAS' : 'BELUM BAYAR'}`, "success");
+                                                fetchOrders();
+                                              } else {
+                                                showToast("Gagal mengubah status pembayaran", "error");
+                                              }
+                                            } catch (err) {
+                                              console.error("Error setting payment:", err);
+                                              showToast("Kesalahan koneksi", "error");
+                                            }
+                                          }}
+                                          className="text-[10px] text-slate-400 hover:text-indigo-400 underline cursor-pointer"
+                                        >
+                                          Ubah Status
+                                        </button>
+                                      </div>
+
+                                      {/* Delivery status modifier dropdown */}
+                                      <div className="flex items-center gap-2">
+                                        <select
+                                          value={order.status}
+                                          onChange={async (e) => {
+                                            const nextDelivStatus = e.target.value;
+                                            try {
+                                              const res = await fetch(`/api/orders?id=${order.id}`, {
+                                                method: "PUT",
+                                                headers: { "Content-Type": "application/json" },
+                                                body: JSON.stringify({ status: nextDelivStatus })
+                                              });
+                                              if (res.ok) {
+                                                showToast(`Status pengiriman order ${order.orderNumber} diubah ke ${nextDelivStatus.toUpperCase()}`, "success");
+                                                fetchOrders();
+                                              } else {
+                                                showToast("Gagal mengubah status pengiriman", "error");
+                                              }
+                                            } catch (err) {
+                                              console.error("Error setting status:", err);
+                                              showToast("Kesalahan koneksi", "error");
+                                            }
+                                          }}
+                                          className="bg-slate-950 border border-white/15 text-[10px] text-slate-200 px-1.5 py-0.5 rounded cursor-pointer focus:outline-none focus:border-indigo-500"
+                                        >
+                                          <option value="pending">KIRIM: Pending</option>
+                                          <option value="processing">KIRIM: Diproses</option>
+                                          <option value="shipped">KIRIM: Dikirim</option>
+                                          <option value="delivered">KIRIM: Diterima</option>
+                                          <option value="cancelled">KIRIM: Dibatalkan</option>
+                                        </select>
+                                      </div>
+                                    </td>
+
+                                    {/* Action buttons */}
+                                    <td className="py-4 px-5 text-right whitespace-nowrap space-x-1.5">
+                                      <button
+                                        onClick={() => downloadOrderInvoicePdf(order)}
+                                        className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/5 text-[10px] font-bold uppercase rounded-lg transition-all cursor-pointer"
+                                        title="Unduh Invoice PDF"
+                                      >
+                                        <Icons.Download className="h-3.5 w-3.5" />
+                                        <span>Invoice</span>
+                                      </button>
+
+                                      <a
+                                        href={`https://wa.me/${order.whatsapp.replace(/[^0-9]/g, "")}`}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-500/20 text-[10px] font-bold uppercase rounded-lg transition-all cursor-pointer"
+                                        title="Hubungi Pelanggan via WhatsApp"
+                                      >
+                                        <Icons.PhoneCall className="h-3.5 w-3.5" />
+                                        <span>WhatsApp</span>
+                                      </a>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 )}
@@ -10118,6 +11973,162 @@ export default function App() {
           </div>
           <div className="mt-4 text-center">
             <p className="text-xs text-slate-400 font-medium">Klik di mana saja untuk menutup</p>
+          </div>
+        </div>
+      )}
+
+      {/* 10. ORDER SUCCESS MODAL OVERLAY */}
+      {isOrderSuccessOpen && latestPlacedOrder && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md">
+          <div className="w-full max-w-2xl bg-slate-900 border border-white/10 rounded-2xl overflow-hidden shadow-2xl relative">
+            <div className="absolute top-0 right-0 -mt-8 -mr-8 w-48 h-48 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none" />
+            
+            <div className="p-6 border-b border-white/5 flex items-center justify-between bg-slate-950/30">
+              <div className="flex items-center space-x-2.5">
+                <div className="p-2 bg-emerald-500/15 border border-emerald-500/20 rounded-xl">
+                  <Icons.CheckCircle2 className="h-5 w-5 text-emerald-400" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-white text-sm tracking-wide">PESANAN BERHASIL DIAJUKAN</h3>
+                  <p className="text-[10px] text-slate-400 font-mono uppercase">{latestPlacedOrder.orderNumber}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsOrderSuccessOpen(false)}
+                className="p-1.5 hover:bg-white/5 text-slate-400 hover:text-white rounded-lg transition-colors cursor-pointer"
+              >
+                <Icons.X className="h-4.5 w-4.5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
+              {/* Celeb info */}
+              <div className="text-center space-y-2">
+                <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-400 mb-2">
+                  <Icons.Check className="h-6 w-6" />
+                </div>
+                <h4 className="text-base font-bold text-white">Terima Kasih, {latestPlacedOrder.clientName}!</h4>
+                <p className="text-xs text-slate-300 max-w-md mx-auto leading-relaxed">
+                  Pesanan Anda telah kami terima dan saat ini sedang kami siapkan. Rincian invoice dan instruksi pembayaran telah dikirim ke email <strong>{latestPlacedOrder.email}</strong>.
+                </p>
+              </div>
+
+              {/* Bank Account Details */}
+              {latestPlacedOrder.paymentMethod === "bank_transfer" && (
+                <div className="bg-slate-950/80 border border-white/10 rounded-xl p-4 space-y-3 relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-xl pointer-events-none" />
+                  
+                  <div className="flex items-center gap-2 text-xs font-bold text-indigo-400 uppercase tracking-wide">
+                    <Icons.CreditCard className="h-4 w-4" />
+                    <span>Rekening Pembayaran PT Berkah Bintang Solusindo</span>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs pt-1">
+                    <div>
+                      <div className="text-slate-500">Bank Penerima</div>
+                      <div className="font-bold text-white text-sm">{settings?.bankAccount?.bankName || "Bank Mandiri"}</div>
+                    </div>
+                    <div>
+                      <div className="text-slate-500">Nomor Rekening Resmi</div>
+                      <div className="font-extrabold text-white text-sm tracking-wider font-mono flex items-center gap-2">
+                        <span>{settings?.bankAccount?.accountNumber || "123-45-67890-1"}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(settings?.bankAccount?.accountNumber || "123-45-67890-1");
+                            showToast("No rekening disalin!", "success");
+                          }}
+                          className="text-[10px] text-slate-400 hover:text-indigo-400 underline cursor-pointer"
+                        >
+                          Salin
+                        </button>
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-slate-500">Nama Pemilik Rekening</div>
+                      <div className="font-bold text-white text-sm uppercase">{settings?.bankAccount?.accountHolder || "PT Berkah Bintang Solusindo"}</div>
+                    </div>
+                    <div>
+                      <div className="text-slate-500">Total Nominal Transfer</div>
+                      <div className="font-extrabold text-emerald-400 text-sm">
+                        Rp {latestPlacedOrder.total.toLocaleString("id-ID")}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-white/5 text-[10px] text-slate-400 leading-relaxed">
+                    *Harap transfer sesuai dengan nominal di atas. Setelah melakukan pembayaran, silakan hubungi kami via WhatsApp di <strong>{settings?.whatsapp || "+6281234567890"}</strong> dengan melampirkan bukti transfer dan nomor invoice Anda.
+                  </div>
+                </div>
+              )}
+
+              {/* Order summary table */}
+              <div className="border border-white/5 rounded-xl overflow-hidden text-xs">
+                <div className="bg-slate-950/60 p-3 font-bold text-slate-200 border-b border-white/5 flex items-center justify-between">
+                  <span>Rincian Item Pembelian</span>
+                  <span className="font-mono text-[10px]">{latestPlacedOrder.date}</span>
+                </div>
+                <div className="divide-y divide-white/5 bg-slate-950/20">
+                  {latestPlacedOrder.items.map((it: any, idx: number) => (
+                    <div key={idx} className="p-3 flex justify-between items-center">
+                      <div>
+                        <div className="font-bold text-white">{it.name}</div>
+                        <div className="text-[11px] text-slate-400">
+                          {it.quantity} Unit x Rp {it.price.toLocaleString("id-ID")}
+                        </div>
+                      </div>
+                      <div className="font-bold text-white">
+                        Rp {it.totalPrice.toLocaleString("id-ID")}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="bg-slate-950/40 p-4 space-y-1.5 text-slate-400 border-t border-white/5">
+                  <div className="flex justify-between">
+                    <span>Subtotal</span>
+                    <span>Rp {latestPlacedOrder.subtotal.toLocaleString("id-ID")}</span>
+                  </div>
+                  {latestPlacedOrder.discount > 0 && (
+                    <div className="flex justify-between text-emerald-400">
+                      <span>Diskon Kupon</span>
+                      <span>- Rp {latestPlacedOrder.discount.toLocaleString("id-ID")}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span>PPN (11%)</span>
+                    <span>Rp {latestPlacedOrder.tax.toLocaleString("id-ID")}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Ongkos Kirim ({getDeliveryLabel(latestPlacedOrder.deliveryMethod)})</span>
+                    <span>{latestPlacedOrder.shippingCost > 0 ? `Rp ${latestPlacedOrder.shippingCost.toLocaleString("id-ID")}` : "GRATIS"}</span>
+                  </div>
+                  <div className="flex justify-between text-sm font-extrabold text-white pt-2 border-t border-white/5">
+                    <span>Total Pembayaran</span>
+                    <span className="text-indigo-400">Rp {latestPlacedOrder.total.toLocaleString("id-ID")}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 bg-slate-950/30 border-t border-white/5 flex flex-col sm:flex-row gap-3 items-center justify-end">
+              <button
+                type="button"
+                onClick={() => downloadOrderInvoicePdf(latestPlacedOrder)}
+                className="w-full sm:w-auto px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 font-bold text-xs uppercase tracking-wider rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Icons.Download className="h-4 w-4" />
+                <span>Unduh Invoice PDF</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsOrderSuccessOpen(false)}
+                className="w-full sm:w-auto px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-indigo-600/20 transition-all flex items-center justify-center cursor-pointer"
+              >
+                <span>Selesai & Tutup</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
