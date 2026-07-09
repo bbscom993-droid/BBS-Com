@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Html5Qrcode } from "html5-qrcode";
-import { Camera, Scan, X, RotateCw, CheckCircle, AlertCircle, ShoppingCart, Info, History, Trash2, Search, Filter } from "lucide-react";
+import { Camera, Scan, X, RotateCw, CheckCircle, AlertCircle, ShoppingCart, Info, History, Trash2, Search, Filter, Zap, ZapOff } from "lucide-react";
 import { ProductItem } from "../types";
 
 interface BarcodeScannerProps {
@@ -9,6 +9,8 @@ interface BarcodeScannerProps {
   onClose: () => void;
   onAddCustomItem?: (item: { name: string; quantity: number; description?: string }) => void;
   isCatalogScanBtn?: boolean;
+  onActiveChange?: (active: boolean) => void;
+  preferredFacingMode?: "user" | "environment";
 }
 
 interface RecentScanItem {
@@ -38,31 +40,40 @@ const playBeepSound = (isCatalogScanBtn?: boolean) => {
       console.warn("Could not retrieve volume from localStorage", e);
     }
 
-    if (isCatalogScanBtn) {
-      // Crisp, high-frequency 'beep' sound effect (exclusively for #scan_barcode_from_catalog_btn)
-      oscillator.type = "sine";
-      oscillator.frequency.setValueAtTime(2500, audioCtx.currentTime); // Crisp 2500Hz high pitch
-      
-      const targetGain = 0.22 * volumeLevel;
-      gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
-      gainNode.gain.linearRampToValueAtTime(targetGain, audioCtx.currentTime + 0.004); // Instantaneous attack
-      gainNode.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.065); // Snappy decay
-      
-      oscillator.start(audioCtx.currentTime);
-      oscillator.stop(audioCtx.currentTime + 0.07);
-    } else {
-      // Standard pleasant system scan beep
-      oscillator.type = "sine";
-      oscillator.frequency.setValueAtTime(880, audioCtx.currentTime); // 880Hz (A5)
-      
-      const targetGain = 0.15 * volumeLevel;
-      gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
-      gainNode.gain.linearRampToValueAtTime(targetGain, audioCtx.currentTime + 0.01); // fast fade-in
-      gainNode.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.12); // smooth decay
+    if (volumeLevel <= 0) return;
 
-      oscillator.start(audioCtx.currentTime);
-      oscillator.stop(audioCtx.currentTime + 0.12);
+    // Load customized frequency, tone, and duration from localStorage with brand-aligned defaults
+    let frequency = isCatalogScanBtn ? 2200 : 1200; // BBS Brand: sharp digital tone
+    let toneType: OscillatorType = "sine";
+    let duration = isCatalogScanBtn ? 0.06 : 0.09;
+
+    try {
+      const storedFreq = localStorage.getItem("bbs_scanner_frequency");
+      if (storedFreq !== null) {
+        frequency = parseFloat(storedFreq);
+      }
+      const storedTone = localStorage.getItem("bbs_scanner_tone");
+      if (storedTone !== null) {
+        toneType = storedTone as OscillatorType;
+      }
+      const storedDuration = localStorage.getItem("bbs_scanner_duration");
+      if (storedDuration !== null) {
+        duration = parseFloat(storedDuration);
+      }
+    } catch (e) {
+      console.warn("Could not retrieve custom beep settings", e);
     }
+
+    oscillator.type = toneType;
+    oscillator.frequency.setValueAtTime(frequency, audioCtx.currentTime);
+    
+    const targetGain = (isCatalogScanBtn ? 0.22 : 0.15) * volumeLevel;
+    gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+    gainNode.gain.linearRampToValueAtTime(targetGain, audioCtx.currentTime + 0.005);
+    gainNode.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+
+    oscillator.start(audioCtx.currentTime);
+    oscillator.stop(audioCtx.currentTime + duration + 0.02);
   } catch (e) {
     console.warn("Failed to play scan beep sound:", e);
   }
@@ -73,10 +84,18 @@ export default function BarcodeScanner({
   onScanSuccess, 
   onClose, 
   onAddCustomItem,
-  isCatalogScanBtn = false
+  isCatalogScanBtn = false,
+  onActiveChange,
+  preferredFacingMode = "environment"
 }: BarcodeScannerProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const [scannerActive, setScannerActive] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (onActiveChange) {
+      onActiveChange(scannerActive);
+    }
+  }, [scannerActive, onActiveChange]);
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string>("");
   const [scanError, setScanError] = useState<string>("");
@@ -313,6 +332,27 @@ export default function BarcodeScanner({
   const qrCodeInstanceRef = useRef<Html5Qrcode | null>(null);
   const containerId = "html5-qr-reader";
 
+  const [torchSupported, setTorchSupported] = useState<boolean>(false);
+  const [isTorchOn, setIsTorchOn] = useState<boolean>(false);
+
+  // Toggle torch/flashlight
+  const toggleTorch = async () => {
+    if (simulateMode) {
+      setIsTorchOn((prev) => !prev);
+      return;
+    }
+    if (!qrCodeInstanceRef.current || !torchSupported) return;
+    try {
+      const nextTorchState = !isTorchOn;
+      await qrCodeInstanceRef.current.applyVideoConstraints({
+        advanced: [{ torch: nextTorchState } as any]
+      });
+      setIsTorchOn(nextTorchState);
+    } catch (err) {
+      console.error("Failed to toggle torch/flashlight:", err);
+    }
+  };
+
   // Get list of cameras when mounted
   useEffect(() => {
     // Check if mediaDevices are supported
@@ -321,7 +361,21 @@ export default function BarcodeScanner({
         .then((devices) => {
           if (devices && devices.length > 0) {
             setCameras(devices);
-            setSelectedCameraId(devices[0].id);
+            
+            // Match preferredFacingMode
+            let initialCamera = devices[0];
+            const matches = devices.filter(d => {
+              const label = d.label.toLowerCase();
+              if (preferredFacingMode === "user") {
+                return label.includes("front") || label.includes("depan") || label.includes("user");
+              } else {
+                return label.includes("back") || label.includes("belakang") || label.includes("rear") || label.includes("environment");
+              }
+            });
+            if (matches.length > 0) {
+              initialCamera = matches[0];
+            }
+            setSelectedCameraId(initialCamera.id);
           } else {
             setScanError("Kamera tidak ditemukan. Harap pastikan kamera terhubung.");
             setSimulateMode(true); // Default to simulation if no camera available
@@ -344,6 +398,23 @@ export default function BarcodeScanner({
       }
     };
   }, []);
+
+  // Update selected camera whenever preferredFacingMode changes
+  useEffect(() => {
+    if (cameras.length > 0) {
+      const matches = cameras.filter(d => {
+        const label = d.label.toLowerCase();
+        if (preferredFacingMode === "user") {
+          return label.includes("front") || label.includes("depan") || label.includes("user");
+        } else {
+          return label.includes("back") || label.includes("belakang") || label.includes("rear") || label.includes("environment");
+        }
+      });
+      if (matches.length > 0 && matches[0].id !== selectedCameraId) {
+        setSelectedCameraId(matches[0].id);
+      }
+    }
+  }, [preferredFacingMode, cameras]);
 
   // Autofocus the modal on mount for accessibility
   useEffect(() => {
@@ -373,7 +444,17 @@ export default function BarcodeScanner({
 
       setScannerActive(true);
 
-      const targetCamera = selectedCameraId ? { deviceId: { exact: selectedCameraId } } : { facingMode: "environment" };
+      const targetCamera = selectedCameraId 
+        ? { 
+            deviceId: { exact: selectedCameraId },
+            width: { min: 1280, ideal: 1920 },
+            height: { min: 720, ideal: 1080 }
+          } 
+        : { 
+            facingMode: "environment",
+            width: { min: 1280, ideal: 1920 },
+            height: { min: 720, ideal: 1080 }
+          };
 
       await html5QrCode.start(
         targetCamera,
@@ -385,6 +466,19 @@ export default function BarcodeScanner({
           // Verbose error logging can be noisy during scanning, ignore standard frame-parse errors
         }
       );
+
+      // Check for torch/flashlight capability
+      try {
+        const capabilities = html5QrCode.getRunningTrackCapabilities();
+        if (capabilities && (capabilities as any).torch) {
+          setTorchSupported(true);
+        } else {
+          setTorchSupported(false);
+        }
+      } catch (trackErr) {
+        console.warn("Could not query camera track capabilities:", trackErr);
+        setTorchSupported(false);
+      }
     } catch (err: any) {
       console.error("Failed to start scanner:", err);
       setScannerActive(false);
@@ -394,6 +488,8 @@ export default function BarcodeScanner({
 
   // Handle stop scanning
   const stopScanner = async () => {
+    setIsTorchOn(false);
+    setTorchSupported(false);
     if (qrCodeInstanceRef.current) {
       try {
         if (qrCodeInstanceRef.current.isScanning) {
@@ -407,16 +503,28 @@ export default function BarcodeScanner({
     setScannerActive(false);
   };
 
-  // Automatically start the scanner once the component is mounted, camera is ready,
+  // Automatically start or switch the scanner once the camera is ready,
   // and we are not in simulateMode (removing the need for a manual click).
   useEffect(() => {
     let isCurrent = true;
     if (selectedCameraId && !simulateMode) {
+      const initOrRestartScanner = async () => {
+        if (qrCodeInstanceRef.current && qrCodeInstanceRef.current.isScanning) {
+          try {
+            await qrCodeInstanceRef.current.stop();
+          } catch (e) {
+            console.error("Error stopping scanner on camera switch", e);
+          }
+          setScannerActive(false);
+        }
+        if (isCurrent && !lastScanned && !categoryMismatchError && !unmatchedCode) {
+          await startScanner();
+        }
+      };
+
       // Set a tiny timeout to ensure the DOM element #html5-qr-reader has fully mounted and is ready
       const autoStartTimer = setTimeout(() => {
-        if (isCurrent && !scannerActive && !lastScanned && !categoryMismatchError && !unmatchedCode) {
-          startScanner();
-        }
+        initOrRestartScanner();
       }, 350);
 
       return () => {
@@ -815,6 +923,31 @@ export default function BarcodeScanner({
                   }`}>
                     <div id={containerId} className="absolute inset-0 w-full h-full object-cover [&>video]:object-cover [&>video]:w-full [&>video]:h-full" />
 
+                    {/* Flashlight/Torch Toggle Button */}
+                    {scannerActive && (torchSupported || simulateMode) && (
+                      <button
+                        type="button"
+                        onClick={toggleTorch}
+                        className={`absolute top-3 right-3 p-2.5 rounded-xl border backdrop-blur-md transition-all duration-300 z-20 cursor-pointer shadow-lg flex items-center justify-center ${
+                          isTorchOn 
+                            ? "bg-amber-500/20 border-amber-500/50 text-amber-400 shadow-amber-500/15 scale-105" 
+                            : "bg-slate-950/60 border-white/10 text-slate-400 hover:text-white hover:bg-slate-900/80"
+                        }`}
+                        title={isTorchOn ? "Matikan Flashlight" : "Aktifkan Flashlight"}
+                      >
+                        {isTorchOn ? (
+                          <Zap className="h-4 w-4 animate-pulse" />
+                        ) : (
+                          <ZapOff className="h-4 w-4" />
+                        )}
+                      </button>
+                    )}
+
+                    {/* Flashlight beam overlay simulation */}
+                    {isTorchOn && (
+                      <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_75%_25%,rgba(251,191,36,0.15),transparent_60%)] z-10 animate-pulse" />
+                    )}
+
                     {/* Glowing Perimeter Scan Border Overlay */}
                     {scannerActive && (
                       <div className="absolute inset-0 border-2 border-indigo-500/40 rounded-xl pointer-events-none z-10 animate-pulse" />
@@ -822,17 +955,22 @@ export default function BarcodeScanner({
 
                     {/* Scanning Target Frame & Brackets overlay */}
                     {scannerActive && (
-                      <div className="absolute inset-0 pointer-events-none flex items-center justify-center z-10">
-                        {/* Target Frame Area */}
-                        <div className="w-40 h-40 border border-indigo-500/30 rounded-2xl relative flex items-center justify-center shadow-[0_0_15px_rgba(99,102,241,0.2)]">
+                      <div className="absolute inset-0 pointer-events-none flex items-center justify-center z-10 overflow-hidden">
+                        {/* Target Frame Area with giant box-shadow mask to dim the outer region */}
+                        <div className="w-56 h-36 border border-indigo-500/40 rounded-2xl relative flex flex-col items-center justify-center shadow-[0_0_0_9999px_rgba(2,6,23,0.65)] shadow-indigo-500/10">
                           {/* Corner brackets with neon drop-shadow */}
-                          <div className="absolute -top-1 -left-1 w-5 h-5 border-t-4 border-l-4 border-indigo-400 rounded-tl-xl shadow-[0_0_10px_rgba(129,140,248,0.9)]" />
-                          <div className="absolute -top-1 -right-1 w-5 h-5 border-t-4 border-r-4 border-indigo-400 rounded-tr-xl shadow-[0_0_10px_rgba(129,140,248,0.9)]" />
-                          <div className="absolute -bottom-1 -left-1 w-5 h-5 border-b-4 border-l-4 border-indigo-400 rounded-bl-xl shadow-[0_0_10px_rgba(129,140,248,0.9)]" />
-                          <div className="absolute -bottom-1 -right-1 w-5 h-5 border-b-4 border-r-4 border-indigo-400 rounded-br-xl shadow-[0_0_10px_rgba(129,140,248,0.9)]" />
+                          <div className="absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 border-indigo-400 rounded-tl-xl shadow-[0_0_12px_rgba(129,140,248,0.9)]" />
+                          <div className="absolute -top-1 -right-1 w-6 h-6 border-t-4 border-r-4 border-indigo-400 rounded-tr-xl shadow-[0_0_12px_rgba(129,140,248,0.9)]" />
+                          <div className="absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 border-indigo-400 rounded-bl-xl shadow-[0_0_12px_rgba(129,140,248,0.9)]" />
+                          <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 border-indigo-400 rounded-br-xl shadow-[0_0_12px_rgba(129,140,248,0.9)]" />
                           
                           {/* Subtle pulsating center target dot */}
-                          <div className="w-2 h-2 bg-indigo-400 rounded-full shadow-[0_0_10px_rgba(129,140,248,0.9)] animate-ping" />
+                          <div className="w-2.5 h-2.5 bg-indigo-400 rounded-full shadow-[0_0_12px_rgba(129,140,248,0.9)] animate-pulse" />
+                          
+                          {/* Subtle text inside/below the frame helper overlay */}
+                          <span className="absolute bottom-2 text-[9px] uppercase tracking-widest text-indigo-300 font-extrabold bg-slate-950/80 px-2 py-0.5 rounded-md border border-white/5">
+                            Posisikan Barcode
+                          </span>
                         </div>
                       </div>
                     )}
@@ -923,6 +1061,29 @@ export default function BarcodeScanner({
                     
                     {/* Glowing Perimeter Scan Border Overlay */}
                     <div className="absolute inset-0 border-2 border-indigo-500/40 rounded-xl pointer-events-none z-10 animate-pulse" />
+
+                    {/* Flashlight/Torch Toggle Button for Simulator */}
+                    <button
+                      type="button"
+                      onClick={toggleTorch}
+                      className={`absolute top-3 right-3 p-2.5 rounded-xl border backdrop-blur-md transition-all duration-300 z-20 cursor-pointer shadow-lg flex items-center justify-center ${
+                        isTorchOn 
+                          ? "bg-amber-500/20 border-amber-500/50 text-amber-400 shadow-amber-500/15 scale-105" 
+                          : "bg-slate-950/60 border-white/10 text-slate-400 hover:text-white hover:bg-slate-900/80"
+                      }`}
+                      title={isTorchOn ? "Matikan Flashlight (Simulasi)" : "Aktifkan Flashlight (Simulasi)"}
+                    >
+                      {isTorchOn ? (
+                        <Zap className="h-4 w-4 animate-pulse" />
+                      ) : (
+                        <ZapOff className="h-4 w-4" />
+                      )}
+                    </button>
+
+                    {/* Flashlight beam overlay simulation for Simulator */}
+                    {isTorchOn && (
+                      <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_75%_25%,rgba(251,191,36,0.15),transparent_60%)] z-10 animate-pulse" />
+                    )}
 
                     {/* Simulator target frames */}
                     <div className="absolute inset-0 pointer-events-none flex items-center justify-center z-10">

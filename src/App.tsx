@@ -72,7 +72,7 @@ function getBarcodeValue(productId: string) {
 }
 
 // Crisp high-quality mechanical click sound synthesizer
-export function playClickSound() {
+export function playClickSound(profileOverride?: string) {
   try {
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
     if (!AudioContextClass) return;
@@ -91,39 +91,135 @@ export function playClickSound() {
 
     const startTime = audioCtx.currentTime;
 
-    // Component 1: High-pitched metallic "tick" (switch leaf contact)
-    const osc1 = audioCtx.createOscillator();
-    const gain1 = audioCtx.createGain();
-    osc1.connect(gain1);
-    gain1.connect(audioCtx.destination);
-    
-    osc1.type = "triangle";
-    osc1.frequency.setValueAtTime(3200, startTime);
-    osc1.frequency.exponentialRampToValueAtTime(1600, startTime + 0.012);
-    
-    gain1.gain.setValueAtTime(0, startTime);
-    gain1.gain.linearRampToValueAtTime(0.12 * volumeLevel, startTime + 0.002);
-    gain1.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.015);
-    
-    osc1.start(startTime);
-    osc1.stop(startTime + 0.018);
+    // Read selected click sound profile (default is 'discrete_click')
+    let profile = profileOverride || "discrete_click";
+    if (!profileOverride) {
+      try {
+        const storedProfile = localStorage.getItem("bbs_click_profile");
+        if (storedProfile !== null) {
+          profile = storedProfile;
+        }
+      } catch (e) {}
+    }
 
-    // Component 2: Low-pitched plastic housing "thud/depress" (button bottoming out)
-    const osc2 = audioCtx.createOscillator();
-    const gain2 = audioCtx.createGain();
-    osc2.connect(gain2);
-    gain2.connect(audioCtx.destination);
-    
-    osc2.type = "sine";
-    osc2.frequency.setValueAtTime(180, startTime);
-    osc2.frequency.exponentialRampToValueAtTime(80, startTime + 0.035);
-    
-    gain2.gain.setValueAtTime(0, startTime);
-    gain2.gain.linearRampToValueAtTime(0.08 * volumeLevel, startTime + 0.003);
-    gain2.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.045);
-    
-    osc2.start(startTime);
-    osc2.stop(startTime + 0.05);
+    if (profile === "discrete_click") {
+      // Component 1: High-pitched metallic "tick" (switch leaf contact)
+      const osc1 = audioCtx.createOscillator();
+      const gain1 = audioCtx.createGain();
+      osc1.connect(gain1);
+      gain1.connect(audioCtx.destination);
+      
+      osc1.type = "triangle";
+      osc1.frequency.setValueAtTime(3200, startTime);
+      osc1.frequency.exponentialRampToValueAtTime(1600, startTime + 0.012);
+      
+      gain1.gain.setValueAtTime(0, startTime);
+      gain1.gain.linearRampToValueAtTime(0.12 * volumeLevel, startTime + 0.002);
+      gain1.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.015);
+      
+      osc1.start(startTime);
+      osc1.stop(startTime + 0.018);
+
+      // Component 2: Low-pitched plastic housing "thud/depress" (button bottoming out)
+      const osc2 = audioCtx.createOscillator();
+      const gain2 = audioCtx.createGain();
+      osc2.connect(gain2);
+      gain2.connect(audioCtx.destination);
+      
+      osc2.type = "sine";
+      osc2.frequency.setValueAtTime(180, startTime);
+      osc2.frequency.exponentialRampToValueAtTime(80, startTime + 0.035);
+      
+      gain2.gain.setValueAtTime(0, startTime);
+      gain2.gain.linearRampToValueAtTime(0.08 * volumeLevel, startTime + 0.003);
+      gain2.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.045);
+      
+      osc2.start(startTime);
+      osc2.stop(startTime + 0.05);
+    } else if (profile === "modern_tech") {
+      // Modern Tech: Sharp, crisp dual high-frequency tech pulse
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(2200, startTime);
+      osc.frequency.setValueAtTime(2600, startTime + 0.015);
+      
+      gain.gain.setValueAtTime(0, startTime);
+      gain.gain.linearRampToValueAtTime(0.18 * volumeLevel, startTime + 0.002);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.045);
+      
+      osc.start(startTime);
+      osc.stop(startTime + 0.05);
+    } else if (profile === "classic_scanner") {
+      // Classic Scanner: Standard high pitched supermarket scanner beep (1000Hz)
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(1000, startTime);
+      
+      gain.gain.setValueAtTime(0, startTime);
+      gain.gain.linearRampToValueAtTime(0.15 * volumeLevel, startTime + 0.004);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.09);
+      
+      osc.start(startTime);
+      osc.stop(startTime + 0.1);
+    } else if (profile === "melodic_accent") {
+      // Melodic Accent: High-end chord rise (E5 to A5)
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(659.25, startTime);
+      osc.frequency.setValueAtTime(880, startTime + 0.025);
+      
+      gain.gain.setValueAtTime(0, startTime);
+      gain.gain.linearRampToValueAtTime(0.15 * volumeLevel, startTime + 0.004);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.11);
+      
+      osc.start(startTime);
+      osc.stop(startTime + 0.12);
+    } else if (profile === "haptic_pop") {
+      // Discrete Haptic Pop: Extremely short subtle low-end thump
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(120, startTime);
+      
+      gain.gain.setValueAtTime(0, startTime);
+      gain.gain.linearRampToValueAtTime(0.24 * volumeLevel, startTime + 0.002);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.02);
+      
+      osc.start(startTime);
+      osc.stop(startTime + 0.025);
+    } else if (profile === "success_beep") {
+      // Success Beep: Energetic dual ascending digital tone
+      const osc1 = audioCtx.createOscillator();
+      const gain1 = audioCtx.createGain();
+      osc1.connect(gain1);
+      gain1.connect(audioCtx.destination);
+      
+      osc1.type = "sine";
+      osc1.frequency.setValueAtTime(1200, startTime);
+      osc1.frequency.setValueAtTime(1800, startTime + 0.08);
+      
+      gain1.gain.setValueAtTime(0, startTime);
+      gain1.gain.linearRampToValueAtTime(0.25 * volumeLevel, startTime + 0.005);
+      gain1.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.18);
+      
+      osc1.start(startTime);
+      osc1.stop(startTime + 0.2);
+    }
 
   } catch (e) {
     console.warn("AudioContext click play prevented or unsupported", e);
@@ -482,6 +578,31 @@ export default function App() {
     }
   });
   const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [scannerPreferredFacingMode, setScannerPreferredFacingMode] = useState<"user" | "environment">("environment");
+  const [scannerHasMultipleCameras, setScannerHasMultipleCameras] = useState<boolean>(false);
+
+  // Check for multiple video input devices (front/back cameras)
+  useEffect(() => {
+    if (typeof navigator !== "undefined" && navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+      navigator.mediaDevices.enumerateDevices()
+        .then((devices) => {
+          const videoDevices = devices.filter(device => device.kind === "videoinput");
+          // If we have at least 2 cameras, allow front/back toggle
+          if (videoDevices.length > 1) {
+            setScannerHasMultipleCameras(true);
+          }
+        })
+        .catch((err) => {
+          console.warn("enumerateDevices error in App mount:", err);
+          if (typeof navigator !== "undefined" && /Mobi|Android|iPhone/i.test(navigator.userAgent)) {
+            setScannerHasMultipleCameras(true);
+          }
+        });
+    } else if (typeof navigator !== "undefined" && /Mobi|Android|iPhone/i.test(navigator.userAgent)) {
+      setScannerHasMultipleCameras(true);
+    }
+  }, []);
+
   const [scannerVolume, setScannerVolume] = useState<number>(() => {
     try {
       const val = localStorage.getItem("bbs_scanner_volume");
@@ -490,7 +611,40 @@ export default function App() {
       return 0.5;
     }
   });
+  const [clickSoundProfile, setClickSoundProfile] = useState<string>(() => {
+    try {
+      const val = localStorage.getItem("bbs_click_profile");
+      return val !== null ? val : "discrete_click";
+    } catch {
+      return "discrete_click";
+    }
+  });
+  const [scannerFrequency, setScannerFrequency] = useState<number>(() => {
+    try {
+      const val = localStorage.getItem("bbs_scanner_frequency");
+      return val !== null ? parseFloat(val) : 1200;
+    } catch {
+      return 1200;
+    }
+  });
+  const [scannerToneType, setScannerToneType] = useState<string>(() => {
+    try {
+      const val = localStorage.getItem("bbs_scanner_tone");
+      return val !== null ? val : "sine";
+    } catch {
+      return "sine";
+    }
+  });
+  const [scannerDuration, setScannerDuration] = useState<number>(() => {
+    try {
+      const val = localStorage.getItem("bbs_scanner_duration");
+      return val !== null ? parseFloat(val) : 0.09;
+    } catch {
+      return 0.09;
+    }
+  });
   const [isCatalogScanTriggered, setIsCatalogScanTriggered] = useState(false);
+  const [isScannerActivelySearching, setIsScannerActivelySearching] = useState(false);
   const [showSuccessFlash, setShowSuccessFlash] = useState(false);
   const [selectedDetailProduct, setSelectedDetailProduct] = useState<ProductItem | null>(null);
   const [showSubtotalBreakdown, setShowSubtotalBreakdown] = useState(false);
@@ -3861,7 +4015,7 @@ export default function App() {
                     </button>
 
                     <div 
-                      className="relative"
+                      className="relative flex items-center gap-2"
                       onMouseEnter={() => {
                         refreshRecentScans();
                         setShowRecentTooltip(true);
@@ -3882,6 +4036,8 @@ export default function App() {
                         className={`group relative flex items-center justify-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold transition-all duration-100 shadow-lg cursor-pointer whitespace-nowrap overflow-hidden active:scale-90 active:translate-y-[1px] active:brightness-90 active:shadow-[inset_0_6px_12px_rgba(0,0,0,0.85)] ${
                           showSuccessFlash
                             ? "animate-scanSuccessFlash"
+                            : isScannerActivelySearching
+                            ? "bg-indigo-900 text-white border-cyan-400 ring-2 ring-indigo-500/50 scale-105 animate-activeSearchingGlow"
                             : isScannerOpen
                             ? "bg-indigo-950/80 text-white border border-indigo-500 shadow-[0_0_20px_rgba(99,102,241,0.6)] scale-105"
                             : "bg-slate-800 hover:bg-slate-700 hover:scale-105 text-slate-300 hover:text-white border border-white/10 hover:border-indigo-500 hover:shadow-[0_0_15px_rgba(99,102,241,0.6)] animate-premiumPulse"
@@ -3894,12 +4050,14 @@ export default function App() {
                           <div className={`absolute inset-x-0 h-0.5 bg-gradient-to-r from-transparent to-transparent transition-all duration-300 animate-scanLine ${
                             showSuccessFlash
                               ? "via-emerald-300 opacity-100 shadow-[0_0_12px_rgba(16,185,129,1)]"
+                              : isScannerActivelySearching
+                              ? "via-cyan-300 opacity-100 shadow-[0_0_16px_rgba(6,182,212,1)]"
                               : isScannerOpen 
                               ? "via-indigo-300 opacity-100 shadow-[0_0_12px_rgba(99,102,241,1)]" 
                               : "via-indigo-400 opacity-20 group-hover:opacity-100 group-hover:via-indigo-300 shadow-[0_0_6px_rgba(99,102,241,0.5)] group-hover:shadow-[0_0_10px_rgba(99,102,241,0.9)]"
                           }`} />
                           <div className={`absolute inset-0 transition-colors duration-200 ${
-                            showSuccessFlash ? "bg-emerald-500/20" : isScannerOpen ? "bg-indigo-500/10" : "bg-indigo-500/0 group-hover:bg-indigo-500/[0.04]"
+                            showSuccessFlash ? "bg-emerald-500/20" : isScannerActivelySearching ? "bg-cyan-500/20" : isScannerOpen ? "bg-indigo-500/10" : "bg-indigo-500/0 group-hover:bg-indigo-500/[0.04]"
                           }`} />
                         </div>
 
@@ -3908,18 +4066,22 @@ export default function App() {
                           <span className={`absolute inline-flex h-full w-full rounded-full ${
                             showSuccessFlash 
                               ? "bg-emerald-400/80 animate-ping [animation-duration:0.6s]" 
+                              : isScannerActivelySearching
+                              ? "bg-cyan-400/80 animate-ping [animation-duration:0.5s]"
                               : "bg-indigo-400/60"
-                          } ${isScannerOpen && !showSuccessFlash ? "animate-ping [animation-duration:1s]" : !showSuccessFlash ? "animate-ping" : ""}`} />
-                          <span className={`absolute inline-flex h-5 w-5 rounded-full ${showSuccessFlash ? "bg-emerald-500/40" : "bg-indigo-500/20"} animate-pulse`} />
+                          } ${isScannerOpen && !showSuccessFlash && !isScannerActivelySearching ? "animate-ping [animation-duration:1s]" : !showSuccessFlash && !isScannerActivelySearching ? "animate-ping" : ""}`} />
+                          <span className={`absolute inline-flex h-5 w-5 rounded-full ${showSuccessFlash ? "bg-emerald-500/40" : isScannerActivelySearching ? "bg-cyan-500/40" : "bg-indigo-500/20"} animate-pulse`} />
                           <Icons.Scan className={`h-3.5 w-3.5 relative z-10 transition-transform duration-300 ease-out ${
                             showSuccessFlash 
                               ? "text-emerald-300 scale-125" 
+                              : isScannerActivelySearching
+                              ? "text-cyan-400 scale-110 animate-spin [animation-duration:1.5s]"
                               : isScannerOpen 
                               ? "text-indigo-400 scale-110 animate-spin" 
                               : "text-indigo-400 group-hover:scale-105"
                           }`} />
                         </div>
-                        <span>{showSuccessFlash ? "Berhasil!" : isScannerOpen ? "Scanning..." : "Scan"}</span>
+                        <span>{showSuccessFlash ? "Berhasil!" : isScannerActivelySearching ? "Searching..." : isScannerOpen ? "Scanning..." : "Scan"}</span>
                         {!showSuccessFlash && (
                           <Icons.ArrowLeftRight 
                             className="h-3.5 w-3.5 text-indigo-400/80 group-hover:text-indigo-300 group-hover:translate-x-0.5 group-hover:scale-110 transition-all duration-300 ease-out animate-arrowSlide shrink-0 ml-1.5" 
@@ -3945,6 +4107,31 @@ export default function App() {
                           </span>
                         )}
                       </button>
+
+                      {/* Front/Back Camera Toggle */}
+                      {scannerHasMultipleCameras && (
+                        <button
+                          type="button"
+                          onMouseDown={() => {
+                            playClickSound();
+                          }}
+                          onTouchStart={() => {
+                            playClickSound();
+                          }}
+                          onClick={() => {
+                            const nextMode = scannerPreferredFacingMode === "environment" ? "user" : "environment";
+                            setScannerPreferredFacingMode(nextMode);
+                            showToast(`Kamera dialihkan ke ${nextMode === "environment" ? "Kamera Belakang (Back)" : "Kamera Depan (Front)"}`, "info");
+                          }}
+                          className={`flex items-center justify-center space-x-1 px-2.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-white/10 rounded-xl text-xs font-bold transition-all shadow-lg active:scale-90 active:translate-y-[1px] cursor-pointer whitespace-nowrap`}
+                          title={`Ganti Kamera (Saat ini: ${scannerPreferredFacingMode === "environment" ? "Kamera Belakang" : "Kamera Depan"})`}
+                        >
+                          <Icons.RotateCw className={`h-3.5 w-3.5 text-indigo-400 transition-transform duration-500 ${scannerPreferredFacingMode === "user" ? "rotate-180 text-cyan-400" : ""}`} />
+                          <span className="text-[10px] uppercase tracking-wider text-slate-300">
+                            {scannerPreferredFacingMode === "environment" ? "Back" : "Front"}
+                          </span>
+                        </button>
+                      )}
 
                       {/* Orientation guide overlay, shown programmatically when the scanner is actively open */}
                       {isScannerOpen && !showSuccessFlash && (
@@ -10623,6 +10810,251 @@ export default function App() {
                       </button>
                     </div>
                   </div>
+
+                  {/* Scanner Beep Configuration Section */}
+                  <div className="bg-slate-900/40 border border-white/10 backdrop-blur-xl rounded-2xl p-6 sm:p-8 space-y-6">
+                    <h3 className="font-extrabold text-white text-lg border-b border-white/10 pb-3 flex items-center space-x-2">
+                      <Icons.Volume2 className="h-5.5 w-5.5 text-indigo-400" />
+                      <span>Kustomisasi Beep & Nada Scanner</span>
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Personalisasi frekuensi, jenis gelombang, dan durasi nada beep pemindai barcode agar selaras dengan identitas merek (Brand Identity) PT Berkah Bintang Solusindo yang modern, profesional, dan solid.
+                    </p>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                      {/* Tone Type / Oscillator selection */}
+                      <div className="space-y-2">
+                        <label className="block text-[10px] text-slate-400 uppercase font-bold tracking-wider">Jenis Nada (Waveform)</label>
+                        <select
+                          value={scannerToneType}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setScannerToneType(val);
+                            localStorage.setItem("bbs_scanner_tone", val);
+                          }}
+                          className="w-full px-4 py-2.5 bg-slate-950 border border-white/10 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-200 cursor-pointer font-semibold"
+                        >
+                          <option value="sine">Sine (Halus & Bersih)</option>
+                          <option value="triangle">Triangle (Lembut & Klasik)</option>
+                          <option value="square">Square (Retro & Tegas)</option>
+                          <option value="sawtooth">Sawtooth (Nyaring & Tajam)</option>
+                        </select>
+                        <span className="text-[10px] text-slate-500 block leading-relaxed">
+                          Sine dan Triangle memberikan sensasi modern & futuristik yang nyaman untuk penggunaan berulang.
+                        </span>
+                      </div>
+
+                      {/* Frequency Slider */}
+                      <div className="space-y-2">
+                        <div className="flex justify-between items-center">
+                          <label className="block text-[10px] text-slate-400 uppercase font-bold tracking-wider">Frekuensi Nada (Pitch)</label>
+                          <span className="text-xs font-mono font-bold text-indigo-400">{scannerFrequency} Hz</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="400"
+                          max="3000"
+                          step="50"
+                          value={scannerFrequency}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value);
+                            setScannerFrequency(val);
+                            localStorage.setItem("bbs_scanner_frequency", val.toString());
+                          }}
+                          className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500 hover:accent-indigo-400 transition-all focus:outline-none"
+                        />
+                        <div className="flex justify-between text-[9px] text-slate-500 font-mono">
+                          <span>400 Hz (Bass)</span>
+                          <span>3000 Hz (Treble)</span>
+                        </div>
+                      </div>
+
+                      {/* Duration Slider */}
+                      <div className="space-y-2">
+                        <div className="flex justify-between items-center">
+                          <label className="block text-[10px] text-slate-400 uppercase font-bold tracking-wider">Durasi Beep (Tempo)</label>
+                          <span className="text-xs font-mono font-bold text-indigo-400">{Math.round(scannerDuration * 1000)} ms</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0.03"
+                          max="0.4"
+                          step="0.01"
+                          value={scannerDuration}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            setScannerDuration(val);
+                            localStorage.setItem("bbs_scanner_duration", val.toString());
+                          }}
+                          className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500 hover:accent-indigo-400 transition-all focus:outline-none"
+                        />
+                        <div className="flex justify-between text-[9px] text-slate-500 font-mono">
+                          <span>30 ms (Sangat Singkat)</span>
+                          <span>400 ms (Panjang)</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Preview / Test button */}
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-white/5 bg-slate-950/35 p-4 rounded-xl">
+                      <div className="flex items-start gap-2.5">
+                        <Icons.Info className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+                        <span className="text-[11px] text-slate-400 leading-relaxed">
+                          Nada yang Anda simpan di sini akan secara otomatis diterapkan ke modul <strong>Barcode Scanner</strong> dan tombol <strong>Pindai dari Katalog</strong> di seluruh sistem secara instan.
+                        </span>
+                      </div>
+                      
+                      <div className="flex items-center gap-2.5 shrink-0 w-full sm:w-auto font-sans">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // Reset to default BBS premium brand sound
+                            setScannerFrequency(1200);
+                            setScannerToneType("sine");
+                            setScannerDuration(0.09);
+                            localStorage.setItem("bbs_scanner_frequency", "1200");
+                            localStorage.setItem("bbs_scanner_tone", "sine");
+                            localStorage.setItem("bbs_scanner_duration", "0.09");
+                            showToast("Pengaturan suara di-reset ke Nada Brand BBS!", "info");
+                          }}
+                          className="w-full sm:w-auto px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-bold transition-all border border-white/5 flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <Icons.RotateCcw className="h-3.5 w-3.5" />
+                          <span>Reset Nada</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            try {
+                              const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+                              if (AudioContextClass) {
+                                const audioCtx = new AudioContextClass();
+                                const osc = audioCtx.createOscillator();
+                                const gain = audioCtx.createGain();
+                                osc.connect(gain);
+                                gain.connect(audioCtx.destination);
+                                osc.type = scannerToneType as OscillatorType;
+                                osc.frequency.setValueAtTime(scannerFrequency, audioCtx.currentTime);
+                                
+                                const targetGain = 0.2 * scannerVolume;
+                                gain.gain.setValueAtTime(0, audioCtx.currentTime);
+                                gain.gain.linearRampToValueAtTime(targetGain, audioCtx.currentTime + 0.005);
+                                gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + scannerDuration);
+                                
+                                osc.start(audioCtx.currentTime);
+                                osc.stop(audioCtx.currentTime + scannerDuration + 0.02);
+                              }
+                            } catch (err) {
+                              console.warn("Could not play test beep", err);
+                            }
+                          }}
+                          className="w-full sm:w-auto px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-lg shadow-indigo-600/15 cursor-pointer hover:scale-102 active:scale-98"
+                        >
+                          <Icons.Volume2 className="h-4 w-4 animate-pulse" />
+                          <span>Uji Coba Nada Beep</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Click Sound Profile Configuration Section */}
+                  <div className="bg-slate-900/40 border border-white/10 backdrop-blur-xl rounded-2xl p-6 sm:p-8 space-y-6">
+                    <h3 className="font-extrabold text-white text-lg border-b border-white/10 pb-3 flex items-center space-x-2">
+                      <Icons.Volume1 className="h-5.5 w-5.5 text-indigo-400" />
+                      <span>Profil Suara Tombol & Click</span>
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Pilih profil suara klik digital yang akan dimainkan saat melakukan penekanan tombol sistem atau pemindaian yang sukses.
+                    </p>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                      {[
+                        {
+                          id: "discrete_click",
+                          name: "Discrete Click",
+                          description: "Suara klik mekanikal switch orisinal yang solid & bertekstur.",
+                        },
+                        {
+                          id: "modern_tech",
+                          name: "Modern Tech",
+                          description: "Beep ganda digital berfrekuensi tinggi yang tajam & futuristik.",
+                        },
+                        {
+                          id: "classic_scanner",
+                          name: "Classic Scanner",
+                          description: "Nada pemindai kasir klasik 1000Hz yang fungsional.",
+                        },
+                        {
+                          id: "melodic_accent",
+                          name: "Melodic Accent",
+                          description: "Aksen akor naik lembut untuk pengalaman mewah.",
+                        },
+                        {
+                          id: "haptic_pop",
+                          name: "Haptic Pop",
+                          description: "Impuls bass ultra singkat mensimulasikan getaran haptic.",
+                        }
+                      ].map((profile) => (
+                        <button
+                          key={profile.id}
+                          type="button"
+                          onClick={() => {
+                            setClickSoundProfile(profile.id);
+                            localStorage.setItem("bbs_click_profile", profile.id);
+                            setTimeout(() => {
+                              playClickSound();
+                            }, 50);
+                            showToast(`Profil suara "${profile.name}" berhasil diterapkan!`, "success");
+                          }}
+                          className={`flex flex-col text-left p-4 rounded-xl border transition-all duration-300 relative overflow-hidden group cursor-pointer ${
+                            clickSoundProfile === profile.id
+                              ? "bg-indigo-600/15 border-indigo-500 shadow-lg shadow-indigo-600/10 text-white scale-102"
+                              : "bg-slate-950/40 border-white/5 text-slate-300 hover:bg-slate-900/60 hover:border-white/10 hover:scale-101"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between w-full mb-3">
+                            <span className="p-2 rounded-lg bg-white/5 group-hover:bg-indigo-500/10 transition-colors">
+                              {profile.id === "discrete_click" && <Icons.Sliders className="h-4 w-4 text-indigo-400" />}
+                              {profile.id === "modern_tech" && <Icons.Cpu className="h-4 w-4 text-cyan-400" />}
+                              {profile.id === "classic_scanner" && <Icons.Scan className="h-4 w-4 text-emerald-400" />}
+                              {profile.id === "melodic_accent" && <Icons.Music className="h-4 w-4 text-purple-400" />}
+                              {profile.id === "haptic_pop" && <Icons.Sparkles className="h-4 w-4 text-amber-400" />}
+                            </span>
+                            {clickSoundProfile === profile.id && (
+                              <span className="flex h-2 w-2 relative">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                                <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+                              </span>
+                            )}
+                          </div>
+                          <h4 className="font-bold text-xs mb-1.5 text-white">{profile.name}</h4>
+                          <p className="text-[10px] text-slate-400 leading-relaxed group-hover:text-slate-300 transition-colors">
+                            {profile.description}
+                          </p>
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="flex justify-between items-center bg-slate-950/35 p-4 rounded-xl border border-white/5">
+                      <div className="flex items-center gap-2">
+                        <Icons.VolumeX className="h-4 w-4 text-slate-500" />
+                        <span className="text-[11px] text-slate-400">
+                          Ingin menonaktifkan suara? Atur slider volume pemindai ke nilai minimum (Mute).
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          playClickSound();
+                        }}
+                        className="px-4 py-2 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
+                      >
+                        <Icons.Volume2 className="h-3.5 w-3.5" />
+                        <span>Uji Profil Suara Klik</span>
+                      </button>
+                    </div>
+                  </div>
                 </div>
               ))}
 
@@ -14099,6 +14531,8 @@ export default function App() {
         <BarcodeScanner
           catalogProducts={catalogProducts}
           isCatalogScanBtn={isCatalogScanTriggered}
+          onActiveChange={setIsScannerActivelySearching}
+          preferredFacingMode={scannerPreferredFacingMode}
           onScanSuccess={(product) => {
             addToCart(product);
             incrementSessionScannedCount();
@@ -14107,8 +14541,12 @@ export default function App() {
               setShowSuccessFlash(true);
               setTimeout(() => setShowSuccessFlash(false), 1000);
             }
+            playClickSound("success_beep");
           }}
-          onClose={() => setIsScannerOpen(false)}
+          onClose={() => {
+            setIsScannerOpen(false);
+            setIsScannerActivelySearching(false);
+          }}
           onAddCustomItem={(item) => {
             setCustomCartItems((prev) => [...prev, item]);
             showToast(`"${item.name}" berhasil ditambahkan ke keranjang RFQ!`, "success");
@@ -14118,6 +14556,7 @@ export default function App() {
               setShowSuccessFlash(true);
               setTimeout(() => setShowSuccessFlash(false), 1000);
             }
+            playClickSound("success_beep");
           }}
         />
       )}
