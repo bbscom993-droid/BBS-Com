@@ -174,6 +174,22 @@
         "bodyTemplate": { "type": "string" }
       },
       "required": ["autoSchedule", "delayHours", "subjectTemplate", "bodyTemplate"]
+    },
+    "LayoutPreferences": {
+      "title": "LayoutPreferences",
+      "description": "User preferences for RFQ status filters including pinned items and display priority order",
+      "type": "object",
+      "properties": {
+        "pinnedStatuses": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "legendStatusOrder": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["pinnedStatuses", "legendStatusOrder"]
     }
   },
   "firestore": {
@@ -184,6 +200,10 @@
     "/settings/reminderConfig": {
       "schema": "ReminderConfig",
       "description": "Global settings for reminders"
+    },
+    "/settings/layoutPreferences": {
+      "schema": "LayoutPreferences",
+      "description": "Stored status filter layout preferences such as pinned and order list"
     },
     "/rfqs/{rfqId}": {
       "schema": "RFQ",

@@ -71,6 +71,65 @@ function getBarcodeValue(productId: string) {
   return mockBarcodes[productId] || `BBS-${productId.toUpperCase()}`;
 }
 
+// Crisp high-quality mechanical click sound synthesizer
+export function playClickSound() {
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+    const audioCtx = new AudioContextClass();
+    
+    // Dynamic volume adjustment from localStorage (defaulting to 0.5)
+    let volumeLevel = 0.5;
+    try {
+      const storedVol = localStorage.getItem("bbs_scanner_volume");
+      if (storedVol !== null) {
+        volumeLevel = parseFloat(storedVol);
+      }
+    } catch (e) {}
+
+    if (volumeLevel <= 0) return;
+
+    const startTime = audioCtx.currentTime;
+
+    // Component 1: High-pitched metallic "tick" (switch leaf contact)
+    const osc1 = audioCtx.createOscillator();
+    const gain1 = audioCtx.createGain();
+    osc1.connect(gain1);
+    gain1.connect(audioCtx.destination);
+    
+    osc1.type = "triangle";
+    osc1.frequency.setValueAtTime(3200, startTime);
+    osc1.frequency.exponentialRampToValueAtTime(1600, startTime + 0.012);
+    
+    gain1.gain.setValueAtTime(0, startTime);
+    gain1.gain.linearRampToValueAtTime(0.12 * volumeLevel, startTime + 0.002);
+    gain1.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.015);
+    
+    osc1.start(startTime);
+    osc1.stop(startTime + 0.018);
+
+    // Component 2: Low-pitched plastic housing "thud/depress" (button bottoming out)
+    const osc2 = audioCtx.createOscillator();
+    const gain2 = audioCtx.createGain();
+    osc2.connect(gain2);
+    gain2.connect(audioCtx.destination);
+    
+    osc2.type = "sine";
+    osc2.frequency.setValueAtTime(180, startTime);
+    osc2.frequency.exponentialRampToValueAtTime(80, startTime + 0.035);
+    
+    gain2.gain.setValueAtTime(0, startTime);
+    gain2.gain.linearRampToValueAtTime(0.08 * volumeLevel, startTime + 0.003);
+    gain2.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.045);
+    
+    osc2.start(startTime);
+    osc2.stop(startTime + 0.05);
+
+  } catch (e) {
+    console.warn("AudioContext click play prevented or unsupported", e);
+  }
+}
+
 // Barcode rendering component for printing and previewing
 function BarcodeSVG({ value }: { value: string }) {
   const bars: number[] = [];
@@ -111,6 +170,147 @@ function BarcodeSVG({ value }: { value: string }) {
       </g>
     </svg>
   );
+}
+
+// Helper to get the timestamp when the RFQ entered its current status
+function getLatestStatusChangeTime(rfq: RFQ): Date {
+  if (rfq.history && rfq.history.length > 0) {
+    const matchingEntries = rfq.history.filter(h => h.status === rfq.status);
+    if (matchingEntries.length > 0) {
+      const sorted = [...matchingEntries].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      return new Date(sorted[0].timestamp);
+    }
+    const sortedAll = [...rfq.history].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    if (sortedAll[0] && sortedAll[0].timestamp) {
+      return new Date(sortedAll[0].timestamp);
+    }
+  }
+  const rfqIdNum = parseInt((rfq.id || "").replace("rfq_", ""), 10);
+  const hasExactTime = (rfq.id || "").startsWith("rfq_") && !isNaN(rfqIdNum) && rfqIdNum > 1000000000000;
+  if (hasExactTime) {
+    return new Date(rfqIdNum);
+  }
+  if (rfq.date) {
+    return new Date(rfq.date);
+  }
+  return new Date();
+}
+
+// Helper to determine the sub-categories of an RFQ by checking its items
+function getRfqSubCategories(rfq: RFQ): string[] {
+  const subCats = new Set<string>();
+  if (!rfq.items || rfq.items.length === 0) {
+    return [];
+  }
+  
+  for (const item of rfq.items) {
+    const nameLower = (item.name || "").toLowerCase();
+    const descLower = (item.description || "").toLowerCase();
+    
+    // Check match in PRODUCT_CATALOG to get exact category
+    const catalogItem = PRODUCT_CATALOG.find(p => p.name.toLowerCase() === nameLower);
+    let cat = catalogItem ? catalogItem.category : "";
+    
+    // Check match in SERVICE_OFFERINGS
+    if (!cat) {
+      const srvItem = SERVICE_OFFERINGS.find(s => s.name.toLowerCase() === nameLower);
+      if (srvItem) cat = srvItem.category;
+    }
+    
+    // Check by category string or keyword matching
+    if (
+      cat === "Komputer & Laptop" || 
+      cat === "Server & Storage" || 
+      cat === "Hardware" ||
+      cat === "Infrastructure" ||
+      nameLower.includes("laptop") || 
+      nameLower.includes("komputer") || 
+      nameLower.includes("pc ") || 
+      nameLower.includes("desktop") || 
+      nameLower.includes("server") || 
+      nameLower.includes("storage") || 
+      nameLower.includes("nas") || 
+      nameLower.includes("dell") || 
+      nameLower.includes("lenovo") || 
+      nameLower.includes("asus") || 
+      nameLower.includes("printer") || 
+      nameLower.includes("ups") || 
+      nameLower.includes("harddisk") || 
+      nameLower.includes("ssd") || 
+      nameLower.includes("ram") ||
+      nameLower.includes("workstation") ||
+      descLower.includes("komputer") ||
+      descLower.includes("laptop") ||
+      descLower.includes("server")
+    ) {
+      subCats.add("Hardware");
+    }
+    
+    if (
+      cat === "Infrastruktur Jaringan" || 
+      cat === "Networking" ||
+      nameLower.includes("network") || 
+      nameLower.includes("jaringan") || 
+      nameLower.includes("router") || 
+      nameLower.includes("switch") || 
+      nameLower.includes("access point") || 
+      nameLower.includes("kabel") || 
+      nameLower.includes("cable") || 
+      nameLower.includes("lan") || 
+      nameLower.includes("wan") || 
+      nameLower.includes("wifi") || 
+      nameLower.includes("unifi") || 
+      nameLower.includes("mikrotik") || 
+      nameLower.includes("utp") || 
+      nameLower.includes("cat6") ||
+      descLower.includes("jaringan") ||
+      descLower.includes("router") ||
+      descLower.includes("switch")
+    ) {
+      subCats.add("Network");
+    }
+    
+    if (
+      cat === "CCTV & Security" || 
+      cat === "Security" ||
+      nameLower.includes("cctv") || 
+      nameLower.includes("camera") || 
+      nameLower.includes("kamera") || 
+      nameLower.includes("security") || 
+      nameLower.includes("hikvision") || 
+      nameLower.includes("dome") || 
+      nameLower.includes("nvr") || 
+      nameLower.includes("dvr") || 
+      nameLower.includes("pengawas") ||
+      descLower.includes("cctv") ||
+      descLower.includes("kamera") ||
+      descLower.includes("camera")
+    ) {
+      subCats.add("CCTV");
+    }
+    
+    if (
+      cat === "Software & Lisensi" || 
+      cat === "Software" ||
+      nameLower.includes("software") || 
+      nameLower.includes("lisensi") || 
+      nameLower.includes("license") || 
+      nameLower.includes("windows") || 
+      nameLower.includes("microsoft") || 
+      nameLower.includes("office") || 
+      nameLower.includes("365") || 
+      nameLower.includes("antivirus") || 
+      nameLower.includes("adobe") || 
+      nameLower.includes("cad") ||
+      descLower.includes("software") ||
+      descLower.includes("lisensi") ||
+      descLower.includes("license")
+    ) {
+      subCats.add("Software");
+    }
+  }
+  
+  return Array.from(subCats);
 }
 
 export default function App() {
@@ -189,6 +389,7 @@ export default function App() {
       // Check if 's' or 'S' is pressed
       if (e.key === "s" || e.key === "S") {
         e.preventDefault();
+        setIsCatalogScanTriggered(true);
         setIsScannerOpen(true);
       }
     };
@@ -281,6 +482,16 @@ export default function App() {
     }
   });
   const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [scannerVolume, setScannerVolume] = useState<number>(() => {
+    try {
+      const val = localStorage.getItem("bbs_scanner_volume");
+      return val !== null ? parseFloat(val) : 0.5;
+    } catch {
+      return 0.5;
+    }
+  });
+  const [isCatalogScanTriggered, setIsCatalogScanTriggered] = useState(false);
+  const [showSuccessFlash, setShowSuccessFlash] = useState(false);
   const [selectedDetailProduct, setSelectedDetailProduct] = useState<ProductItem | null>(null);
   const [showSubtotalBreakdown, setShowSubtotalBreakdown] = useState(false);
 
@@ -316,7 +527,6 @@ export default function App() {
   const [rfqs, setRfqs] = useState<RFQ[]>([]);
   const [quotations, setQuotations] = useState<Quotation[]>([]);
   const [selectedRfqIds, setSelectedRfqIds] = useState<string[]>([]);
-  const [selectedHistoryRfq, setSelectedHistoryRfq] = useState<RFQ | null>(null);
   
   // Loading & status flags
   const [loading, setLoading] = useState(false);
@@ -419,6 +629,7 @@ export default function App() {
   const [newCustomStatusName, setNewCustomStatusName] = useState("");
   const [newCustomStatusColor, setNewCustomStatusColor] = useState("purple");
   const [adminRfqClientFilter, setAdminRfqClientFilter] = useState("");
+  const [showOnlyMyClients, setShowOnlyMyClients] = useState(false);
   const [adminRfqStartDate, setAdminRfqStartDate] = useState("");
   const [adminRfqEndDate, setAdminRfqEndDate] = useState("");
   const [adminRfqStatuses, setAdminRfqStatuses] = useState<string[]>(() => {
@@ -445,10 +656,118 @@ export default function App() {
     }
   }, [adminRfqStatuses]);
 
+   // RFQ Notes, Priority, and Bulk Export states
+  const [selectedNotesRfq, setSelectedNotesRfq] = useState<RFQ | null>(null);
+  const [notesInput, setNotesInput] = useState("");
+  const [priorityInput, setPriorityInput] = useState<"low" | "medium" | "high" | "urgent">("medium");
+  const [adminRfqPriorityFilter, setAdminRfqPriorityFilter] = useState<string>("");
+  const [isAdminRfqPriorityDropdownOpen, setIsAdminRfqPriorityDropdownOpen] = useState(false);
+  const [isAdminRfqExportDropdownOpen, setIsAdminRfqExportDropdownOpen] = useState(false);
+
+
+
+  // Sync edit modal inputs when a target RFQ is selected
+  useEffect(() => {
+    if (selectedNotesRfq) {
+      setNotesInput(selectedNotesRfq.notes || "");
+      setPriorityInput(selectedNotesRfq.priority || "medium");
+    }
+  }, [selectedNotesRfq]);
+
   const [isStatusFilterOpen, setIsStatusFilterOpen] = useState(false);
+  const [isBulkAssignDropdownOpen, setIsBulkAssignDropdownOpen] = useState(false);
   const [hoveredStatusItem, setHoveredStatusItem] = useState<string | null>(null);
   const [statusKeywordSearch, setStatusKeywordSearch] = useState("");
+  const [adminRfqSortBy, setAdminRfqSortBy] = useState<"date-desc" | "date-asc" | "client-asc" | "client-desc" | "rfq-asc" | "rfq-desc" | "status-asc" | "status-desc" | "priority-desc" | "priority-asc">("date-desc");
+  const [isAdminRfqSortDropdownOpen, setIsAdminRfqSortDropdownOpen] = useState(false);
+  const [adminRfqCategoryFilter, setAdminRfqCategoryFilter] = useState<string>("");
+  const [isAdminRfqCategoryDropdownOpen, setIsAdminRfqCategoryDropdownOpen] = useState(false);
+  const [adminRfqSubCategoryFilter, setAdminRfqSubCategoryFilter] = useState<string>("");
+  const [isAdminRfqSubCategoryDropdownOpen, setIsAdminRfqSubCategoryDropdownOpen] = useState(false);
+  const [sessionScannedCount, setSessionScannedCount] = useState<number>(() => {
+    try {
+      const val = sessionStorage.getItem("bbs_session_scanned_count");
+      return val ? parseInt(val, 10) || 0 : 0;
+    } catch {
+      return 0;
+    }
+  });
+
+  const incrementSessionScannedCount = () => {
+    setSessionScannedCount((prev) => {
+      const next = prev + 1;
+      try {
+        sessionStorage.setItem("bbs_session_scanned_count", next.toString());
+      } catch (e) {
+        console.error("Error setting session scanned count", e);
+      }
+      return next;
+    });
+  };
+
+  const [totalScannedCount, setTotalScannedCount] = useState<number>(() => {
+    try {
+      const val = localStorage.getItem("bbs_total_scanned_count");
+      return val ? parseInt(val, 10) || 0 : 0;
+    } catch {
+      return 0;
+    }
+  });
+
+  const incrementTotalScannedCount = () => {
+    setTotalScannedCount((prev) => {
+      const next = prev + 1;
+      try {
+        localStorage.setItem("bbs_total_scanned_count", next.toString());
+      } catch {}
+      return next;
+    });
+  };
+
+  const [recentScans, setRecentScans] = useState<any[]>(() => {
+    try {
+      const saved = localStorage.getItem("bbs_recent_scans");
+      if (!saved) return [];
+      const parsed = JSON.parse(saved);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [showRecentTooltip, setShowRecentTooltip] = useState(false);
+
+  const refreshRecentScans = () => {
+    try {
+      const saved = localStorage.getItem("bbs_recent_scans");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          setRecentScans(parsed);
+        }
+      }
+    } catch (e) {
+      console.error("Error refreshing recent scans", e);
+    }
+  };
+
+  useEffect(() => {
+    if (!isScannerOpen) {
+      refreshRecentScans();
+    }
+  }, [isScannerOpen]);
   const [draggingStatus, setDraggingStatus] = useState<string | null>(null);
+  const [hideEmptyStatuses, setHideEmptyStatuses] = useState<boolean>(false);
+  const [pinnedStatuses, setPinnedStatuses] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem("bbs_rfq_pinned_statuses");
+      return stored ? JSON.parse(stored) : [];
+    } catch (e) {
+      console.error("Error reading rfq_pinned_statuses", e);
+      return [];
+    }
+  });
+
   const [legendStatusOrder, setLegendStatusOrder] = useState<string[]>(() => {
     try {
       const stored = localStorage.getItem("bbs_rfq_status_priority");
@@ -461,13 +780,45 @@ export default function App() {
     return ["pending", "processing", "quoted", "completed", "cancelled"];
   });
 
+  const hasLoadedLayoutRef = useRef(false);
+
+  useEffect(() => {
+    if (!hasLoadedLayoutRef.current) return;
+
+    const savePreferences = async () => {
+      try {
+        await fetch("/api/settings/layout-preferences", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            pinnedStatuses,
+            legendStatusOrder,
+          }),
+        });
+      } catch (e) {
+        console.error("Failed to save layout preferences to Firestore", e);
+      }
+    };
+
+    try {
+      localStorage.setItem("bbs_rfq_pinned_statuses", JSON.stringify(pinnedStatuses));
+      localStorage.setItem("bbs_rfq_status_priority", JSON.stringify(legendStatusOrder));
+    } catch (e) {
+      console.error("Error writing layout preferences to localStorage", e);
+    }
+
+    savePreferences();
+  }, [pinnedStatuses, legendStatusOrder]);
+
   const orderedLegendStatuses = useMemo(() => {
     const defaultStatuses = [
-      { value: "pending", label: "Amber = Pending", color: "amber", isCustom: false },
-      { value: "processing", label: "Biru = Processing", color: "blue", isCustom: false },
-      { value: "quoted", label: "Indigo = Quoted", color: "indigo", isCustom: false },
-      { value: "completed", label: "Hijau = Completed", color: "emerald", isCustom: false },
-      { value: "cancelled", label: "Merah = Cancelled", color: "rose", isCustom: false },
+      { value: "pending", label: "Amber = Pending", color: (settings.defaultRfqStatusColors && settings.defaultRfqStatusColors["pending"]) || "amber", isCustom: false },
+      { value: "processing", label: "Biru = Processing", color: (settings.defaultRfqStatusColors && settings.defaultRfqStatusColors["processing"]) || "blue", isCustom: false },
+      { value: "quoted", label: "Indigo = Quoted", color: (settings.defaultRfqStatusColors && settings.defaultRfqStatusColors["quoted"]) || "indigo", isCustom: false },
+      { value: "completed", label: "Hijau = Completed", color: (settings.defaultRfqStatusColors && settings.defaultRfqStatusColors["completed"]) || "emerald", isCustom: false },
+      { value: "cancelled", label: "Merah = Cancelled", color: (settings.defaultRfqStatusColors && settings.defaultRfqStatusColors["cancelled"]) || "rose", isCustom: false },
     ];
     
     const customStatuses = (settings.customRfqStatuses || []).map(cs => ({
@@ -480,13 +831,21 @@ export default function App() {
     const allStatuses = [...defaultStatuses, ...customStatuses];
     
     return [...allStatuses].sort((a, b) => {
+      const isPinnedA = pinnedStatuses.includes(a.value);
+      const isPinnedB = pinnedStatuses.includes(b.value);
+      if (isPinnedA && !isPinnedB) return -1;
+      if (!isPinnedA && isPinnedB) return 1;
+      if (isPinnedA && isPinnedB) {
+        return pinnedStatuses.indexOf(a.value) - pinnedStatuses.indexOf(b.value);
+      }
+
       let idxA = legendStatusOrder.indexOf(a.value);
       let idxB = legendStatusOrder.indexOf(b.value);
       if (idxA === -1) idxA = 9999;
       if (idxB === -1) idxB = 9999;
       return idxA - idxB;
     });
-  }, [settings.customRfqStatuses, legendStatusOrder]);
+  }, [settings.customRfqStatuses, settings.defaultRfqStatusColors, legendStatusOrder, pinnedStatuses]);
   const statusFilterRef = useRef<HTMLDivElement>(null);
 
   // Subtle pulse animation state whenever applied filters change
@@ -496,12 +855,16 @@ export default function App() {
     setIsFilterPulsing(true);
     const timer = setTimeout(() => setIsFilterPulsing(false), 800);
     return () => clearTimeout(timer);
-  }, [adminRfqSearch, adminRfqStartDate, adminRfqEndDate, adminRfqClientFilter, adminRfqStatuses, statusKeywordSearch]);
+  }, [adminRfqSearch, adminRfqStartDate, adminRfqEndDate, adminRfqClientFilter, adminRfqStatuses, statusKeywordSearch, adminRfqCategoryFilter, adminRfqSubCategoryFilter]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (statusFilterRef.current && !statusFilterRef.current.contains(event.target as Node)) {
         setIsStatusFilterOpen(false);
+        setIsBulkAssignDropdownOpen(false);
+        setIsAdminRfqSortDropdownOpen(false);
+        setIsAdminRfqCategoryDropdownOpen(false);
+        setIsAdminRfqSubCategoryDropdownOpen(false);
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
@@ -512,12 +875,31 @@ export default function App() {
   const [adminRole, setAdminRole] = useState<"superadmin" | "admin" | "sales" | null>(null);
   const [adminDisplayName, setAdminDisplayName] = useState("");
   const [adminUsername, setAdminUsername] = useState("");
+
+  const [selectedHistoryRfq, setSelectedHistoryRfq] = useState<RFQ | null>(null);
+  const [selectedClientProfile, setSelectedClientProfile] = useState<any | null>(null);
+  const [clientSearchQuery, setClientSearchQuery] = useState("");
+  const [clientCategoryFilter, setClientCategoryFilter] = useState("");
+
+  // RFQ History Modal States
+  const [historyStatusInput, setHistoryStatusInput] = useState("");
+  const [historyNoteInput, setHistoryNoteInput] = useState("");
+  const [historyOperatorInput, setHistoryOperatorInput] = useState("");
+
+  // Sync history modal inputs when selectedHistoryRfq changes
+  useEffect(() => {
+    if (selectedHistoryRfq) {
+      setHistoryStatusInput(selectedHistoryRfq.status || "pending");
+      setHistoryNoteInput("");
+      setHistoryOperatorInput(adminDisplayName || adminUsername || "Sales Admin");
+    }
+  }, [selectedHistoryRfq, adminDisplayName, adminUsername]);
   const [adminUsers, setAdminUsers] = useState<any[]>([
-    { id: "u1", username: "superadmin", name: "Arif Suharyadi", role: "superadmin", status: "active", lastLogin: "Hari ini, 08:30" },
-    { id: "u2", username: "admin", name: "Fina Karlina", role: "admin", status: "active", lastLogin: "Kemarin, 14:15" },
-    { id: "u3", username: "sales", name: "Azka Rafassya", role: "sales", status: "active", lastLogin: "2 jam yang lalu" },
-    { id: "u4", username: "doni_sales", name: "Doni Pratama", role: "sales", status: "active", lastLogin: "3 hari yang lalu" },
-    { id: "u5", username: "lina_proc", name: "Lina Marlina", role: "admin", status: "suspended", lastLogin: "1 minggu yang lalu" }
+    { id: "u1", username: "superadmin", name: "Arif Suharyadi", role: "superadmin", status: "active", lastLogin: "Hari ini, 08:30", assignedClients: ["Budi Santoso", "Andi Wijaya"] },
+    { id: "u2", username: "admin", name: "Fina Karlina", role: "admin", status: "active", lastLogin: "Kemarin, 14:15", assignedClients: ["Budi Santoso"] },
+    { id: "u3", username: "sales", name: "Azka Rafassya", role: "sales", status: "active", lastLogin: "2 jam yang lalu", assignedClients: ["Andi Wijaya"] },
+    { id: "u4", username: "doni_sales", name: "Doni Pratama", role: "sales", status: "active", lastLogin: "3 hari yang lalu", assignedClients: ["Budi Santoso"] },
+    { id: "u5", username: "lina_proc", name: "Lina Marlina", role: "admin", status: "suspended", lastLogin: "1 minggu yang lalu", assignedClients: [] }
   ]);
   const [newUserForm, setNewUserForm] = useState({ username: "", name: "", role: "sales" as "superadmin" | "admin" | "sales", status: "active" as "active" | "suspended" });
   const [isAddingUser, setIsAddingUser] = useState(false);
@@ -936,6 +1318,7 @@ export default function App() {
   // Fetch initial data
   useEffect(() => {
     fetchSettings();
+    fetchLayoutPreferences();
     fetchRfqs();
     fetchQuotations();
     fetchEmails();
@@ -1105,76 +1488,192 @@ export default function App() {
     showToast(`Ekspor CSV Berhasil! Mengunduh riwayat RFQ`, "success");
   };
 
-  const filteredRfqsForAdmin = rfqs.filter((rfq) => {
-    // 1. Filter by search query
-    const q = adminRfqSearch.toLowerCase().trim();
-    if (q) {
-      const matchesSearch = (
-        rfq.rfqNumber.toLowerCase().includes(q) ||
-        rfq.clientName.toLowerCase().includes(q) ||
-        (rfq.companyName && rfq.companyName.toLowerCase().includes(q))
-      );
-      if (!matchesSearch) return false;
-    }
-
-    // 2. Filter by Date range (submission date)
-    if (rfq.date) {
-      if (adminRfqStartDate && rfq.date < adminRfqStartDate) {
-        return false;
+  const filteredRfqsForAdmin = useMemo(() => {
+    const list = rfqs.filter((rfq) => {
+      // 1. Filter by search query
+      const q = adminRfqSearch.toLowerCase().trim();
+      if (q) {
+        const matchesSearch = (
+          rfq.rfqNumber.toLowerCase().includes(q) ||
+          rfq.clientName.toLowerCase().includes(q) ||
+          (rfq.companyName && rfq.companyName.toLowerCase().includes(q))
+        );
+        if (!matchesSearch) return false;
       }
-      if (adminRfqEndDate && rfq.date > adminRfqEndDate) {
-        return false;
-      }
-    } else if (adminRfqStartDate || adminRfqEndDate) {
-      // If there's a date range filter set, but the RFQ has no date, exclude it
-      return false;
-    }
 
-    // 3. Filter by selected client or company name/category
-    if (adminRfqClientFilter) {
-      if (adminRfqClientFilter.startsWith("cat:")) {
-        const cat = adminRfqClientFilter.substring(4);
-        if (rfq.clientCategory !== cat) {
+      // 2. Filter by Date range (submission date)
+      if (rfq.date) {
+        if (adminRfqStartDate && rfq.date < adminRfqStartDate) {
           return false;
         }
-      } else {
-        const target = adminRfqClientFilter.toLowerCase();
-        const matchClient = rfq.clientName && rfq.clientName.toLowerCase().trim() === target;
-        const matchCompany = rfq.companyName && rfq.companyName.toLowerCase().trim() === target;
-        if (!matchClient && !matchCompany) {
+        if (adminRfqEndDate && rfq.date > adminRfqEndDate) {
+          return false;
+        }
+      } else if (adminRfqStartDate || adminRfqEndDate) {
+        // If there's a date range filter set, but the RFQ has no date, exclude it
+        return false;
+      }
+
+      // 3. Filter by selected client or company name/category
+      if (adminRfqClientFilter) {
+        if (adminRfqClientFilter.startsWith("cat:")) {
+          const cat = adminRfqClientFilter.substring(4);
+          if (rfq.clientCategory !== cat) {
+            return false;
+          }
+        } else {
+          const target = adminRfqClientFilter.toLowerCase();
+          const matchClient = rfq.clientName && rfq.clientName.toLowerCase().trim() === target;
+          const matchCompany = rfq.companyName && rfq.companyName.toLowerCase().trim() === target;
+          if (!matchClient && !matchCompany) {
+            return false;
+          }
+        }
+      }
+
+      // 4. Filter by Status
+      if (adminRfqStatuses.length > 0 && !adminRfqStatuses.includes(rfq.status)) {
+        return false;
+      }
+
+      // 5. Filter by Status Keyword Search
+      if (statusKeywordSearch) {
+        const qStatus = statusKeywordSearch.toLowerCase().trim();
+        const statusLabels: Record<string, string> = {
+          pending: "menunggu proposal pending amber",
+          processing: "sedang diproses processing blue biru",
+          quoted: "sudah di-quoted quoted indigo",
+          completed: "selesai completed emerald hijau",
+          cancelled: "dibatalkan cancelled rose merah"
+        };
+        if (settings.customRfqStatuses) {
+          settings.customRfqStatuses.forEach((cs) => {
+            statusLabels[cs.value] = `${cs.label.toLowerCase()} ${cs.desc.toLowerCase()} ${cs.value.toLowerCase()} ${cs.color || "purple"}`;
+          });
+        }
+        const rfqStatusText = statusLabels[rfq.status] || "";
+        if (!rfq.status.toLowerCase().includes(qStatus) && !rfqStatusText.includes(qStatus)) {
           return false;
         }
       }
-    }
 
-    // 4. Filter by Status
-    if (adminRfqStatuses.length > 0 && !adminRfqStatuses.includes(rfq.status)) {
-      return false;
-    }
-
-    // 5. Filter by Status Keyword Search
-    if (statusKeywordSearch) {
-      const qStatus = statusKeywordSearch.toLowerCase().trim();
-      const statusLabels: Record<string, string> = {
-        pending: "menunggu proposal pending amber",
-        processing: "sedang diproses processing blue biru",
-        quoted: "sudah di-quoted quoted indigo",
-        completed: "selesai completed emerald hijau",
-        cancelled: "dibatalkan cancelled rose merah"
-      };
-      if (settings.customRfqStatuses) {
-        settings.customRfqStatuses.forEach((cs) => {
-          statusLabels[cs.value] = `${cs.label.toLowerCase()} ${cs.desc.toLowerCase()} ${cs.value.toLowerCase()} ${cs.color || "purple"}`;
-        });
+      // 6. Filter by Client Category Dropdown
+      if (adminRfqCategoryFilter) {
+        if (rfq.clientCategory !== adminRfqCategoryFilter) {
+          return false;
+        }
       }
-      const rfqStatusText = statusLabels[rfq.status] || "";
-      if (!rfq.status.toLowerCase().includes(qStatus) && !rfqStatusText.includes(qStatus)) {
-        return false;
-      }
-    }
 
-    return true;
-  });
+      // 6b. Filter by specific RFQ Sub-category (Hardware, Network, CCTV, Software)
+      if (adminRfqSubCategoryFilter) {
+        const rfqSubCats = getRfqSubCategories(rfq);
+        if (!rfqSubCats.includes(adminRfqSubCategoryFilter)) {
+          return false;
+        }
+      }
+
+      // 6c. Filter by RFQ Priority
+      if (adminRfqPriorityFilter) {
+        const priority = rfq.priority || "medium";
+        if (priority !== adminRfqPriorityFilter) {
+          return false;
+        }
+      }
+
+      // 7. Filter by My Clients (assigned clients)
+      if (showOnlyMyClients) {
+        const currentUser = adminUsers.find(u => u.username === adminUsername);
+        const assigned = currentUser?.assignedClients || [];
+        const lowerAssigned = assigned.map((c: any) => String(c).toLowerCase().trim());
+        const rfqClient = rfq.clientName ? rfq.clientName.toLowerCase().trim() : "";
+        const rfqCompany = rfq.companyName ? rfq.companyName.toLowerCase().trim() : "";
+        
+        const matchesClient = rfqClient && lowerAssigned.includes(rfqClient);
+        const matchesCompany = rfqCompany && lowerAssigned.includes(rfqCompany);
+        
+        if (!matchesClient && !matchesCompany) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+
+    const getRfqTime = (rfq: RFQ) => {
+      const rfqIdNum = parseInt(rfq.id.replace("rfq_", ""), 10);
+      const hasExactTime = rfq.id.startsWith("rfq_") && !isNaN(rfqIdNum) && rfqIdNum > 1000000000000;
+      if (hasExactTime) {
+        return rfqIdNum;
+      }
+      return rfq.date ? new Date(rfq.date).getTime() : 0;
+    };
+
+    return [...list].sort((a, b) => {
+      if (adminRfqSortBy === "date-desc") {
+        return getRfqTime(b) - getRfqTime(a);
+      }
+      if (adminRfqSortBy === "date-asc") {
+        return getRfqTime(a) - getRfqTime(b);
+      }
+      if (adminRfqSortBy === "client-asc") {
+        return (a.clientName || "").localeCompare(b.clientName || "");
+      }
+      if (adminRfqSortBy === "client-desc") {
+        return (b.clientName || "").localeCompare(a.clientName || "");
+      }
+      if (adminRfqSortBy === "rfq-asc") {
+        return (a.rfqNumber || "").localeCompare(b.rfqNumber || "");
+      }
+      if (adminRfqSortBy === "rfq-desc") {
+        return (b.rfqNumber || "").localeCompare(a.rfqNumber || "");
+      }
+      if (adminRfqSortBy === "status-asc") {
+        return (a.status || "").localeCompare(b.status || "");
+      }
+      if (adminRfqSortBy === "status-desc") {
+        return (b.status || "").localeCompare(a.status || "");
+      }
+      if (adminRfqSortBy === "priority-desc" || adminRfqSortBy === "priority-asc") {
+        const priorityWeight = { urgent: 4, high: 3, medium: 2, low: 1 };
+        const wA = priorityWeight[a.priority || "medium"] || 2;
+        const wB = priorityWeight[b.priority || "medium"] || 2;
+        return adminRfqSortBy === "priority-desc" ? wB - wA : wA - wB;
+      }
+      return 0;
+    });
+  }, [rfqs, adminRfqSearch, adminRfqStartDate, adminRfqEndDate, adminRfqClientFilter, adminRfqStatuses, statusKeywordSearch, settings.customRfqStatuses, adminRfqSortBy, adminRfqCategoryFilter, adminRfqSubCategoryFilter, adminRfqPriorityFilter, showOnlyMyClients, adminUsers, adminUsername]);
+
+  const uniqueClients = useMemo(() => {
+    const clientsMap: Record<string, {
+      name: string;
+      email: string;
+      whatsapp: string;
+      company: string;
+      category: string;
+      rfqsCount: number;
+      rfqIds: string[];
+    }> = {};
+
+    rfqs.forEach(r => {
+      const key = (r.clientName || "").trim().toLowerCase();
+      if (!key) return;
+      if (!clientsMap[key]) {
+        clientsMap[key] = {
+          name: r.clientName,
+          email: r.email || "",
+          whatsapp: r.whatsapp || "",
+          company: r.companyName || "",
+          category: r.clientCategory || "umum",
+          rfqsCount: 0,
+          rfqIds: []
+        };
+      }
+      clientsMap[key].rfqsCount += 1;
+      clientsMap[key].rfqIds.push(r.id);
+    });
+
+    return Object.values(clientsMap);
+  }, [rfqs]);
 
   const adminRfqStatusCounts = useMemo(() => {
     const counts: Record<string, number> = {
@@ -1229,6 +1728,22 @@ export default function App() {
         }
       }
 
+      // Apply My Clients filter in count
+      if (showOnlyMyClients) {
+        const currentUser = adminUsers.find(u => u.username === adminUsername);
+        const assigned = currentUser?.assignedClients || [];
+        const lowerAssigned = assigned.map((c: any) => String(c).toLowerCase().trim());
+        const rfqClient = rfq.clientName ? rfq.clientName.toLowerCase().trim() : "";
+        const rfqCompany = rfq.companyName ? rfq.companyName.toLowerCase().trim() : "";
+        
+        const matchesClient = rfqClient && lowerAssigned.includes(rfqClient);
+        const matchesCompany = rfqCompany && lowerAssigned.includes(rfqCompany);
+        
+        if (!matchesClient && !matchesCompany) {
+          return;
+        }
+      }
+
       // Increment matching status
       if (rfq.status) {
         if (!(rfq.status in counts)) {
@@ -1240,7 +1755,112 @@ export default function App() {
     });
 
     return counts;
-  }, [rfqs, adminRfqSearch, adminRfqStartDate, adminRfqEndDate, adminRfqClientFilter, settings]);
+  }, [rfqs, adminRfqSearch, adminRfqStartDate, adminRfqEndDate, adminRfqClientFilter, settings, showOnlyMyClients, adminUsers, adminUsername]);
+
+  const adminRfqStatusValues = useMemo(() => {
+    const totals: Record<string, number> = {
+      "": 0,
+      pending: 0,
+      processing: 0,
+      quoted: 0,
+      completed: 0,
+      cancelled: 0,
+    };
+
+    if (settings.customRfqStatuses) {
+      settings.customRfqStatuses.forEach((st) => {
+        totals[st.value] = 0;
+      });
+    }
+
+    rfqs.forEach((rfq) => {
+      // Apply Search query filter
+      const q = adminRfqSearch.toLowerCase().trim();
+      if (q) {
+        const matchesSearch = (
+          rfq.rfqNumber.toLowerCase().includes(q) ||
+          rfq.clientName.toLowerCase().includes(q) ||
+          (rfq.companyName && rfq.companyName.toLowerCase().includes(q))
+        );
+        if (!matchesSearch) return;
+      }
+
+      // Apply Date range filter
+      if (rfq.date) {
+        if (adminRfqStartDate && rfq.date < adminRfqStartDate) {
+          return;
+        }
+        if (adminRfqEndDate && rfq.date > adminRfqEndDate) {
+          return;
+        }
+      } else if (adminRfqStartDate || adminRfqEndDate) {
+        return;
+      }
+
+      // Apply Client/Category filter
+      if (adminRfqClientFilter) {
+        if (adminRfqClientFilter.startsWith("cat:")) {
+          const cat = adminRfqClientFilter.substring(4);
+          if (rfq.clientCategory !== cat) return;
+        } else {
+          const target = adminRfqClientFilter.toLowerCase();
+          const matchClient = rfq.clientName && rfq.clientName.toLowerCase().trim() === target;
+          const matchCompany = rfq.companyName && rfq.companyName.toLowerCase().trim() === target;
+          if (!matchClient && !matchCompany) return;
+        }
+      }
+
+      // Apply My Clients filter in value calculation
+      if (showOnlyMyClients) {
+        const currentUser = adminUsers.find(u => u.username === adminUsername);
+        const assigned = currentUser?.assignedClients || [];
+        const lowerAssigned = assigned.map((c: any) => String(c).toLowerCase().trim());
+        const rfqClient = rfq.clientName ? rfq.clientName.toLowerCase().trim() : "";
+        const rfqCompany = rfq.companyName ? rfq.companyName.toLowerCase().trim() : "";
+        
+        const matchesClient = rfqClient && lowerAssigned.includes(rfqClient);
+        const matchesCompany = rfqCompany && lowerAssigned.includes(rfqCompany);
+        
+        if (!matchesClient && !matchesCompany) {
+          return;
+        }
+      }
+
+      // Calculate RFQ Value
+      let rfqValue = 0;
+      rfq.items.forEach((item) => {
+        const itemNameLower = item.name.toLowerCase();
+        const matched = catalogProducts.find((p) => {
+          const pNameLower = p.name.toLowerCase();
+          return pNameLower.includes(itemNameLower) || itemNameLower.includes(pNameLower);
+        });
+        
+        let price = matched ? getNumericPrice(matched.estimatedPriceRange) : 5000000;
+        if (price === 0) price = 5000000;
+        rfqValue += price * item.quantity;
+      });
+
+      if (rfq.status) {
+        if (!(rfq.status in totals)) {
+          totals[rfq.status] = 0;
+        }
+        totals[rfq.status] += rfqValue;
+      }
+      totals[""] += rfqValue;
+    });
+
+    return totals;
+  }, [rfqs, adminRfqSearch, adminRfqStartDate, adminRfqEndDate, adminRfqClientFilter, settings, showOnlyMyClients, adminUsers, adminUsername, catalogProducts]);
+
+  const filteredLegendStatuses = useMemo(() => {
+    if (!hideEmptyStatuses) {
+      return orderedLegendStatuses;
+    }
+    return orderedLegendStatuses.filter((item) => {
+      const count = adminRfqStatusCounts[item.value] || 0;
+      return count > 0;
+    });
+  }, [orderedLegendStatuses, hideEmptyStatuses, adminRfqStatusCounts]);
 
   const showToast = (message: string, type: "success" | "error" | "info" = "success") => {
     setToast({ message, type });
@@ -1639,6 +2259,25 @@ export default function App() {
     }
   };
 
+  const fetchLayoutPreferences = async () => {
+    try {
+      const res = await fetch("/api/settings/layout-preferences");
+      if (res.ok) {
+        const data = await res.json();
+        if (data.pinnedStatuses) {
+          setPinnedStatuses(data.pinnedStatuses);
+        }
+        if (data.legendStatusOrder) {
+          setLegendStatusOrder(data.legendStatusOrder);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch layout preferences", err);
+    } finally {
+      hasLoadedLayoutRef.current = true;
+    }
+  };
+
   const [isBulkUpdating, setIsBulkUpdating] = useState(false);
   const [isBulkNotifying, setIsBulkNotifying] = useState(false);
 
@@ -1699,6 +2338,216 @@ export default function App() {
     }
   };
 
+  const handleAssignStatusToAllFiltered = async (status: string) => {
+    if (filteredRfqsForAdmin.length === 0) {
+      showToast("Tidak ada RFQ yang sedang difilter untuk diubah!", "error");
+      return;
+    }
+    
+    const rfqIdsToUpdate = filteredRfqsForAdmin.map(r => r.id);
+    
+    const IndonesianStatusName = 
+      status === "pending" ? "Menunggu Proposal" :
+      status === "processing" ? "Sedang Diproses" :
+      status === "quoted" ? "Sudah Di-Quoted" :
+      status === "completed" ? "Selesai" :
+      status === "cancelled" ? "Dibatalkan" : status;
+
+    if (!window.confirm(`Apakah Anda yakin ingin mengubah status ${rfqIdsToUpdate.length} RFQ yang terfilter menjadi "${IndonesianStatusName}"?`)) {
+      return;
+    }
+
+    setIsBulkUpdating(true);
+    try {
+      const res = await fetch("/api/rfqs/bulk-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rfqIds: rfqIdsToUpdate,
+          status,
+          operator: adminDisplayName || adminUsername || "Staf BBS"
+        })
+      });
+      if (res.ok) {
+        showToast(`Berhasil memperbarui status ${rfqIdsToUpdate.length} RFQ yang terfilter menjadi "${IndonesianStatusName}"!`, "success");
+        fetchRfqs(); // Refresh lists
+      } else {
+        showToast("Gagal memperbarui status secara massal", "error");
+      }
+    } catch (err) {
+      console.error("Bulk status filter-update failed:", err);
+      showToast("Kesalahan koneksi ke server", "error");
+    } finally {
+      setIsBulkUpdating(false);
+    }
+  };
+
+  const handleDeleteSelectedRfqs = async () => {
+    if (selectedRfqIds.length === 0) {
+      showToast("Tidak ada RFQ yang dipilih untuk dihapus!", "error");
+      return;
+    }
+
+    if (!window.confirm(`Apakah Anda yakin ingin menghapus ${selectedRfqIds.length} RFQ yang dipilih secara permanen? Tindakan ini tidak dapat dibatalkan.`)) {
+      return;
+    }
+
+    setIsBulkUpdating(true);
+    try {
+      const res = await fetch("/api/rfqs/bulk-delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rfqIds: selectedRfqIds })
+      });
+      if (res.ok) {
+        showToast(`Berhasil menghapus ${selectedRfqIds.length} RFQ yang dipilih!`, "success");
+        setSelectedRfqIds([]);
+        fetchRfqs(); // Refresh RFQ list
+      } else {
+        showToast("Gagal menghapus RFQ terpilih secara massal", "error");
+      }
+    } catch (err) {
+      console.error("Bulk delete RFQs failed:", err);
+      showToast("Kesalahan koneksi ke server", "error");
+    } finally {
+      setIsBulkUpdating(false);
+    }
+  };
+
+  const handleExportViewToPDF = () => {
+    if (filteredRfqsForAdmin.length === 0) {
+      showToast("Tidak ada data RFQ yang aktif untuk diekspor!", "error");
+      return;
+    }
+
+    try {
+      const doc = new jsPDF();
+      
+      // Page styling: pt. Berkah Bintang Solusindo header (matches existing design!)
+      doc.setFillColor(79, 70, 229); // Indigo-600 color band on the left
+      doc.rect(14, 15, 4, 16, "F");
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(14);
+      doc.setTextColor(15, 23, 42); // slate-900
+      doc.text("PT. BERKAH BINTANG SOLUSINDO", 22, 21);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(71, 85, 105); // slate-600
+      doc.text("Solusi IT Terintegrasi, Jaringan, Hardware Supply, CCTV & Jasa Maintenance Sistem", 22, 26);
+      doc.text("Hubungi: support@berkahbintangsolusindo.co.id | Telp: 0812-3456-7890 | Web: www.bbs.co.id", 22, 30);
+
+      // Decorative divider line
+      doc.setDrawColor(226, 232, 240); // slate-200
+      doc.setLineWidth(0.5);
+      doc.line(14, 35, 196, 35);
+
+      // Document Title
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10.5);
+      doc.setTextColor(79, 70, 229); // indigo-600
+      doc.text("LAPORAN DATA PERMINTAAN PENAWARAN (RFQ)", 14, 43);
+
+      // Subtitle or criteria description
+      const currentDateString = new Date().toLocaleDateString('id-ID', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      }) + " WIB";
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(100, 116, 139); // slate-500
+      doc.text(`Dicetak pada: ${currentDateString}`, 14, 48);
+      doc.text(`Total Data Terfilter: ${filteredRfqsForAdmin.length} RFQ`, 14, 52);
+
+      // Create mapping for RFQ status text
+      const getStatusLabel = (statusVal: string) => {
+        if (statusVal === "pending") return "Pending";
+        if (statusVal === "processing") return "Processing";
+        if (statusVal === "quoted") return "Quoted";
+        if (statusVal === "completed") return "Completed";
+        if (statusVal === "cancelled") return "Cancelled";
+        const found = (settings.customRfqStatuses || []).find(cs => cs.value === statusVal);
+        return found ? found.label : statusVal.toUpperCase();
+      };
+
+      // Prepare Rows
+      const tableRows = filteredRfqsForAdmin.map((rfq, index) => {
+        // Items preview (up to 3 items summarized)
+        const itemsSummary = rfq.items && rfq.items.length > 0 
+          ? rfq.items.map(item => `${item.name} (${item.quantity}x)`).join(", ")
+          : "-";
+        
+        // Date format
+        const rfqDate = new Date(rfq.date).toLocaleDateString("id-ID", {
+          day: "numeric",
+          month: "short",
+          year: "numeric"
+        });
+
+        // Client & Company
+        const clientInfo = rfq.companyName 
+          ? `${rfq.clientName} (${rfq.companyName})`
+          : rfq.clientName;
+
+        return [
+          (index + 1).toString(),
+          rfq.rfqNumber || rfq.id.substring(0, 8).toUpperCase(),
+          rfqDate,
+          clientInfo,
+          rfq.whatsapp || "-",
+          itemsSummary,
+          getStatusLabel(rfq.status)
+        ];
+      });
+
+      // Draw table using jspdf-autotable
+      (doc as any).autoTable({
+        startY: 57,
+        head: [['No', 'No RFQ', 'Tanggal', 'Nama Klien / Perusahaan', 'No WhatsApp', 'Rincian Item Permintaan', 'Status']],
+        body: tableRows,
+        theme: 'striped',
+        headStyles: {
+          fillColor: [79, 70, 229], // indigo-600
+          textColor: [255, 255, 255],
+          fontSize: 7.5,
+          fontStyle: 'bold',
+          halign: 'left'
+        },
+        bodyStyles: {
+          fontSize: 7,
+          textColor: [15, 23, 42]
+        },
+        columnStyles: {
+          0: { cellWidth: 8, halign: 'center' },
+          1: { cellWidth: 24 },
+          2: { cellWidth: 20 },
+          3: { cellWidth: 42 },
+          4: { cellWidth: 22 },
+          5: { cellWidth: 48 },
+          6: { cellWidth: 18 }
+        },
+        margin: { left: 14, right: 14 },
+        styles: {
+          overflow: 'linebreak',
+          cellPadding: 2.5
+        }
+      });
+
+      // Download PDF
+      doc.save(`Laporan_RFQ_BBS_${new Date().toISOString().slice(0, 10)}.pdf`);
+      showToast("Laporan PDF berhasil diunduh!", "success");
+    } catch (err) {
+      console.error("Gagal mengekspor PDF:", err);
+      showToast("Gagal mengekspor PDF saat ini", "error");
+    }
+  };
+
   const handleCreateCustomStatus = async () => {
     const trimmedName = newCustomStatusName.trim();
     if (!trimmedName) {
@@ -1753,18 +2602,46 @@ export default function App() {
 
   const handleUpdateCustomStatusColor = async (statusValue: string, newColor: string) => {
     const existingCustom = settings.customRfqStatuses || [];
-    const updatedCustomStatuses = existingCustom.map(c => {
-      if (c.value === statusValue) {
-        return { ...c, color: newColor };
-      }
-      return c;
-    });
+    const isCustom = existingCustom.some(c => c.value === statusValue);
+    
+    if (isCustom) {
+      const updatedCustomStatuses = existingCustom.map(c => {
+        if (c.value === statusValue) {
+          return { ...c, color: newColor };
+        }
+        return c;
+      });
+      await updateSettings({
+        ...settings,
+        customRfqStatuses: updatedCustomStatuses
+      });
+      showToast("Warna status kustom berhasil diperbarui!", "success");
+    } else {
+      const defaultColors = settings.defaultRfqStatusColors || {};
+      await updateSettings({
+        ...settings,
+        defaultRfqStatusColors: {
+          ...defaultColors,
+          [statusValue]: newColor
+        }
+      });
+      showToast("Warna status standar berhasil diperbarui!", "success");
+    }
+  };
+
+  const handleResetStatusColors = async () => {
+    const existingCustom = settings.customRfqStatuses || [];
+    const updatedCustomStatuses = existingCustom.map(c => ({
+      ...c,
+      color: "#a855f7"
+    }));
     
     await updateSettings({
       ...settings,
+      defaultRfqStatusColors: {},
       customRfqStatuses: updatedCustomStatuses
     });
-    showToast("Warna status kustom berhasil diperbarui!", "success");
+    showToast("Semua warna status berhasil dikembalikan ke bawaan!", "success");
   };
 
   const fetchRfqs = async () => {
@@ -2409,7 +3286,8 @@ export default function App() {
           name: userObj.name,
           role: userObj.role,
           status: "active",
-          lastLogin: "Baru saja (via " + (oauthModal.provider || "Google") + ")"
+          lastLogin: "Baru saja (via " + (oauthModal.provider || "Google") + ")",
+          assignedClients: []
         };
         setAdminUsers(prev => [...prev, newUser]);
         existingUser = newUser;
@@ -2982,15 +3860,326 @@ export default function App() {
                       <ChevronDown className="h-3 w-3 opacity-80" />
                     </button>
 
-                    <button
-                      onClick={() => setIsScannerOpen(true)}
-                      className="flex items-center justify-center space-x-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-white/10 rounded-xl text-xs font-bold transition-all shadow-lg active:scale-95 cursor-pointer whitespace-nowrap"
-                      id="scan_barcode_from_catalog_btn"
-                      title="Pindai QR / Barcode Produk"
+                    <div 
+                      className="relative"
+                      onMouseEnter={() => {
+                        refreshRecentScans();
+                        setShowRecentTooltip(true);
+                      }}
+                      onMouseLeave={() => setShowRecentTooltip(false)}
                     >
-                      <Icons.Scan className="h-3.5 w-3.5 text-indigo-400" />
-                      <span>Scan</span>
-                    </button>
+                      <button
+                        onMouseDown={() => {
+                          playClickSound();
+                        }}
+                        onTouchStart={() => {
+                          playClickSound();
+                        }}
+                        onClick={() => {
+                          setIsCatalogScanTriggered(true);
+                          setIsScannerOpen(true);
+                        }}
+                        className={`group relative flex items-center justify-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold transition-all duration-100 shadow-lg cursor-pointer whitespace-nowrap overflow-hidden active:scale-90 active:translate-y-[1px] active:brightness-90 active:shadow-[inset_0_6px_12px_rgba(0,0,0,0.85)] ${
+                          showSuccessFlash
+                            ? "animate-scanSuccessFlash"
+                            : isScannerOpen
+                            ? "bg-indigo-950/80 text-white border border-indigo-500 shadow-[0_0_20px_rgba(99,102,241,0.6)] scale-105"
+                            : "bg-slate-800 hover:bg-slate-700 hover:scale-105 text-slate-300 hover:text-white border border-white/10 hover:border-indigo-500 hover:shadow-[0_0_15px_rgba(99,102,241,0.6)] animate-premiumPulse"
+                        }`}
+                        id="scan_barcode_from_catalog_btn"
+                        title="Pindai QR / Barcode Produk"
+                      >
+                        {/* Subtle scan-line animation overlay */}
+                        <div className="absolute inset-0 overflow-hidden rounded-xl pointer-events-none">
+                          <div className={`absolute inset-x-0 h-0.5 bg-gradient-to-r from-transparent to-transparent transition-all duration-300 animate-scanLine ${
+                            showSuccessFlash
+                              ? "via-emerald-300 opacity-100 shadow-[0_0_12px_rgba(16,185,129,1)]"
+                              : isScannerOpen 
+                              ? "via-indigo-300 opacity-100 shadow-[0_0_12px_rgba(99,102,241,1)]" 
+                              : "via-indigo-400 opacity-20 group-hover:opacity-100 group-hover:via-indigo-300 shadow-[0_0_6px_rgba(99,102,241,0.5)] group-hover:shadow-[0_0_10px_rgba(99,102,241,0.9)]"
+                          }`} />
+                          <div className={`absolute inset-0 transition-colors duration-200 ${
+                            showSuccessFlash ? "bg-emerald-500/20" : isScannerOpen ? "bg-indigo-500/10" : "bg-indigo-500/0 group-hover:bg-indigo-500/[0.04]"
+                          }`} />
+                        </div>
+
+                        <div className="relative flex items-center justify-center h-4 w-4 shrink-0 transition-all duration-300 ease-out group-hover:scale-115 group-hover:-translate-y-0.5 group-hover:rotate-6">
+                          {/* Pulsing ring around the icon to highlight its importance or active scanning status */}
+                          <span className={`absolute inline-flex h-full w-full rounded-full ${
+                            showSuccessFlash 
+                              ? "bg-emerald-400/80 animate-ping [animation-duration:0.6s]" 
+                              : "bg-indigo-400/60"
+                          } ${isScannerOpen && !showSuccessFlash ? "animate-ping [animation-duration:1s]" : !showSuccessFlash ? "animate-ping" : ""}`} />
+                          <span className={`absolute inline-flex h-5 w-5 rounded-full ${showSuccessFlash ? "bg-emerald-500/40" : "bg-indigo-500/20"} animate-pulse`} />
+                          <Icons.Scan className={`h-3.5 w-3.5 relative z-10 transition-transform duration-300 ease-out ${
+                            showSuccessFlash 
+                              ? "text-emerald-300 scale-125" 
+                              : isScannerOpen 
+                              ? "text-indigo-400 scale-110 animate-spin" 
+                              : "text-indigo-400 group-hover:scale-105"
+                          }`} />
+                        </div>
+                        <span>{showSuccessFlash ? "Berhasil!" : isScannerOpen ? "Scanning..." : "Scan"}</span>
+                        {!showSuccessFlash && (
+                          <Icons.ArrowLeftRight 
+                            className="h-3.5 w-3.5 text-indigo-400/80 group-hover:text-indigo-300 group-hover:translate-x-0.5 group-hover:scale-110 transition-all duration-300 ease-out animate-arrowSlide shrink-0 ml-1.5" 
+                            title="Saran Orientasi: Sejajarkan Kode Secara Horizontal"
+                          />
+                        )}
+                        {totalScannedCount > 0 && (
+                          <span 
+                            key={`total-scan-${totalScannedCount}`} 
+                            className="flex items-center justify-center bg-blue-500 text-white font-extrabold text-[9px] h-4 min-w-[16px] px-1 rounded-full border border-blue-400 shadow-md animate-badgePop"
+                          >
+                            {totalScannedCount}
+                          </span>
+                        )}
+                        {/* Corner badge for Session Scanned Count */}
+                        {sessionScannedCount > 0 && (
+                          <span 
+                            key={`session-scan-${sessionScannedCount}`} 
+                            className="absolute top-0.5 right-0.5 flex items-center justify-center bg-emerald-500 text-white font-black text-[7px] leading-none px-1 py-0.5 rounded-sm border border-emerald-400/40 shadow-sm select-none z-10 animate-badgePop" 
+                            title="Scan Sesi Ini"
+                          >
+                            {sessionScannedCount}
+                          </span>
+                        )}
+                      </button>
+
+                      {/* Orientation guide overlay, shown programmatically when the scanner is actively open */}
+                      {isScannerOpen && !showSuccessFlash && (
+                        <div 
+                          className="absolute right-0 top-full mt-2 w-72 bg-slate-950/95 border border-indigo-500/40 rounded-2xl shadow-[0_0_30px_rgba(99,102,241,0.3)] z-50 p-4 backdrop-blur-xl animate-fadeIn space-y-3 animate-premiumPulse"
+                          style={{ zIndex: 9999 }}
+                        >
+                          {/* Title & Close Button */}
+                          <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                            <div className="flex items-center space-x-1.5 text-indigo-400 text-[10px] font-black uppercase tracking-wider">
+                              <Icons.HelpCircle className="h-3.5 w-3.5 animate-pulse" />
+                              <span>Panduan Posisi Scan</span>
+                            </div>
+                            <span className="flex h-2 w-2 relative">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                            </span>
+                          </div>
+
+                          {/* Dynamic Orientation Guide Content */}
+                          <div className="space-y-3">
+                            {/* Animated Visual Barcode + Laser scanner alignment illustration */}
+                            <div className="relative h-20 bg-slate-900/80 border border-white/5 rounded-xl flex flex-col items-center justify-center overflow-hidden p-2">
+                              {/* Horizontal laser scanning line */}
+                              <div className="absolute inset-y-0 w-0.5 bg-indigo-400 animate-pulse left-1/2" />
+                              
+                              {/* Scanning lines representing a barcode */}
+                              <div className="flex items-end justify-center space-x-[2px] opacity-40 h-8">
+                                <div className="w-1 h-full bg-white" />
+                                <div className="w-0.5 h-full bg-white" />
+                                <div className="w-1.5 h-full bg-white" />
+                                <div className="w-0.5 h-full bg-white" />
+                                <div className="w-2 h-full bg-white" />
+                                <div className="w-1 h-full bg-white" />
+                                <div className="w-0.5 h-full bg-white" />
+                                <div className="w-1.5 h-full bg-white" />
+                                <div className="w-1 h-full bg-white" />
+                                <div className="w-2 h-full bg-white" />
+                                <div className="w-0.5 h-full bg-white" />
+                                <div className="w-1 h-full bg-white" />
+                              </div>
+
+                              {/* Directional arrow animation */}
+                              <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex justify-between px-6 pointer-events-none">
+                                <Icons.ChevronLeft className="h-4 w-4 text-emerald-400 animate-bounce" style={{ transform: "rotate(90deg)" }} />
+                                <span className="text-[9px] font-bold text-indigo-300 tracking-wider">SEJAJARKAN DATAR</span>
+                                <Icons.ChevronRight className="h-4 w-4 text-emerald-400 animate-bounce" style={{ transform: "rotate(-90deg)" }} />
+                              </div>
+
+                              {/* Static target overlay corner lines */}
+                              <div className="absolute top-2 left-2 w-2.5 h-2.5 border-t-2 border-l-2 border-indigo-500/60 rounded-tl-sm" />
+                              <div className="absolute top-2 right-2 w-2.5 h-2.5 border-t-2 border-r-2 border-indigo-500/60 rounded-tr-sm" />
+                              <div className="absolute bottom-2 left-2 w-2.5 h-2.5 border-b-2 border-l-2 border-indigo-500/60 rounded-bl-sm" />
+                              <div className="absolute bottom-2 right-2 w-2.5 h-2.5 border-b-2 border-r-2 border-indigo-500/60 rounded-br-sm" />
+                            </div>
+
+                            {/* Text Instructions */}
+                            <div className="text-[11px] leading-relaxed text-slate-300 space-y-2">
+                              <p className="flex items-start space-x-1.5">
+                                <Icons.Info className="h-3.5 w-3.5 text-indigo-400 shrink-0 mt-0.5" />
+                                <span>Posisikan kode batang / QR secara <strong className="text-emerald-400 font-extrabold uppercase">Horizontal (Mendatar)</strong> agar kamera dapat membaca dengan optimal.</span>
+                              </p>
+                              <div className="p-2 bg-indigo-500/5 border border-indigo-500/10 rounded-lg space-y-1">
+                                <p className="text-[10px] text-slate-400 font-medium">Tips Pemindaian Sukses:</p>
+                                <ul className="list-disc pl-3 text-[9px] text-slate-400 space-y-1">
+                                  <li>Jaga jarak ponsel sekitar 10-15 cm</li>
+                                  <li>Pastikan pencahayaan terang dan tidak silau</li>
+                                  <li>Hindari bayangan atau lipatan kertas katalog</li>
+                                </ul>
+                              </div>
+                            </div>
+
+                            {/* Sound/Beep Volume Control Slider */}
+                            <div className="p-2.5 bg-indigo-950/40 border border-indigo-500/10 rounded-xl space-y-2">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center space-x-1.5 text-slate-300">
+                                  <button
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      const nextVol = scannerVolume > 0 ? 0 : 0.5;
+                                      setScannerVolume(nextVol);
+                                      localStorage.setItem("bbs_scanner_volume", nextVol.toString());
+                                    }}
+                                    className="p-1 hover:bg-white/5 rounded-lg text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer"
+                                    title={scannerVolume > 0 ? "Bisukan (Mute)" : "Bunyikan"}
+                                  >
+                                    {scannerVolume === 0 ? (
+                                      <Icons.VolumeX className="h-3.5 w-3.5 text-rose-400" />
+                                    ) : scannerVolume < 0.3 ? (
+                                      <Icons.Volume className="h-3.5 w-3.5" />
+                                    ) : scannerVolume < 0.7 ? (
+                                      <Icons.Volume1 className="h-3.5 w-3.5" />
+                                    ) : (
+                                      <Icons.Volume2 className="h-3.5 w-3.5 animate-pulse" />
+                                    )}
+                                  </button>
+                                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Volume Beep</span>
+                                </div>
+                                <span className="text-[10px] font-mono text-indigo-400 font-bold">
+                                  {scannerVolume === 0 ? "Muted" : `${Math.round(scannerVolume * 100)}%`}
+                                </span>
+                              </div>
+                              <div className="flex items-center space-x-2">
+                                <input
+                                  type="range"
+                                  min="0"
+                                  max="1"
+                                  step="0.05"
+                                  value={scannerVolume}
+                                  onChange={(e) => {
+                                    const val = parseFloat(e.target.value);
+                                    setScannerVolume(val);
+                                    localStorage.setItem("bbs_scanner_volume", val.toString());
+                                  }}
+                                  className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500 hover:accent-indigo-400 transition-all focus:outline-none"
+                                />
+                                <button
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    // Let them play a quick beep to preview the new sound level
+                                    try {
+                                      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+                                      if (AudioContextClass) {
+                                        const audioCtx = new AudioContextClass();
+                                        const osc = audioCtx.createOscillator();
+                                        const gain = audioCtx.createGain();
+                                        osc.connect(gain);
+                                        gain.connect(audioCtx.destination);
+                                        osc.type = "sine";
+                                        osc.frequency.setValueAtTime(2500, audioCtx.currentTime);
+                                        
+                                        const targetGain = 0.22 * scannerVolume;
+                                        gain.gain.setValueAtTime(0, audioCtx.currentTime);
+                                        gain.gain.linearRampToValueAtTime(targetGain, audioCtx.currentTime + 0.004);
+                                        gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.065);
+                                        
+                                        osc.start(audioCtx.currentTime);
+                                        osc.stop(audioCtx.currentTime + 0.07);
+                                      }
+                                    } catch (err) {}
+                                  }}
+                                  className="px-2 py-1 bg-indigo-500/15 hover:bg-indigo-500/30 text-indigo-300 hover:text-white rounded text-[9px] font-black uppercase tracking-wider transition-all border border-indigo-500/20 active:scale-95"
+                                  title="Tes Suara Beep"
+                                >
+                                  Tes
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {showRecentTooltip && !isScannerOpen && (
+                        <div 
+                          className="absolute right-0 top-full mt-2 w-72 bg-slate-950/95 border border-white/10 rounded-2xl shadow-2xl z-50 p-4 backdrop-blur-xl animate-fadeIn space-y-3"
+                          style={{ zIndex: 9999 }}
+                        >
+                          {/* Live Scan Count & Stats Tooltip Dashboard */}
+                          <div className="grid grid-cols-2 gap-2 p-2 bg-slate-900/60 border border-white/5 rounded-xl">
+                            <div className="flex flex-col justify-center items-center p-2 bg-indigo-500/5 border border-indigo-500/10 rounded-lg text-center">
+                              <span className="text-slate-400 text-[8px] font-black uppercase tracking-wider">Scan Sesi Ini</span>
+                              <span className="text-base font-black text-indigo-400 mt-0.5">{sessionScannedCount}</span>
+                            </div>
+                            <div className="flex flex-col justify-center items-center p-2 bg-emerald-500/5 border border-emerald-500/10 rounded-lg text-center">
+                              <span className="text-slate-400 text-[8px] font-black uppercase tracking-wider">Total Lifetime</span>
+                              <span className="text-base font-black text-emerald-400 mt-0.5">{totalScannedCount}</span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                            <div className="flex items-center space-x-1.5 text-indigo-400 text-[10px] font-black uppercase tracking-wider">
+                              <Icons.History className="h-3.5 w-3.5 animate-pulse" />
+                              <span>Recent Scans ({recentScans.length})</span>
+                            </div>
+                            {recentScans.length > 0 && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  try {
+                                    localStorage.removeItem("bbs_recent_scans");
+                                    setRecentScans([]);
+                                  } catch {}
+                                }}
+                                className="text-[9px] text-slate-500 hover:text-red-400 transition-colors cursor-pointer"
+                              >
+                                Hapus
+                              </button>
+                            )}
+                          </div>
+
+                          {recentScans.length > 0 ? (
+                            <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                              {recentScans.slice(0, 4).map((item, index) => {
+                                const prod = item.product || item;
+                                return (
+                                  <div key={index} className="flex items-center justify-between space-x-2 p-1.5 hover:bg-white/5 rounded-lg border border-transparent hover:border-white/5 transition-all">
+                                    <div className="flex items-center space-x-2 min-w-0 flex-1">
+                                      {prod.image ? (
+                                        <img src={prod.image} className="w-7 h-7 object-contain bg-white rounded p-0.5 shrink-0" referrerPolicy="no-referrer" />
+                                      ) : (
+                                        <div className="w-7 h-7 bg-indigo-500/10 text-indigo-400 rounded flex items-center justify-center font-bold text-[9px] shrink-0">
+                                          {prod.id?.slice(-2) || "P"}
+                                        </div>
+                                      )}
+                                      <div className="min-w-0 flex-1">
+                                        <p className="text-[10px] font-bold text-white truncate leading-tight">{prod.name}</p>
+                                        <p className="text-[8px] text-slate-500 truncate mt-0.5">{prod.category || "Item"}</p>
+                                      </div>
+                                    </div>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        addToCart(prod);
+                                        incrementSessionScannedCount();
+                                        incrementTotalScannedCount();
+                                        showToast(`"${prod.name}" ditambahkan ke keranjang!`, "success");
+                                      }}
+                                      className="text-[9px] text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 border border-indigo-500/20 rounded px-1.5 py-0.5 transition-all cursor-pointer shrink-0"
+                                    >
+                                      + Add
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="text-center py-3 text-slate-500 text-[10px]">
+                              Belum ada riwayat pemindaian.
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
 
                     {isCatalogMenuOpen && (
                       <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 w-64 bg-slate-900 border border-white/10 rounded-xl shadow-2xl z-50 py-1.5 overflow-hidden backdrop-blur-xl animate-scaleUp">
@@ -3509,7 +4698,10 @@ export default function App() {
               </motion.button>
 
               <motion.button
-                onClick={() => setIsScannerOpen(true)}
+                onClick={() => {
+                  setIsCatalogScanTriggered(false);
+                  setIsScannerOpen(true);
+                }}
                 className="flex items-center space-x-2 px-4.5 py-3 rounded-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-bold text-xs tracking-wide border border-indigo-400/30 cursor-pointer group"
                 title="Quick Scan Label Barcode / QR Produk"
                 animate={{
@@ -4470,7 +5662,10 @@ export default function App() {
                     {/* Scan Barcode / QR Trigger Button */}
                     <button
                       type="button"
-                      onClick={() => setIsScannerOpen(true)}
+                      onClick={() => {
+                        setIsCatalogScanTriggered(false);
+                        setIsScannerOpen(true);
+                      }}
                       className="w-full py-2.5 bg-gradient-to-r from-indigo-600/20 to-violet-600/20 hover:from-indigo-600/30 hover:to-violet-600/30 text-indigo-200 hover:text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center space-x-2 border border-indigo-500/20 shadow-sm cursor-pointer group"
                     >
                       <Icons.Scan className="h-4 w-4 text-indigo-400 group-hover:scale-110 transition-transform" />
@@ -5072,7 +6267,8 @@ export default function App() {
                           password: registerForm.password.trim(),
                           role: registerForm.role,
                           status: "active",
-                          lastLogin: "Baru saja terdaftar"
+                          lastLogin: "Baru saja terdaftar",
+                          assignedClients: []
                         };
 
                         setAdminUsers([...adminUsers, newUser]);
@@ -5360,6 +6556,18 @@ export default function App() {
                     <span>Pesanan Toko ({orders.length})</span>
                   </button>
 
+                  <button
+                    onClick={() => setActiveAdminSubTab("clients" as any)}
+                    className={`px-5 py-3 text-sm font-bold border-b-2 transition-all flex items-center gap-2 ${
+                      activeAdminSubTab === ("clients" as any)
+                        ? "border-indigo-500 text-indigo-400" 
+                        : "border-transparent text-slate-400 hover:text-white"
+                    }`}
+                  >
+                    <Icons.Users className="h-4.5 w-4.5" />
+                    <span>Database Klien ({uniqueClients.length})</span>
+                  </button>
+
                   {adminRole === "superadmin" && (
                     <button
                       onClick={() => setActiveAdminSubTab("users")}
@@ -5525,9 +6733,9 @@ export default function App() {
                               <span>Status RFQ:</span>
                             </div>
                             <div className="flex flex-col gap-1.5">
-                              <div className="relative flex flex-col sm:flex-row items-stretch sm:items-center gap-2" ref={statusFilterRef} id="rfq_status_filter_container">
+                              <div className="relative flex flex-col gap-2 p-1 rounded-xl" ref={statusFilterRef} id="rfq_status_filter_container">
                               {/* Glowing border animation overlay when active filters are detected */}
-                              {(adminRfqStatuses.length > 0 || !!adminRfqSearch || !!adminRfqStartDate || !!adminRfqEndDate || !!adminRfqClientFilter || !!statusKeywordSearch) && (
+                              {(adminRfqStatuses.length > 0 || !!adminRfqSearch || !!adminRfqStartDate || !!adminRfqEndDate || !!adminRfqClientFilter || !!statusKeywordSearch || !!adminRfqCategoryFilter || !!adminRfqSubCategoryFilter || !!adminRfqPriorityFilter || showOnlyMyClients) && (
                                 <motion.div
                                   className="absolute inset-0 rounded-xl pointer-events-none z-0"
                                   animate={{
@@ -5553,6 +6761,15 @@ export default function App() {
                                   }}
                                 />
                               )}
+
+                              {/* Controls row container */}
+                              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-wrap z-10">
+
+                              {/* Session Scanned Products Counter Badge */}
+                              <div className="flex items-center gap-1.5 bg-slate-950/80 border border-white/10 hover:border-emerald-500/30 rounded-xl px-2.5 py-1.5 text-[11px] text-slate-200 font-bold z-10 shrink-0 transition-all cursor-default" title="Total produk inventaris yang dipindai dalam sesi ini">
+                                <Icons.Scan className="h-3.5 w-3.5 text-emerald-400 animate-pulse" />
+                                <span>Pindai Sesi: <strong className="text-emerald-400 font-extrabold">{sessionScannedCount}</strong></span>
+                              </div>
                               {/* Hidden select for standard DOM API and integration compatibility */}
                               <select
                                 id="rfq_status_filter"
@@ -5590,6 +6807,294 @@ export default function App() {
                                   >
                                     <X className="h-3 w-3" />
                                   </button>
+                                )}
+                              </div>
+
+                              {/* Dropdown Kategori Klien (Perusahaan, Pemerintah, Pendidikan, UMKM, Retail) */}
+                              <div className="flex items-center gap-1.5 z-10 shrink-0">
+                                <div className="relative">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setIsAdminRfqCategoryDropdownOpen(!isAdminRfqCategoryDropdownOpen);
+                                      setIsAdminRfqSubCategoryDropdownOpen(false);
+                                      setIsAdminRfqSortDropdownOpen(false);
+                                      setIsStatusFilterOpen(false);
+                                    }}
+                                    className="flex items-center gap-1.5 bg-slate-950 border border-white/10 hover:border-indigo-500/40 rounded-xl px-3 py-1.5 text-xs text-slate-200 font-semibold cursor-pointer transition-all hover:bg-slate-900"
+                                    id="rfq_category_filter_button"
+                                  >
+                                    <Icons.Tags className="h-3.5 w-3.5 text-indigo-400" />
+                                    <span>
+                                      {adminRfqCategoryFilter === "" && "Kategori: Semua"}
+                                      {adminRfqCategoryFilter === "perusahaan" && "🏢 Perusahaan"}
+                                      {adminRfqCategoryFilter === "pemerintah" && "🏛️ Pemerintah"}
+                                      {adminRfqCategoryFilter === "pendidikan" && "🎓 Pendidikan"}
+                                      {adminRfqCategoryFilter === "umkm" && "🏪 UMKM"}
+                                      {adminRfqCategoryFilter === "retail" && "👤 Retail"}
+                                    </span>
+                                    <ChevronDown className={`h-3 w-3 text-slate-400 transition-transform duration-200 ${isAdminRfqCategoryDropdownOpen ? "rotate-180 text-indigo-400" : ""}`} />
+                                  </button>
+
+                                  {isAdminRfqCategoryDropdownOpen && (
+                                    <div 
+                                      className="absolute top-full left-0 mt-1.5 w-[200px] bg-slate-950 border border-white/10 rounded-xl shadow-2xl z-50 p-1 backdrop-blur-md"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      {[
+                                        { value: "", label: "Semua Kategori" },
+                                        { value: "perusahaan", label: "🏢 Perusahaan / Corp" },
+                                        { value: "pemerintah", label: "🏛️ Pemerintah / Umum" },
+                                        { value: "pendidikan", label: "🎓 Lembaga Pendidikan" },
+                                        { value: "umkm", label: "🏪 UMKM / Bisnis Lokal" },
+                                        { value: "retail", label: "👤 Pelanggan Retail" }
+                                      ].map((opt) => {
+                                        const isSelected = adminRfqCategoryFilter === opt.value;
+                                        return (
+                                          <button
+                                            key={opt.value}
+                                            type="button"
+                                            onClick={() => {
+                                              setAdminRfqCategoryFilter(opt.value);
+                                              setIsAdminRfqCategoryDropdownOpen(false);
+                                            }}
+                                            className={`flex items-center justify-between w-full px-2.5 py-1.5 text-[11px] font-semibold rounded-lg text-left transition-all ${
+                                              isSelected 
+                                                ? "bg-indigo-600/25 text-indigo-300 border border-indigo-500/20"
+                                                : "text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-transparent"
+                                            }`}
+                                          >
+                                            <span>{opt.label}</span>
+                                            {isSelected && <Icons.Check className="h-3 w-3 text-indigo-400" />}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                                {adminRfqCategoryFilter && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setAdminRfqCategoryFilter("")}
+                                    className="px-2 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/20 rounded-xl font-bold transition-all text-xs flex items-center gap-1 cursor-pointer"
+                                    title="Hapus Filter Kategori"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                )}
+                              </div>
+
+                              {/* Dropdown Sub-Kategori RFQ (Hardware, Network, CCTV, Software) */}
+                              <div className="flex items-center gap-1.5 z-10 shrink-0">
+                                <div className="relative">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setIsAdminRfqSubCategoryDropdownOpen(!isAdminRfqSubCategoryDropdownOpen);
+                                      setIsAdminRfqCategoryDropdownOpen(false);
+                                      setIsAdminRfqSortDropdownOpen(false);
+                                      setIsStatusFilterOpen(false);
+                                    }}
+                                    className="flex items-center gap-1.5 bg-slate-950 border border-white/10 hover:border-indigo-500/40 rounded-xl px-3 py-1.5 text-xs text-slate-200 font-semibold cursor-pointer transition-all hover:bg-slate-900"
+                                    id="rfq_subcategory_filter_button"
+                                  >
+                                    <Icons.Cpu className="h-3.5 w-3.5 text-emerald-400" />
+                                    <span>
+                                      {adminRfqSubCategoryFilter === "" && "Sub-Kategori: Semua"}
+                                      {adminRfqSubCategoryFilter === "Hardware" && "🖥️ Hardware"}
+                                      {adminRfqSubCategoryFilter === "Network" && "🌐 Network"}
+                                      {adminRfqSubCategoryFilter === "CCTV" && "📹 CCTV"}
+                                      {adminRfqSubCategoryFilter === "Software" && "💿 Software"}
+                                    </span>
+                                    <ChevronDown className={`h-3 w-3 text-slate-400 transition-transform duration-200 ${isAdminRfqSubCategoryDropdownOpen ? "rotate-180 text-emerald-400" : ""}`} />
+                                  </button>
+
+                                  {isAdminRfqSubCategoryDropdownOpen && (
+                                    <div 
+                                      className="absolute top-full left-0 mt-1.5 w-[200px] bg-slate-950 border border-white/10 rounded-xl shadow-2xl z-50 p-1 backdrop-blur-md"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      {[
+                                        { value: "", label: "Semua Sub-Kategori" },
+                                        { value: "Hardware", label: "🖥️ Hardware" },
+                                        { value: "Network", label: "🌐 Network" },
+                                        { value: "CCTV", label: "📹 CCTV" },
+                                        { value: "Software", label: "💿 Software" }
+                                      ].map((opt) => {
+                                        const isSelected = adminRfqSubCategoryFilter === opt.value;
+                                        return (
+                                          <button
+                                            key={opt.value}
+                                            type="button"
+                                            onClick={() => {
+                                              setAdminRfqSubCategoryFilter(opt.value);
+                                              setIsAdminRfqSubCategoryDropdownOpen(false);
+                                            }}
+                                            className={`flex items-center justify-between w-full px-2.5 py-1.5 text-[11px] font-semibold rounded-lg text-left transition-all ${
+                                              isSelected 
+                                                ? "bg-emerald-600/25 text-emerald-300 border border-emerald-500/20"
+                                                : "text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-transparent"
+                                            }`}
+                                          >
+                                            <span>{opt.label}</span>
+                                            {isSelected && <Icons.Check className="h-3 w-3 text-emerald-400" />}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                                {adminRfqSubCategoryFilter && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setAdminRfqSubCategoryFilter("")}
+                                    className="px-2 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/20 rounded-xl font-bold transition-all text-xs flex items-center gap-1 cursor-pointer"
+                                    title="Hapus Filter Sub-Kategori"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                )}
+                              </div>
+
+                              {/* Dropdown Prioritas RFQ (Low, Medium, High, Urgent) */}
+                              <div className="flex items-center gap-1.5 z-10 shrink-0">
+                                <div className="relative">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setIsAdminRfqPriorityDropdownOpen(!isAdminRfqPriorityDropdownOpen);
+                                      setIsAdminRfqSubCategoryDropdownOpen(false);
+                                      setIsAdminRfqCategoryDropdownOpen(false);
+                                      setIsAdminRfqSortDropdownOpen(false);
+                                      setIsStatusFilterOpen(false);
+                                    }}
+                                    className="flex items-center gap-1.5 bg-slate-950 border border-white/10 hover:border-indigo-500/40 rounded-xl px-3 py-1.5 text-xs text-slate-200 font-semibold cursor-pointer transition-all hover:bg-slate-900"
+                                    id="rfq_priority_filter_button"
+                                  >
+                                    <Icons.Activity className="h-3.5 w-3.5 text-rose-400" />
+                                    <span>
+                                      {adminRfqPriorityFilter === "" && "Prioritas: Semua"}
+                                      {adminRfqPriorityFilter === "low" && "⚡ Low"}
+                                      {adminRfqPriorityFilter === "medium" && "⚡ Medium"}
+                                      {adminRfqPriorityFilter === "high" && "⚡ High"}
+                                      {adminRfqPriorityFilter === "urgent" && "🚨 Urgent"}
+                                    </span>
+                                    <ChevronDown className={`h-3 w-3 text-slate-400 transition-transform duration-200 ${isAdminRfqPriorityDropdownOpen ? "rotate-180 text-rose-400" : ""}`} />
+                                  </button>
+
+                                  {isAdminRfqPriorityDropdownOpen && (
+                                    <div 
+                                      className="absolute top-full left-0 mt-1.5 w-[180px] bg-slate-950 border border-white/10 rounded-xl shadow-2xl z-50 p-1 backdrop-blur-md"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      {[
+                                        { value: "", label: "Semua Prioritas" },
+                                        { value: "low", label: "⚡ Low" },
+                                        { value: "medium", label: "⚡ Medium" },
+                                        { value: "high", label: "⚡ High" },
+                                        { value: "urgent", label: "🚨 Urgent" }
+                                      ].map((opt) => {
+                                        const isSelected = adminRfqPriorityFilter === opt.value;
+                                        return (
+                                          <button
+                                            key={opt.value}
+                                            type="button"
+                                            onClick={() => {
+                                              setAdminRfqPriorityFilter(opt.value);
+                                              setIsAdminRfqPriorityDropdownOpen(false);
+                                            }}
+                                            className={`flex items-center justify-between w-full px-2.5 py-1.5 text-[11px] font-semibold rounded-lg text-left transition-all ${
+                                              isSelected 
+                                                ? "bg-indigo-600/25 text-indigo-300 border border-indigo-500/20"
+                                                : "text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-transparent"
+                                            }`}
+                                          >
+                                            <span>{opt.label}</span>
+                                            {isSelected && <Icons.Check className="h-3 w-3 text-indigo-400" />}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                                {adminRfqPriorityFilter && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setAdminRfqPriorityFilter("")}
+                                    className="px-2 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/20 rounded-xl font-bold transition-all text-xs flex items-center gap-1 cursor-pointer"
+                                    title="Hapus Filter Prioritas"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                )}
+                              </div>
+
+                              {/* Quick RFQ Sort Button & Dropdown */}
+                              <div className="relative shrink-0 z-10">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setIsAdminRfqSortDropdownOpen(!isAdminRfqSortDropdownOpen);
+                                    setIsAdminRfqSubCategoryDropdownOpen(false);
+                                    setIsAdminRfqCategoryDropdownOpen(false);
+                                  }}
+                                  className="flex items-center gap-1.5 bg-slate-950 border border-white/10 hover:border-indigo-500/40 rounded-xl px-3 py-1.5 text-xs text-slate-200 font-semibold cursor-pointer transition-all hover:bg-slate-900"
+                                  id="rfq_sort_button"
+                                >
+                                  <Icons.ArrowUpDown className="h-3.5 w-3.5 text-indigo-400" />
+                                  <span>
+                                    {adminRfqSortBy === "date-desc" && "Tanggal: Terbaru"}
+                                    {adminRfqSortBy === "date-asc" && "Tanggal: Terlama"}
+                                    {adminRfqSortBy === "client-asc" && "Klien: A-Z"}
+                                    {adminRfqSortBy === "client-desc" && "Klien: Z-A"}
+                                    {adminRfqSortBy === "rfq-asc" && "No RFQ: Terkecil"}
+                                    {adminRfqSortBy === "rfq-desc" && "No RFQ: Terbesar"}
+                                    {adminRfqSortBy === "status-asc" && "Status: A-Z"}
+                                    {adminRfqSortBy === "status-desc" && "Status: Z-A"}
+                                    {adminRfqSortBy === "priority-desc" && "Prioritas: Tertinggi"}
+                                    {adminRfqSortBy === "priority-asc" && "Prioritas: Terendah"}
+                                  </span>
+                                  <ChevronDown className={`h-3 w-3 text-slate-400 transition-transform duration-200 ${isAdminRfqSortDropdownOpen ? "rotate-180 text-indigo-400" : ""}`} />
+                                </button>
+
+                                {isAdminRfqSortDropdownOpen && (
+                                  <div 
+                                    className="absolute top-full left-0 mt-1.5 w-[180px] bg-slate-950 border border-white/10 rounded-xl shadow-2xl z-50 p-1 backdrop-blur-md"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    {[
+                                      { value: "date-desc", label: "Tanggal: Terbaru" },
+                                      { value: "date-asc", label: "Tanggal: Terlama" },
+                                      { value: "client-asc", label: "Klien: A-Z" },
+                                      { value: "client-desc", label: "Klien: Z-A" },
+                                      { value: "rfq-asc", label: "No RFQ: Terkecil" },
+                                      { value: "rfq-desc", label: "No RFQ: Terbesar" },
+                                      { value: "status-asc", label: "Status: A-Z" },
+                                      { value: "status-desc", label: "Status: Z-A" },
+                                      { value: "priority-desc", label: "Prioritas: Tertinggi" },
+                                      { value: "priority-asc", label: "Prioritas: Terendah" }
+                                    ].map((opt) => {
+                                      const isSelected = adminRfqSortBy === opt.value;
+                                      return (
+                                        <button
+                                          key={opt.value}
+                                          type="button"
+                                          onClick={() => {
+                                            setAdminRfqSortBy(opt.value as any);
+                                            setIsAdminRfqSortDropdownOpen(false);
+                                          }}
+                                          className={`flex items-center justify-between w-full px-2.5 py-1.5 text-[11px] font-semibold rounded-lg text-left transition-all ${
+                                            isSelected 
+                                              ? "bg-indigo-600/25 text-indigo-300 border border-indigo-500/20"
+                                              : "text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-transparent"
+                                          }`}
+                                        >
+                                          <span>{opt.label}</span>
+                                          {isSelected && <Icons.Check className="h-3 w-3 text-indigo-400" />}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
                                 )}
                               </div>
 
@@ -5792,42 +7297,109 @@ export default function App() {
                                   >
                                     {/* Color Legend Header */}
                                     <div className="px-2.5 py-2 bg-slate-900/80 rounded-t-lg border-b border-white/5 text-[10px] text-slate-300">
-                                      <div className="flex items-center justify-between mb-1.5 font-bold text-slate-200 uppercase tracking-wider text-[9px]">
-                                        <div className="flex items-center gap-1">
-                                          <Icons.Info className="h-3 w-3 text-indigo-400" />
-                                          <span>Prioritas Warna / Legend (Geser untuk Urutkan)</span>
+                                      <div className="flex items-center justify-between mb-1.5 font-bold text-slate-200 uppercase tracking-wider text-[9px] gap-2">
+                                        <div className="flex items-center gap-1 min-w-0">
+                                          <Icons.Info className="h-3 w-3 text-indigo-400 shrink-0" />
+                                          <span className="truncate">Prioritas Warna</span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5 shrink-0">
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              const allVals = orderedLegendStatuses.map((item) => item.value);
+                                              setPinnedStatuses(allVals);
+                                              showToast("Semua status filter berhasil disematkan ke atas!", "success");
+                                            }}
+                                            className="px-1.5 py-0.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 hover:text-amber-300 border border-amber-500/20 hover:border-amber-500/40 rounded transition-all flex items-center gap-1 font-semibold uppercase tracking-normal shrink-0 text-[8px]"
+                                            title="Sematkan semua status filter ke bagian atas agar lebih mudah diakses"
+                                          >
+                                            <motion.span
+                                              whileHover={{ scale: 1.25, rotate: 60 }}
+                                              whileTap={{ scale: 0.85 }}
+                                              transition={{ type: "spring", stiffness: 400, damping: 12 }}
+                                              className="inline-flex items-center justify-center"
+                                            >
+                                              <Icons.Pin className="h-2 w-2 fill-amber-400 rotate-[45deg]" />
+                                            </motion.span>
+                                            <span>Pin Semua</span>
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              if (window.confirm("Apakah Anda yakin ingin mengembalikan semua warna status ke bawaan sistem?")) {
+                                                handleResetStatusColors();
+                                              }
+                                            }}
+                                            className="px-1.5 py-0.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/20 hover:border-rose-500/40 rounded transition-all flex items-center gap-1 font-semibold uppercase tracking-normal shrink-0 text-[8px]"
+                                            title="Reset semua warna indikator status kembali ke bawaan sistem"
+                                          >
+                                            <Icons.RotateCcw className="h-2 w-2" />
+                                            <span>Reset Warna</span>
+                                          </button>
                                         </div>
                                       </div>
+
+                                      {/* Toggle "Show Only My Clients" */}
+                                      <div className="mt-2.5 mb-1 bg-slate-950/80 rounded-lg border border-indigo-500/15 p-2 flex items-center justify-between gap-2 shadow-[inset_0_1px_2px_rgba(0,0,0,0.4)]">
+                                        <div className="flex items-center gap-1.5 min-w-0">
+                                          <Icons.UserCheck className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
+                                          <div className="flex flex-col min-w-0">
+                                            <span className="font-extrabold text-slate-200 text-[10px] truncate">Hanya Klien Saya</span>
+                                            <span className="text-[8px] text-slate-500 font-medium truncate">Filter RFQ ditugaskan</span>
+                                          </div>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setShowOnlyMyClients(!showOnlyMyClients);
+                                          }}
+                                          className={`relative inline-flex h-4 w-8 shrink-0 cursor-pointer rounded-full border border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                                            showOnlyMyClients ? "bg-indigo-600" : "bg-slate-800"
+                                          }`}
+                                          title={showOnlyMyClients ? "Matikan filter klien saya" : "Aktifkan filter klien saya"}
+                                        >
+                                          <span
+                                            aria-hidden="true"
+                                            className={`pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                              showOnlyMyClients ? "translate-x-4" : "translate-x-0"
+                                            }`}
+                                          />
+                                        </button>
+                                      </div>
                                       
-                                      <div className="space-y-1.5 mt-1 max-h-[160px] overflow-y-auto pr-0.5 custom-scrollbar">
-                                        {orderedLegendStatuses.map((item) => {
+                                      <div className="space-y-1.5 mt-2.5 max-h-[160px] overflow-y-auto pr-0.5 custom-scrollbar">
+                                        {filteredLegendStatuses.map((item, idx) => {
                                           const isCustom = item.isCustom;
-                                          const isHexColor = isCustom && (item.color || "").startsWith("#");
+                                          const isHexColor = (item.color || "").startsWith("#");
                                           
                                           // Determine dot style
                                           let dotStyle = undefined;
                                           let dotClass = "h-1.5 w-1.5 rounded-full shrink-0";
                                           
-                                          if (isCustom) {
-                                            dotClass += " animate-pulse";
-                                            if (isHexColor) {
-                                              dotStyle = {
-                                                backgroundColor: item.color,
-                                                boxShadow: `0 0 4px ${item.color}`
-                                              };
-                                            } else {
-                                              const tailwindColorMap: Record<string, string> = {
-                                                purple: "bg-purple-400 shadow-[0_0_4px_rgba(168,85,247,0.5)]",
-                                                violet: "bg-violet-400 shadow-[0_0_4px_rgba(139,92,246,0.5)]",
-                                                pink: "bg-pink-400 shadow-[0_0_4px_rgba(236,72,153,0.5)]",
-                                                cyan: "bg-cyan-400 shadow-[0_0_4px_rgba(6,182,212,0.5)]",
-                                                amber: "bg-amber-400 shadow-[0_0_4px_rgba(245,158,11,0.5)]",
-                                                blue: "bg-blue-400 shadow-[0_0_4px_rgba(59,130,246,0.5)]",
-                                                emerald: "bg-emerald-400 shadow-[0_0_4px_rgba(16,185,129,0.5)]",
-                                                slate: "bg-slate-400 shadow-[0_0_4px_rgba(100,116,139,0.5)]"
-                                              };
-                                              dotClass += ` ${tailwindColorMap[item.color] || "bg-purple-400 shadow-[0_0_4px_rgba(168,85,247,0.5)]"}`;
+                                          if (isHexColor) {
+                                            dotStyle = {
+                                              backgroundColor: item.color,
+                                              boxShadow: `0 0 4px ${item.color}`
+                                            };
+                                            if (isCustom) {
+                                              dotClass += " animate-pulse";
                                             }
+                                          } else if (isCustom) {
+                                            dotClass += " animate-pulse";
+                                            const tailwindColorMap: Record<string, string> = {
+                                              purple: "bg-purple-400 shadow-[0_0_4px_rgba(168,85,247,0.5)]",
+                                              violet: "bg-violet-400 shadow-[0_0_4px_rgba(139,92,246,0.5)]",
+                                              pink: "bg-pink-400 shadow-[0_0_4px_rgba(236,72,153,0.5)]",
+                                              cyan: "bg-cyan-400 shadow-[0_0_4px_rgba(6,182,212,0.5)]",
+                                              amber: "bg-amber-400 shadow-[0_0_4px_rgba(245,158,11,0.5)]",
+                                              blue: "bg-blue-400 shadow-[0_0_4px_rgba(59,130,246,0.5)]",
+                                              emerald: "bg-emerald-400 shadow-[0_0_4px_rgba(16,185,129,0.5)]",
+                                              slate: "bg-slate-400 shadow-[0_0_4px_rgba(100,116,139,0.5)]"
+                                            };
+                                            dotClass += ` ${tailwindColorMap[item.color] || "bg-purple-400 shadow-[0_0_4px_rgba(168,85,247,0.5)]"}`;
                                           } else {
                                             const defaultDotMap: Record<string, string> = {
                                               pending: "bg-amber-400 shadow-[0_0_4px_rgba(245,158,11,0.5)]",
@@ -5839,10 +7411,34 @@ export default function App() {
                                             dotClass += ` ${defaultDotMap[item.value] || ""}`;
                                           }
 
+                                          const isPinned = pinnedStatuses.includes(item.value);
+                                          const prevItem = idx > 0 ? filteredLegendStatuses[idx - 1] : null;
+                                          const showDividerBefore = prevItem && pinnedStatuses.includes(prevItem.value) && !isPinned;
+
                                           return (
-                                            <div 
-                                              key={item.value}
-                                              draggable
+                                            <React.Fragment key={item.value}>
+                                              {idx === 0 && isPinned && (
+                                                <div className="flex items-center gap-1.5 px-2 py-1 mb-1.5 text-[8px] font-extrabold uppercase tracking-widest text-amber-400 select-none border-b border-white/5 pb-1">
+                                                  <Icons.Pin className="h-2 w-2 fill-amber-400 rotate-[45deg]" />
+                                                  <span>Status Disematkan</span>
+                                                </div>
+                                              )}
+                                              {showDividerBefore && (
+                                                <div className="relative flex py-2 items-center my-1.5" id="legend_pinned_divider">
+                                                  <div className="flex-grow border-t border-white/10"></div>
+                                                  <span className="flex-shrink mx-2 text-[8px] font-extrabold uppercase tracking-widest text-slate-500 select-none flex items-center gap-1">
+                                                    <span>Status Lainnya</span>
+                                                  </span>
+                                                  <div className="flex-grow border-t border-white/10"></div>
+                                                </div>
+                                              )}
+                                              <motion.div 
+                                                layout
+                                                initial={{ opacity: 0, y: -10 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                exit={{ opacity: 0, y: 10 }}
+                                                transition={{ type: "spring", stiffness: 350, damping: 26 }}
+                                                draggable
                                               onDragStart={(e) => {
                                                 e.dataTransfer.setData("text/plain", item.value);
                                                 e.currentTarget.classList.add("opacity-40", "scale-[0.98]", "border-indigo-500/50");
@@ -5865,15 +7461,28 @@ export default function App() {
                                                 const draggedValue = e.dataTransfer.getData("text/plain");
                                                 const targetValue = item.value;
                                                 if (draggedValue && draggedValue !== targetValue) {
-                                                  const currentOrder = orderedLegendStatuses.map(s => s.value);
-                                                  const draggedIdx = currentOrder.indexOf(draggedValue);
-                                                  const targetIdx = currentOrder.indexOf(targetValue);
-                                                  if (draggedIdx !== -1 && targetIdx !== -1) {
-                                                    const newOrder = [...currentOrder];
-                                                    newOrder.splice(draggedIdx, 1);
-                                                    newOrder.splice(targetIdx, 0, draggedValue);
-                                                    setLegendStatusOrder(newOrder);
-                                                    localStorage.setItem("bbs_rfq_status_priority", JSON.stringify(newOrder));
+                                                  const isDraggedPinned = pinnedStatuses.includes(draggedValue);
+                                                  const isTargetPinned = pinnedStatuses.includes(targetValue);
+                                                  if (isDraggedPinned && isTargetPinned) {
+                                                    const newPinned = [...pinnedStatuses];
+                                                    const draggedIdx = newPinned.indexOf(draggedValue);
+                                                    const targetIdx = newPinned.indexOf(targetValue);
+                                                    if (draggedIdx !== -1 && targetIdx !== -1) {
+                                                      newPinned.splice(draggedIdx, 1);
+                                                      newPinned.splice(targetIdx, 0, draggedValue);
+                                                      setPinnedStatuses(newPinned);
+                                                    }
+                                                  } else {
+                                                    const currentOrder = orderedLegendStatuses.map(s => s.value);
+                                                    const draggedIdx = currentOrder.indexOf(draggedValue);
+                                                    const targetIdx = currentOrder.indexOf(targetValue);
+                                                    if (draggedIdx !== -1 && targetIdx !== -1) {
+                                                      const newOrder = [...currentOrder];
+                                                      newOrder.splice(draggedIdx, 1);
+                                                      newOrder.splice(targetIdx, 0, draggedValue);
+                                                      setLegendStatusOrder(newOrder);
+                                                      localStorage.setItem("bbs_rfq_status_priority", JSON.stringify(newOrder));
+                                                    }
                                                   }
                                                 }
                                               }}
@@ -5884,7 +7493,7 @@ export default function App() {
                                               }`}
                                             >
                                               <div className="flex items-center gap-1.5 min-w-0">
-                                                <Icons.GripVertical className="h-3 w-3 text-slate-600 hover:text-slate-400 shrink-0 cursor-grab" />
+                                                <Icons.GripVertical className="h-3.5 w-3.5 text-indigo-400/90 hover:text-indigo-300 transition-colors shrink-0 cursor-grab" />
                                                 <span className={dotClass} style={dotStyle} />
                                                 <span className="truncate text-slate-300 font-bold text-[10px]">
                                                   {isCustom ? item.label : (
@@ -5895,28 +7504,72 @@ export default function App() {
                                                     item.value === "cancelled" ? "Merah = Cancelled" : item.label
                                                   )}
                                                 </span>
+                                                <span 
+                                                  className="px-1.5 py-0.5 text-[8.5px] font-extrabold bg-indigo-500/15 text-indigo-300 rounded-full border border-indigo-500/35 shrink-0 font-mono transition-all"
+                                                  title={`Ada ${adminRfqStatusCounts[item.value] || 0} RFQ saat ini`}
+                                                >
+                                                  {adminRfqStatusCounts[item.value] || 0}
+                                                </span>
                                               </div>
                                               
-                                              {isCustom ? (
-                                                <div className="flex items-center gap-1 shrink-0">
+                                              <div className="flex items-center gap-2 shrink-0">
+                                                {/* Pin Button */}
+                                                <button
+                                                  type="button"
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    const isPinned = pinnedStatuses.includes(item.value);
+                                                    if (isPinned) {
+                                                      setPinnedStatuses(pinnedStatuses.filter(s => s !== item.value));
+                                                    } else {
+                                                      setPinnedStatuses([...pinnedStatuses, item.value]);
+                                                    }
+                                                  }}
+                                                  className={`p-0.5 rounded transition-all cursor-pointer shrink-0 border ${
+                                                    pinnedStatuses.includes(item.value)
+                                                      ? "text-amber-400 hover:text-amber-300 bg-amber-500/15 border-amber-500/30"
+                                                      : "text-slate-500 hover:text-slate-300 hover:bg-slate-800 border-transparent"
+                                                  }`}
+                                                  title="Klik pin untuk menyematkan status di atas"
+                                                >
+                                                  <motion.div
+                                                    key={pinnedStatuses.includes(item.value) ? "pinned" : "unpinned"}
+                                                    initial={{ scale: 0.7, rotate: pinnedStatuses.includes(item.value) ? 45 : 0 }}
+                                                    animate={{ scale: 1, rotate: pinnedStatuses.includes(item.value) ? 45 : 0 }}
+                                                    whileHover={{ scale: 1.25 }}
+                                                    whileTap={{ scale: 0.8 }}
+                                                    transition={{ type: "spring", stiffness: 450, damping: 13 }}
+                                                    className="inline-flex items-center justify-center shrink-0"
+                                                  >
+                                                    <Icons.Pin className={`h-2.5 w-2.5 ${pinnedStatuses.includes(item.value) ? "fill-amber-400" : ""}`} />
+                                                  </motion.div>
+                                                </button>
+
+                                                <div className="flex items-center gap-1.5 shrink-0">
                                                   <input 
                                                     type="color"
-                                                    value={isHexColor ? item.color : "#a855f7"}
+                                                    value={isHexColor ? item.color : (
+                                                      item.value === "pending" ? "#fbbf24" :
+                                                      item.value === "processing" ? "#60a5fa" :
+                                                      item.value === "quoted" ? "#818cf8" :
+                                                      item.value === "completed" ? "#34d399" :
+                                                      item.value === "cancelled" ? "#f87171" : "#a855f7"
+                                                    )}
                                                     onChange={(e) => handleUpdateCustomStatusColor(item.value, e.target.value)}
                                                     className="h-3.5 w-3.5 rounded-sm cursor-pointer border-0 bg-transparent p-0 flex-shrink-0"
-                                                    title={`Ubah warna status ${item.label}`}
+                                                    title={`Ubah warna status ${isCustom ? item.label : item.value}`}
                                                     onClick={(e) => e.stopPropagation()}
                                                   />
                                                   <span className="text-[8.5px] font-mono text-slate-500 uppercase">
-                                                    {isHexColor ? item.color : "PRESET"}
+                                                    {isHexColor ? item.color : "DEFAULT"}
+                                                  </span>
+                                                  <span className="text-[8.5px] font-semibold text-slate-600 uppercase shrink-0 px-1 py-0.5 bg-slate-950/40 rounded border border-white/5">
+                                                    {isCustom ? "Kustom" : "Standar"}
                                                   </span>
                                                 </div>
-                                              ) : (
-                                                <span className="text-[8.5px] font-semibold text-slate-600 uppercase shrink-0 px-1 py-0.5 bg-slate-950/40 rounded border border-white/5">
-                                                  Standard
-                                                </span>
-                                              )}
-                                            </div>
+                                              </div>
+                                            </motion.div>
+                                           </React.Fragment>
                                           );
                                         })}
                                       </div>
@@ -5987,206 +7640,1089 @@ export default function App() {
                                           return idxA - idxB;
                                         });
 
-                                        const finalOptionItems = [
-                                          { value: "", label: "Semua Status", desc: "Tampilkan semua RFQ", color: "slate", isCustom: false },
-                                          ...sortedOptionItems
-                                        ];
-
-                                        return finalOptionItems.filter(item => {
+                                        const filteredItems = sortedOptionItems.filter(item => {
                                           const q = statusKeywordSearch.toLowerCase().trim();
                                           if (!q) return true;
                                           return item.label.toLowerCase().includes(q) || 
                                                  item.desc.toLowerCase().includes(q) || 
                                                  item.value.toLowerCase().includes(q);
                                         });
-                                      })().map((item) => {
-                                      const isSelected = item.value === "" ? adminRfqStatuses.length === 0 : adminRfqStatuses.includes(item.value);
-                                      const count = adminRfqStatusCounts[item.value as keyof typeof adminRfqStatusCounts] || 0;
-                                      return (
-                                        <button
-                                          key={item.value}
-                                          type="button"
-                                          onMouseEnter={() => setHoveredStatusItem(item.value)}
-                                          onMouseLeave={() => setHoveredStatusItem(null)}
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            if (item.value === "") {
-                                              setAdminRfqStatuses([]);
-                                            } else {
-                                              if (adminRfqStatuses.includes(item.value)) {
-                                                setAdminRfqStatuses(adminRfqStatuses.filter(s => s !== item.value));
-                                              } else {
-                                                setAdminRfqStatuses([...adminRfqStatuses, item.value]);
-                                              }
-                                            }
-                                          }}
-                                          className={`relative w-full flex items-center justify-between text-left px-2.5 py-1.5 rounded-lg text-xs transition-all cursor-pointer ${
-                                            isSelected 
-                                              ? item.color === "amber"
-                                                ? "bg-amber-950/50 text-amber-300 border border-amber-500/20"
-                                                : item.color === "blue"
-                                                ? "bg-blue-950/50 text-blue-300 border border-blue-500/20"
-                                                : item.color === "indigo"
-                                                ? "bg-indigo-950/50 text-indigo-300 border border-indigo-500/20"
-                                                : item.color === "emerald"
-                                                ? "bg-emerald-950/50 text-emerald-300 border border-emerald-500/20"
-                                                : item.color === "rose"
-                                                ? "bg-rose-950/50 text-rose-300 border border-rose-500/20"
-                                                : item.color === "purple"
-                                                ? "bg-purple-950/50 text-purple-300 border border-purple-500/20"
-                                                : item.color === "violet"
-                                                ? "bg-violet-950/50 text-violet-300 border border-violet-500/20"
-                                                : item.color === "pink"
-                                                ? "bg-pink-950/50 text-pink-300 border border-pink-500/20"
-                                                : item.color === "cyan"
-                                                ? "bg-cyan-950/50 text-cyan-300 border border-cyan-500/20"
-                                                : item.color.startsWith("#")
-                                                ? "border border-white/10"
-                                                : "bg-slate-800 text-white border border-white/10"
-                                              : "text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-transparent"
-                                          }`}
-                                          style={isSelected && item.color.startsWith("#") ? {
-                                            backgroundColor: `${item.color}15`,
-                                            borderColor: `${item.color}35`,
-                                            color: item.color
-                                          } : undefined}
-                                        >
-                                          <div className="flex items-center gap-2">
-                                            {/* Pill / side indicator */}
-                                            <span 
-                                              className={`h-2.5 w-2.5 rounded-full flex-shrink-0 ${
-                                                item.color === "amber" ? "bg-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.5)]" :
-                                                item.color === "blue" ? "bg-blue-400 shadow-[0_0_8px_rgba(59,130,246,0.5)]" :
-                                                item.color === "indigo" ? "bg-indigo-400 shadow-[0_0_8px_rgba(99,102,241,0.5)]" :
-                                                item.color === "emerald" ? "bg-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.5)]" :
-                                                item.color === "rose" ? "bg-rose-400 shadow-[0_0_8px_rgba(239,68,68,0.5)]" :
-                                                item.color === "purple" ? "bg-purple-400 shadow-[0_0_8px_rgba(168,85,247,0.5)]" :
-                                                item.color === "violet" ? "bg-violet-400 shadow-[0_0_8px_rgba(139,92,246,0.5)]" :
-                                                item.color === "pink" ? "bg-pink-400 shadow-[0_0_8px_rgba(236,72,153,0.5)]" :
-                                                item.color === "cyan" ? "bg-cyan-400 shadow-[0_0_8px_rgba(6,182,212,0.5)]" :
-                                                item.color.startsWith("#") ? "" : "bg-slate-500 shadow-[0_0_8px_rgba(100,116,139,0.5)]"
-                                              }`} 
-                                              style={item.color.startsWith("#") ? {
-                                                backgroundColor: item.color,
-                                                boxShadow: `0 0 8px ${item.color}`
-                                              } : undefined}
-                                            />
-                                            <div className="flex flex-col">
-                                              <span className="font-semibold text-slate-200">
-                                                {item.label} <span className="opacity-75 font-normal">({count})</span>
-                                              </span>
-                                              <span className="text-[10px] text-slate-500">{item.desc}</span>
-                                            </div>
-                                          </div>
-                                          {/* Mini pill name & selection status */}
-                                          <div className="flex items-center gap-1.5">
-                                            {item.isCustom && (
-                                              <button
-                                                type="button"
-                                                onClick={(e) => {
-                                                  e.stopPropagation();
-                                                  handleDeleteCustomStatus(item.value);
-                                                }}
-                                                className="p-1 hover:bg-rose-500/20 text-slate-500 hover:text-rose-400 rounded-md transition-colors cursor-pointer mr-0.5"
-                                                title="Hapus status kustom ini"
-                                              >
-                                                <Trash2 className="h-3.5 w-3.5" />
-                                              </button>
-                                            )}
-                                            <span 
-                                              className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wider ${
-                                                item.color === "amber" ? "bg-amber-500/10 text-amber-400" :
-                                                item.color === "blue" ? "bg-blue-500/10 text-blue-400" :
-                                                item.color === "indigo" ? "bg-indigo-500/10 text-indigo-400" :
-                                                item.color === "emerald" ? "bg-emerald-500/10 text-emerald-400" :
-                                                item.color === "rose" ? "bg-rose-500/10 text-rose-400" :
-                                                item.color === "purple" ? "bg-purple-500/10 text-purple-400" :
-                                                item.color === "violet" ? "bg-violet-500/10 text-violet-400" :
-                                                item.color === "pink" ? "bg-pink-500/10 text-pink-400" :
-                                                item.color === "cyan" ? "bg-cyan-500/10 text-cyan-400" :
-                                                item.color.startsWith("#") ? "" : "bg-slate-500/10 text-slate-400"
+
+                                        const pinnedGroup = filteredItems.filter(item => pinnedStatuses.includes(item.value));
+                                        const unpinnedGroup = filteredItems.filter(item => !pinnedStatuses.includes(item.value));
+
+                                        const renderItem = (item: { value: string; label: string; desc: string; color: string; isCustom: boolean }) => {
+                                          const isSelected = item.value === "" ? adminRfqStatuses.length === 0 : adminRfqStatuses.includes(item.value);
+                                          const count = adminRfqStatusCounts[item.value as keyof typeof adminRfqStatusCounts] || 0;
+                                          return (
+                                            <motion.button
+                                              key={item.value}
+                                              layout
+                                              layoutId={`status-filter-item-${item.value}`}
+                                              initial={{ opacity: 0, y: -6 }}
+                                              animate={{ opacity: 1, y: 0 }}
+                                              exit={{ opacity: 0, y: 6 }}
+                                              transition={{
+                                                type: "spring",
+                                                stiffness: 380,
+                                                damping: 28,
+                                                mass: 0.8,
+                                                opacity: { duration: 0.15 }
+                                              }}
+                                              type="button"
+                                              onMouseEnter={() => setHoveredStatusItem(item.value)}
+                                              onMouseLeave={() => setHoveredStatusItem(null)}
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                if (item.value === "") {
+                                                  setAdminRfqStatuses([]);
+                                                } else {
+                                                  if (adminRfqStatuses.includes(item.value)) {
+                                                    setAdminRfqStatuses(adminRfqStatuses.filter(s => s !== item.value));
+                                                  } else {
+                                                    setAdminRfqStatuses([...adminRfqStatuses, item.value]);
+                                                  }
+                                                }
+                                              }}
+                                              className={`relative w-full flex items-center justify-between text-left px-2.5 py-1.5 rounded-lg text-xs transition-all cursor-pointer ${
+                                                isSelected 
+                                                  ? item.color === "amber"
+                                                    ? "bg-amber-950/50 text-amber-300 border border-amber-500/20"
+                                                    : item.color === "blue"
+                                                    ? "bg-blue-950/50 text-blue-300 border border-blue-500/20"
+                                                    : item.color === "indigo"
+                                                    ? "bg-indigo-950/50 text-indigo-300 border border-indigo-500/20"
+                                                    : item.color === "emerald"
+                                                    ? "bg-emerald-950/50 text-emerald-300 border border-emerald-500/20"
+                                                    : item.color === "rose"
+                                                    ? "bg-rose-950/50 text-rose-300 border border-rose-500/20"
+                                                    : item.color === "purple"
+                                                    ? "bg-purple-950/50 text-purple-300 border border-purple-500/20"
+                                                    : item.color === "violet"
+                                                    ? "bg-violet-950/50 text-violet-300 border border-violet-500/20"
+                                                    : item.color === "pink"
+                                                    ? "bg-pink-950/50 text-pink-300 border border-pink-500/20"
+                                                    : item.color === "cyan"
+                                                    ? "bg-cyan-950/50 text-cyan-300 border border-cyan-500/20"
+                                                    : item.color.startsWith("#")
+                                                    ? "border border-white/10"
+                                                    : "bg-slate-800 text-white border border-white/10"
+                                                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-transparent"
                                               }`}
-                                              style={item.color.startsWith("#") ? {
+                                              style={isSelected && item.color.startsWith("#") ? {
                                                 backgroundColor: `${item.color}15`,
+                                                borderColor: `${item.color}35`,
                                                 color: item.color
                                               } : undefined}
                                             >
-                                              {item.value || "All"}
-                                            </span>
-                                            {isSelected && <Check className="h-3.5 w-3.5 text-emerald-400 flex-shrink-0" />}
-                                          </div>
+                                              <div className="flex items-center gap-2">
+                                                {/* Pill / side indicator */}
+                                                <span 
+                                                  className={`h-2.5 w-2.5 rounded-full flex-shrink-0 ${
+                                                    item.color === "amber" ? "bg-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.5)]" :
+                                                    item.color === "blue" ? "bg-blue-400 shadow-[0_0_8px_rgba(59,130,246,0.5)]" :
+                                                    item.color === "indigo" ? "bg-indigo-400 shadow-[0_0_8px_rgba(99,102,241,0.5)]" :
+                                                    item.color === "emerald" ? "bg-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.5)]" :
+                                                    item.color === "rose" ? "bg-rose-400 shadow-[0_0_8px_rgba(239,68,68,0.5)]" :
+                                                    item.color === "purple" ? "bg-purple-400 shadow-[0_0_8px_rgba(168,85,247,0.5)]" :
+                                                    item.color === "violet" ? "bg-violet-400 shadow-[0_0_8px_rgba(139,92,246,0.5)]" :
+                                                    item.color === "pink" ? "bg-pink-400 shadow-[0_0_8px_rgba(236,72,153,0.5)]" :
+                                                    item.color === "cyan" ? "bg-cyan-400 shadow-[0_0_8px_rgba(6,182,212,0.5)]" :
+                                                    item.color.startsWith("#") ? "" : "bg-slate-500 shadow-[0_0_8px_rgba(100,116,139,0.5)]"
+                                                  }`} 
+                                                  style={item.color.startsWith("#") ? {
+                                                    backgroundColor: item.color,
+                                                    boxShadow: `0 0 8px ${item.color}`
+                                                  } : undefined}
+                                                />
+                                                <div className="flex flex-col">
+                                                  <span className="font-semibold text-slate-200 flex items-center gap-1.5">
+                                                    <span>{item.label}</span>
+                                                    <span 
+                                                      className="px-1.5 py-0.5 text-[8.5px] font-extrabold bg-indigo-500/15 text-indigo-300 rounded-full border border-indigo-500/35 shrink-0 font-mono transition-all"
+                                                      title={`Ada ${count} RFQ dengan status ini`}
+                                                    >
+                                                      {count}
+                                                    </span>
+                                                  </span>
+                                                  <span className="text-[10px] text-slate-500">{item.desc}</span>
+                                                </div>
+                                              </div>
+                                              {/* Mini pill name & selection status */}
+                                              <div className="flex items-center gap-1.5">
+                                                {/* Mini Pin Trigger inside Filter dropdown */}
+                                                {item.value !== "" && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      const isPinned = pinnedStatuses.includes(item.value);
+                                                      if (isPinned) {
+                                                        setPinnedStatuses(pinnedStatuses.filter(s => s !== item.value));
+                                                      } else {
+                                                        setPinnedStatuses([...pinnedStatuses, item.value]);
+                                                      }
+                                                    }}
+                                                    className={`p-1 rounded-md border transition-all cursor-pointer mr-0.5 ${
+                                                      pinnedStatuses.includes(item.value)
+                                                        ? "text-amber-400 hover:text-amber-300 bg-amber-500/15 border-amber-500/30 animate-pulse"
+                                                        : "text-slate-500 hover:text-slate-300 hover:bg-slate-800 border-transparent"
+                                                    }`}
+                                                    title={pinnedStatuses.includes(item.value) ? "Batal sematkan status ini" : "Sematkan status ke atas"}
+                                                  >
+                                                    <motion.div
+                                                      key={pinnedStatuses.includes(item.value) ? "pinned" : "unpinned"}
+                                                      initial={{ scale: 0.7, rotate: pinnedStatuses.includes(item.value) ? 45 : 0 }}
+                                                      animate={{ scale: 1, rotate: pinnedStatuses.includes(item.value) ? 45 : 0 }}
+                                                      whileHover={{ scale: 1.25 }}
+                                                      whileTap={{ scale: 0.8 }}
+                                                      transition={{ type: "spring", stiffness: 450, damping: 13 }}
+                                                      className="inline-flex items-center justify-center shrink-0"
+                                                    >
+                                                      <Icons.Pin className={`h-2.5 w-2.5 ${pinnedStatuses.includes(item.value) ? "fill-amber-400" : ""}`} />
+                                                    </motion.div>
+                                                  </button>
+                                                )}
 
-                                          {/* Beautiful custom-styled floating tooltip */}
-                                          <AnimatePresence>
-                                            {hoveredStatusItem === item.value && (
-                                              <motion.div
-                                                initial={{ opacity: 0, x: -6 }}
-                                                animate={{ opacity: 1, x: 0 }}
-                                                exit={{ opacity: 0, x: -6 }}
-                                                transition={{ duration: 0.15 }}
-                                                className="absolute left-full top-1/2 -translate-y-1/2 ml-3.5 z-[100] px-3 py-2 bg-slate-950 border border-indigo-500/30 rounded-lg text-[11px] text-slate-300 shadow-[0_10px_30px_rgba(0,0,0,0.8)] whitespace-nowrap pointer-events-none flex flex-col gap-0.5 backdrop-blur-xl border-l-4"
-                                                style={{
-                                                  borderLeftColor: 
-                                                    item.color === "amber" ? "#f59e0b" :
-                                                    item.color === "blue" ? "#3b82f6" :
-                                                    item.color === "indigo" ? "#6366f1" :
-                                                    item.color === "emerald" ? "#10b981" :
-                                                    item.color === "rose" ? "#ef4444" :
-                                                    item.color === "purple" ? "#a855f7" :
-                                                    item.color === "violet" ? "#8b5cf6" :
-                                                    item.color === "pink" ? "#ec4899" :
-                                                    item.color === "cyan" ? "#06b6d4" :
-                                                    item.color.startsWith("#") ? item.color : "#64748b"
-                                                }}
-                                              >
-                                                <div className="flex items-center gap-1.5 font-bold text-white">
-                                                  <span className="font-mono text-indigo-400 font-black">{count}</span>
-                                                  <span>RFQ</span>
+                                                {item.isCustom && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      handleDeleteCustomStatus(item.value);
+                                                    }}
+                                                    className="p-1 hover:bg-rose-500/20 text-slate-500 hover:text-rose-400 rounded-md transition-colors cursor-pointer mr-0.5"
+                                                    title="Hapus status kustom ini"
+                                                  >
+                                                    <Trash2 className="h-3.5 w-3.5" />
+                                                  </button>
+                                                )}
+                                                <span 
+                                                  className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wider ${
+                                                    item.color === "amber" ? "bg-amber-500/10 text-amber-400" :
+                                                    item.color === "blue" ? "bg-blue-500/10 text-blue-400" :
+                                                    item.color === "indigo" ? "bg-indigo-500/10 text-indigo-400" :
+                                                    item.color === "emerald" ? "bg-emerald-500/10 text-emerald-400" :
+                                                    item.color === "rose" ? "bg-rose-500/10 text-rose-400" :
+                                                    item.color === "purple" ? "bg-purple-500/10 text-purple-400" :
+                                                    item.color === "violet" ? "bg-violet-500/10 text-violet-400" :
+                                                    item.color === "pink" ? "bg-pink-500/10 text-pink-400" :
+                                                    item.color === "cyan" ? "bg-cyan-500/10 text-cyan-400" :
+                                                    item.color.startsWith("#") ? "" : "bg-slate-500/10 text-slate-400"
+                                                  }`}
+                                                  style={item.color.startsWith("#") ? {
+                                                    backgroundColor: `${item.color}15`,
+                                                    color: item.color
+                                                  } : undefined}
+                                                >
+                                                  {item.value || "All"}
+                                                </span>
+                                                {isSelected && <Check className="h-3.5 w-3.5 text-emerald-400 flex-shrink-0" />}
+                                              </div>
+
+                                              {/* Beautiful custom-styled floating tooltip */}
+                                              <AnimatePresence>
+                                                {hoveredStatusItem === item.value && (
+                                                  <motion.div
+                                                    initial={{ opacity: 0, x: -6 }}
+                                                    animate={{ opacity: 1, x: 0 }}
+                                                    exit={{ opacity: 0, x: -6 }}
+                                                    transition={{ duration: 0.15 }}
+                                                    className="absolute left-full top-1/2 -translate-y-1/2 ml-3.5 z-[100] px-3 py-2 bg-slate-950 border border-indigo-500/30 rounded-lg text-[11px] text-slate-300 shadow-[0_10px_30px_rgba(0,0,0,0.8)] whitespace-nowrap pointer-events-none flex flex-col gap-0.5 backdrop-blur-xl border-l-4"
+                                                    style={{
+                                                      borderLeftColor: 
+                                                        item.color === "amber" ? "#f59e0b" :
+                                                        item.color === "blue" ? "#3b82f6" :
+                                                        item.color === "indigo" ? "#6366f1" :
+                                                        item.color === "emerald" ? "#10b981" :
+                                                        item.color === "rose" ? "#ef4444" :
+                                                        item.color === "purple" ? "#a855f7" :
+                                                        item.color === "violet" ? "#8b5cf6" :
+                                                        item.color === "pink" ? "#ec4899" :
+                                                        item.color === "cyan" ? "#06b6d4" :
+                                                        item.color.startsWith("#") ? item.color : "#64748b"
+                                                    }}
+                                                  >
+                                                    <div className="flex items-center gap-1.5 font-bold text-white">
+                                                      <span className="font-mono text-indigo-400 font-black">{count}</span>
+                                                      <span>RFQ</span>
+                                                    </div>
+                                                    <div className="text-[9.5px] text-slate-500 font-medium">
+                                                      {item.value === "" ? "Semua request terdaftar" : `Status: ${item.label}`}
+                                                    </div>
+                                                  </motion.div>
+                                                )}
+                                              </AnimatePresence>
+                                            </motion.button>
+                                          );
+                                        };
+
+                                        return (
+                                          <div className="space-y-2 mt-1 max-h-[220px] overflow-y-auto pr-0.5 custom-scrollbar">
+                                            {/* All Status Option */}
+                                            {!statusKeywordSearch.toLowerCase().trim() && renderItem({ value: "", label: "Semua Status", desc: "Tampilkan semua RFQ", color: "slate", isCustom: false })}
+
+                                            {/* Pinned Section */}
+                                            {pinnedGroup.length > 0 && (
+                                              <div className="space-y-1">
+                                                <div className="flex items-center gap-1.5 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wider text-amber-400 bg-amber-400/5 border border-amber-500/15 rounded-md my-1 shrink-0 select-none">
+                                                  <Icons.Pin className="h-2.5 w-2.5 fill-amber-400 rotate-[45deg]" />
+                                                  <span>Tersemat (Pinned)</span>
                                                 </div>
-                                                <div className="text-[9.5px] text-slate-500 font-medium">
-                                                  {item.value === "" ? "Semua request terdaftar" : `Status: ${item.label}`}
-                                                </div>
-                                              </motion.div>
+                                                <AnimatePresence mode="popLayout">
+                                                  {pinnedGroup.map(renderItem)}
+                                                </AnimatePresence>
+                                              </div>
                                             )}
-                                          </AnimatePresence>
-                                        </button>
-                                      );
-                                    })}
+
+                                            {/* Unpinned Section */}
+                                            {unpinnedGroup.length > 0 && (
+                                              <div className="space-y-1">
+                                                {pinnedGroup.length > 0 && (
+                                                  <>
+                                                    <div className="h-px bg-white/10 my-2" id="dropdown_pinned_divider" />
+                                                    <div className="flex items-center gap-1.5 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wider text-slate-400 bg-slate-900 border border-white/5 rounded-md my-1 shrink-0 select-none">
+                                                      <Icons.Filter className="h-2.5 w-2.5 text-slate-400" />
+                                                      <span>Status Lainnya</span>
+                                                    </div>
+                                                  </>
+                                                )}
+                                                <AnimatePresence mode="popLayout">
+                                                  {unpinnedGroup.map(renderItem)}
+                                                </AnimatePresence>
+                                              </div>
+                                            )}
+                                          </div>
+                                        );
+                                      })()}
                                   </div>
                                 </div>
                               )}
                               </div>
-                            </div>
-                            {/* Visually Distinct Color-Coded Legend */}
-                            <div className="flex flex-wrap gap-x-2.5 gap-y-1 items-center text-[10px] text-slate-400 bg-slate-900/30 border border-white/5 rounded-lg px-2 py-1 select-none backdrop-blur-sm shadow-inner mt-0.5">
-                              <div className="flex items-center gap-1.5">
-                                <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shadow-[0_0_4px_rgba(245,158,11,0.6)] animate-pulse" />
-                                <span className="font-semibold text-slate-300">Pending</span>
-                                <span className="text-slate-500 text-[8.5px]">(Menunggu)</span>
+
+                              {/* Reset Status Button - Only shows when there are active status filters */}
+                              {adminRfqStatuses.length > 0 && (
+                                <motion.button
+                                  initial={{ opacity: 0, scale: 0.95 }}
+                                  animate={{ opacity: 1, scale: 1 }}
+                                  exit={{ opacity: 0, scale: 0.95 }}
+                                  type="button"
+                                  onClick={() => {
+                                    setAdminRfqStatuses([]);
+                                    showToast("Filter status berhasil dibersihkan!", "success");
+                                  }}
+                                  className="flex items-center gap-1.5 bg-rose-500/15 hover:bg-rose-500/25 text-rose-400 hover:text-rose-300 border border-rose-500/30 hover:border-rose-500/50 rounded-xl px-3 py-1.5 text-xs font-bold cursor-pointer transition-all shrink-0 shadow-sm hover:shadow-rose-500/5"
+                                  title="Bersihkan semua filter status yang aktif dengan satu klik"
+                                  id="rfq_reset_status_button"
+                                >
+                                  <Icons.FilterX className="h-3.5 w-3.5 text-rose-400" />
+                                  <span>Reset Status</span>
+                                </motion.button>
+                              )}
+
+                              {/* Pin Semua Button directly in controls row */}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const allVals = orderedLegendStatuses.map((item) => item.value);
+                                  setPinnedStatuses(allVals);
+                                  showToast("Semua status filter berhasil disematkan ke atas!", "success");
+                                }}
+                                className="flex items-center gap-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 hover:text-amber-300 border border-amber-500/20 hover:border-amber-500/40 rounded-xl px-3 py-1.5 text-xs font-semibold cursor-pointer transition-all shrink-0 shadow-sm hover:shadow-amber-500/5"
+                                title="Sematkan semua status filter ke bagian atas agar lebih mudah diakses oleh admin"
+                                id="pin_all_statuses_button"
+                              >
+                                <motion.span
+                                  whileHover={{ scale: 1.25, rotate: 60 }}
+                                  whileTap={{ scale: 0.85 }}
+                                  transition={{ type: "spring", stiffness: 400, damping: 12 }}
+                                  className="inline-flex items-center justify-center"
+                                >
+                                  <Icons.Pin className="h-3.5 w-3.5 fill-amber-400 rotate-[45deg]" />
+                                </motion.span>
+                                <span>Pin Semua</span>
+                              </button>
+
+                              {/* Bulk Selection/Assigner Menu for Currently Filtered RFQs */}
+                              <div className="relative flex-1 sm:flex-initial z-10" id="rfq_bulk_assign_status_dropdown">
+                                <button
+                                  type="button"
+                                  disabled={filteredRfqsForAdmin.length === 0}
+                                  onClick={() => {
+                                    setIsBulkAssignDropdownOpen(!isBulkAssignDropdownOpen);
+                                    setIsStatusFilterOpen(false);
+                                    setIsAdminRfqSortDropdownOpen(false);
+                                    setIsAdminRfqCategoryDropdownOpen(false);
+                                    setIsAdminRfqSubCategoryDropdownOpen(false);
+                                  }}
+                                  className={`flex items-center justify-between border rounded-xl px-3 py-1.5 text-xs font-semibold cursor-pointer transition-all gap-2 w-full sm:min-w-[210px] text-left ${
+                                    filteredRfqsForAdmin.length === 0
+                                      ? "bg-slate-950/40 border-white/5 text-slate-500 cursor-not-allowed"
+                                      : "bg-slate-950 border-white/10 text-amber-400 hover:border-amber-500/40 hover:bg-slate-900 shadow-sm hover:shadow-amber-500/5"
+                                  }`}
+                                  title="Ubah semua status RFQ yang aktif dalam filter pencarian ini secara massal"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <Icons.CheckSquare className={`h-4 w-4 ${filteredRfqsForAdmin.length === 0 ? "text-slate-600" : "text-amber-400 animate-pulse"}`} />
+                                    <span>
+                                      Atur Status Massal ({filteredRfqsForAdmin.length} Terfilter)
+                                    </span>
+                                  </div>
+                                  <Icons.ChevronDown className={`h-3 w-3 text-slate-400 transition-transform duration-200 ${isBulkAssignDropdownOpen ? "rotate-180 text-amber-400" : ""}`} />
+                                </button>
+
+                                {isBulkAssignDropdownOpen && filteredRfqsForAdmin.length > 0 && (
+                                  <div 
+                                    className="absolute top-full right-0 sm:left-0 mt-1.5 w-[250px] bg-slate-950 border border-white/10 rounded-xl shadow-2xl z-50 p-1 backdrop-blur-md"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <div className="px-2.5 py-1.5 border-b border-white/5 text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                                      <Icons.AlertTriangle className="h-3 w-3 text-amber-500" />
+                                      <span>Pilih Status untuk {filteredRfqsForAdmin.length} RFQ:</span>
+                                    </div>
+                                    <div className="py-1 max-h-[220px] overflow-y-auto custom-scrollbar space-y-0.5">
+                                      {[
+                                        { value: "pending", label: "Menunggu Proposal (Pending)", color: "amber", desc: "Set status ke Pending" },
+                                        { value: "processing", label: "Sedang Diproses (Processing)", color: "blue", desc: "Set status ke Processing" },
+                                        { value: "quoted", label: "Sudah Di-Quoted (Quoted)", color: "indigo", desc: "Set status ke Quoted" },
+                                        { value: "completed", label: "Selesai (Completed)", color: "emerald", desc: "Set status ke Completed" },
+                                        { value: "cancelled", label: "Dibatalkan (Cancelled)", color: "rose", desc: "Set status ke Cancelled" },
+                                        ...(settings.customRfqStatuses || []).map((cs) => ({
+                                          value: cs.value,
+                                          label: `${cs.label} (Kustom)`,
+                                          color: cs.color || "purple",
+                                          desc: `Set status ke ${cs.label}`
+                                        }))
+                                      ].map((opt) => {
+                                        const isHex = opt.color.startsWith("#");
+                                        return (
+                                          <button
+                                            key={opt.value}
+                                            type="button"
+                                            onClick={() => {
+                                              setIsBulkAssignDropdownOpen(false);
+                                              handleAssignStatusToAllFiltered(opt.value);
+                                            }}
+                                            className="w-full flex items-center justify-between text-left px-2.5 py-1.5 rounded-lg text-xs transition-all cursor-pointer hover:bg-slate-900 border border-transparent text-slate-300 hover:text-white"
+                                          >
+                                            <div className="flex items-center gap-2">
+                                              <span 
+                                                className={`h-2.5 w-2.5 rounded-full flex-shrink-0 ${
+                                                  opt.color === "amber" ? "bg-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.5)]" :
+                                                  opt.color === "blue" ? "bg-blue-400 shadow-[0_0_8px_rgba(59,130,246,0.5)]" :
+                                                  opt.color === "indigo" ? "bg-indigo-400 shadow-[0_0_8px_rgba(99,102,241,0.5)]" :
+                                                  opt.color === "emerald" ? "bg-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.5)]" :
+                                                  opt.color === "rose" ? "bg-rose-400 shadow-[0_0_8px_rgba(239,68,68,0.5)]" :
+                                                  opt.color === "purple" ? "bg-purple-400 shadow-[0_0_8px_rgba(168,85,247,0.5)]" :
+                                                  opt.color === "violet" ? "bg-violet-400 shadow-[0_0_8px_rgba(139,92,246,0.5)]" :
+                                                  opt.color === "pink" ? "bg-pink-400 shadow-[0_0_8px_rgba(236,72,153,0.5)]" :
+                                                  opt.color === "cyan" ? "bg-cyan-400 shadow-[0_0_8px_rgba(6,182,212,0.5)]" :
+                                                  isHex ? "" : "bg-slate-500 shadow-[0_0_8px_rgba(100,116,139,0.5)]"
+                                                }`}
+                                                style={isHex ? {
+                                                  backgroundColor: opt.color,
+                                                  boxShadow: `0 0 8px ${opt.color}`
+                                                } : undefined}
+                                              />
+                                              <div className="flex flex-col">
+                                                <span className="font-semibold text-slate-200">{opt.label}</span>
+                                                <span className="text-[9.5px] text-slate-500">{opt.desc}</span>
+                                              </div>
+                                            </div>
+                                            <Icons.ChevronRight className="h-3 w-3 text-slate-600" />
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
                               </div>
-                              <span className="text-white/10 text-[8px]">•</span>
-                              <div className="flex items-center gap-1.5">
-                                <span className="h-1.5 w-1.5 rounded-full bg-blue-400 shadow-[0_0_4px_rgba(59,130,246,0.6)] animate-pulse" />
-                                <span className="font-semibold text-slate-300">Processing</span>
-                                <span className="text-slate-500 text-[8.5px]">(Diproses)</span>
+
+                              {/* Bulk Download Selected Dropdown */}
+                              <div className="relative shrink-0 z-10" id="rfq_bulk_download_container">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setIsAdminRfqExportDropdownOpen(!isAdminRfqExportDropdownOpen);
+                                    setIsBulkAssignDropdownOpen(false);
+                                  }}
+                                  disabled={selectedRfqIds.length === 0}
+                                  className={`flex items-center justify-between border rounded-xl px-3 py-1.5 text-xs font-semibold cursor-pointer transition-all gap-2 w-full sm:min-w-[180px] text-left ${
+                                    selectedRfqIds.length === 0
+                                      ? "bg-slate-950/40 border-white/5 text-slate-500 cursor-not-allowed"
+                                      : "bg-slate-950 border-indigo-500/20 text-indigo-400 hover:border-indigo-500/50 hover:bg-slate-900 shadow-sm"
+                                  }`}
+                                  title="Unduh data RFQ terpilih dalam format CSV atau JSON"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <Icons.Download className={`h-4 w-4 ${selectedRfqIds.length === 0 ? "text-slate-600" : "text-indigo-400 animate-pulse"}`} />
+                                    <span>Unduh Terpilih ({selectedRfqIds.length})</span>
+                                  </div>
+                                  <Icons.ChevronDown className={`h-3 w-3 text-slate-400 transition-transform duration-200 ${isAdminRfqExportDropdownOpen ? "rotate-180 text-indigo-400" : ""}`} />
+                                </button>
+
+                                {isAdminRfqExportDropdownOpen && selectedRfqIds.length > 0 && (
+                                  <div 
+                                    className="absolute top-full right-0 mt-1.5 w-[200px] bg-slate-950 border border-white/10 rounded-xl shadow-2xl z-50 p-1 backdrop-blur-md"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <div className="px-2.5 py-1.5 border-b border-white/5 text-[9px] font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                                      <Icons.FileText className="h-3 w-3 text-indigo-400" />
+                                      <span>Pilih Format Unduhan:</span>
+                                    </div>
+                                    <div className="py-1 space-y-0.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setIsAdminRfqExportDropdownOpen(false);
+                                          // Generate and download CSV
+                                          const selectedRfqs = rfqs.filter(r => selectedRfqIds.includes(r.id));
+                                          const headers = ["No RFQ", "Tanggal", "Nama Klien", "Kategori Klien", "Email", "WhatsApp", "Status", "Prioritas", "Catatan"];
+                                          const rows = selectedRfqs.map(r => [
+                                            r.rfqNumber,
+                                            r.date,
+                                            r.clientName,
+                                            r.clientCategory,
+                                            r.email,
+                                            r.whatsapp,
+                                            r.status,
+                                            r.priority || "medium",
+                                            r.notes || ""
+                                          ]);
+                                          const csvContent = [headers, ...rows].map(e => e.map(val => `"${String(val).replace(/"/g, '""')}"`).join(",")).join("\n");
+                                          const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+                                          const url = URL.createObjectURL(blob);
+                                          const link = document.createElement("a");
+                                          link.setAttribute("href", url);
+                                          link.setAttribute("download", `BBS_RFQs_Export_${Date.now()}.csv`);
+                                          document.body.appendChild(link);
+                                          link.click();
+                                          document.body.removeChild(link);
+                                          showToast(`Sukses mengunduh ${selectedRfqs.length} RFQ sebagai CSV!`, "success");
+                                        }}
+                                        className="w-full flex items-center gap-2 text-left px-2.5 py-2 rounded-lg text-xs hover:bg-slate-900 text-slate-300 hover:text-white transition-all cursor-pointer border border-transparent"
+                                      >
+                                        <Icons.FileSpreadsheet className="h-4 w-4 text-emerald-400" />
+                                        <div className="flex flex-col">
+                                          <span className="font-semibold text-slate-200">Unduh Format CSV</span>
+                                          <span className="text-[9px] text-slate-500">Kompatibel dengan Excel</span>
+                                        </div>
+                                      </button>
+                                      
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setIsAdminRfqExportDropdownOpen(false);
+                                          // Generate and download JSON
+                                          const selectedRfqs = rfqs.filter(r => selectedRfqIds.includes(r.id));
+                                          const jsonContent = JSON.stringify(selectedRfqs, null, 2);
+                                          const blob = new Blob([jsonContent], { type: "application/json" });
+                                          const url = URL.createObjectURL(blob);
+                                          const link = document.createElement("a");
+                                          link.setAttribute("href", url);
+                                          link.setAttribute("download", `BBS_RFQs_Export_${Date.now()}.json`);
+                                          document.body.appendChild(link);
+                                          link.click();
+                                          document.body.removeChild(link);
+                                          showToast(`Sukses mengunduh ${selectedRfqs.length} RFQ sebagai JSON!`, "success");
+                                        }}
+                                        className="w-full flex items-center gap-2 text-left px-2.5 py-2 rounded-lg text-xs hover:bg-slate-900 text-slate-300 hover:text-white transition-all cursor-pointer border border-transparent"
+                                      >
+                                        <Icons.Braces className="h-4 w-4 text-indigo-400" />
+                                        <div className="flex flex-col">
+                                          <span className="font-semibold text-slate-200">Unduh Format JSON</span>
+                                          <span className="text-[9px] text-slate-500">Kompatibel untuk impor database</span>
+                                        </div>
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
                               </div>
-                              <span className="text-white/10 text-[8px]">•</span>
-                              <div className="flex items-center gap-1.5">
-                                <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 shadow-[0_0_4px_rgba(99,102,241,0.6)]" />
-                                <span className="font-semibold text-slate-300">Quoted</span>
-                                <span className="text-slate-500 text-[8.5px]">(Penawaran)</span>
+
+                              {/* Export Current View to PDF Button */}
+                              <div className="relative flex-1 sm:flex-initial z-10" id="rfq_export_pdf_button_container">
+                                <button
+                                  type="button"
+                                  disabled={filteredRfqsForAdmin.length === 0}
+                                  onClick={handleExportViewToPDF}
+                                  className={`flex items-center justify-between border rounded-xl px-3 py-1.5 text-xs font-semibold cursor-pointer transition-all gap-2 w-full sm:min-w-[170px] text-left ${
+                                    filteredRfqsForAdmin.length === 0
+                                      ? "bg-slate-950/40 border-white/5 text-slate-500 cursor-not-allowed"
+                                      : "bg-slate-950 border-white/10 text-emerald-400 hover:border-emerald-500/40 hover:bg-slate-900 shadow-sm hover:shadow-emerald-500/5"
+                                  }`}
+                                  title="Ekspor daftar RFQ yang terfilter saat ini ke format PDF"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <Icons.FileDown className={`h-4 w-4 ${filteredRfqsForAdmin.length === 0 ? "text-slate-600" : "text-emerald-400"}`} />
+                                    <span>Export Current View to PDF</span>
+                                  </div>
+                                </button>
                               </div>
-                              <span className="text-white/10 text-[8px]">•</span>
-                              <div className="flex items-center gap-1.5">
-                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_4px_rgba(16,185,129,0.6)]" />
-                                <span className="font-semibold text-slate-300">Completed</span>
-                                <span className="text-slate-500 text-[8.5px]">(Selesai)</span>
+
+                              {/* Delete Selected Button */}
+                              <div className="relative flex-1 sm:flex-initial z-10" id="rfq_delete_selected_button_container">
+                                <button
+                                  type="button"
+                                  disabled={selectedRfqIds.length === 0}
+                                  onClick={handleDeleteSelectedRfqs}
+                                  className={`flex items-center justify-between border rounded-xl px-3 py-1.5 text-xs font-semibold cursor-pointer transition-all gap-2 w-full sm:min-w-[150px] text-left ${
+                                    selectedRfqIds.length === 0
+                                      ? "bg-slate-950/40 border-white/5 text-slate-500 cursor-not-allowed"
+                                      : "bg-slate-950 border-rose-500/20 text-rose-400 hover:border-rose-500/50 hover:bg-slate-900 shadow-sm hover:shadow-rose-500/5"
+                                  }`}
+                                  title="Hapus semua RFQ yang saat ini dipilih secara massal"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <Icons.Trash2 className={`h-4 w-4 ${selectedRfqIds.length === 0 ? "text-slate-600" : "text-rose-400 animate-pulse"}`} />
+                                    <span>Hapus Terpilih ({selectedRfqIds.length})</span>
+                                  </div>
+                                </button>
                               </div>
-                              <span className="text-white/10 text-[8px]">•</span>
-                              <div className="flex items-center gap-1.5">
-                                <span className="h-1.5 w-1.5 rounded-full bg-rose-400 shadow-[0_0_4px_rgba(239,68,68,0.6)]" />
-                                <span className="font-semibold text-slate-300">Cancelled</span>
-                                <span className="text-slate-500 text-[8.5px]">(Batal)</span>
+
+                               {/* Reset Filters Button */}
+                              <div className="relative flex-1 sm:flex-initial z-10" id="rfq_reset_filters_button_container">
+                                <button
+                                  type="button"
+                                  disabled={!(adminRfqStatuses.length > 0 || !!adminRfqSearch || !!adminRfqStartDate || !!adminRfqEndDate || !!adminRfqClientFilter || !!statusKeywordSearch || !!adminRfqCategoryFilter || !!adminRfqSubCategoryFilter || !!adminRfqPriorityFilter || showOnlyMyClients)}
+                                  onClick={() => {
+                                    setAdminRfqStatuses([]);
+                                    setStatusKeywordSearch("");
+                                    setAdminRfqSearch("");
+                                    setAdminRfqStartDate("");
+                                    setAdminRfqEndDate("");
+                                    setAdminRfqCategoryFilter("");
+                                    setAdminRfqSubCategoryFilter("");
+                                    setAdminRfqPriorityFilter("");
+                                    setAdminRfqClientFilter("");
+                                    setShowOnlyMyClients(false);
+                                  }}
+                                  className={`flex items-center justify-between border rounded-xl px-3 py-1.5 text-xs font-semibold cursor-pointer transition-all gap-2 w-full sm:min-w-[130px] text-left ${
+                                    !(adminRfqStatuses.length > 0 || !!adminRfqSearch || !!adminRfqStartDate || !!adminRfqEndDate || !!adminRfqClientFilter || !!statusKeywordSearch || !!adminRfqCategoryFilter || !!adminRfqSubCategoryFilter || !!adminRfqPriorityFilter || showOnlyMyClients)
+                                      ? "bg-slate-950/40 border-white/5 text-slate-500 cursor-not-allowed"
+                                      : "bg-slate-950 border-rose-500/20 text-rose-400 hover:border-rose-500/50 hover:bg-slate-900 shadow-sm hover:shadow-rose-500/5"
+                                  }`}
+                                  title="Reset semua filter pencarian, rentang tanggal, kategori klien, dan filter status RFQ"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <Icons.FilterX className="h-4 w-4" />
+                                    <span>Reset Filters</span>
+                                  </div>
+                                </button>
+                              </div>
+                              </div>
+
+                              {selectedRfqIds.length > 0 && (
+                                <motion.div 
+                                  initial={{ opacity: 0, y: -4 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  className="flex items-center justify-between bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-[11px] font-bold px-3 py-1.5 rounded-xl gap-2 z-10 w-full shadow-sm mt-1"
+                                >
+                                  <div className="flex items-center gap-1.5">
+                                    <Icons.CheckSquare className="h-3.5 w-3.5 text-indigo-400 animate-pulse" />
+                                    <span>
+                                      Terdapat <strong className="text-white font-black">{selectedRfqIds.length} RFQ</strong> yang sedang dipilih untuk tindakan massal.
+                                    </span>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedRfqIds([])}
+                                    className="text-[10px] bg-slate-950/80 text-slate-300 hover:text-white hover:bg-rose-950/40 hover:border-rose-500/30 px-2 py-0.5 rounded-md transition-all font-semibold flex items-center gap-1 cursor-pointer border border-white/10"
+                                  >
+                                    <Icons.X className="h-2.5 w-2.5 text-slate-500" />
+                                    <span>Batal Pilih</span>
+                                  </button>
+                                </motion.div>
+                              )}
+
+                              {/* RFQ Status Categories Summary Section */}
+                              <div className="mt-1.5 border-t border-white/5 pt-2 w-full z-10" id="rfq_status_summary_section">
+                                <div className="flex items-center justify-between mb-1.5 text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                                  <div className="flex items-center gap-1.5">
+                                    <Icons.BarChart3 className="h-3.5 w-3.5 text-indigo-400" />
+                                    <span>Ringkasan Jumlah RFQ per Status (Summary of RFQs per Status)</span>
+                                  </div>
+                                  <div className="text-[9px] text-slate-500 font-mono">
+                                    Total RFQ: <span className="text-slate-300 font-extrabold">{rfqs.length}</span>
+                                  </div>
+                                </div>
+                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-1.5 mt-1">
+                                  {filteredLegendStatuses.map((item) => {
+                                    const isCustom = item.isCustom;
+                                    const isHexColor = (item.color || "").startsWith("#");
+                                    const count = adminRfqStatusCounts[item.value] || 0;
+                                    
+                                    // Determine dot style & bg/border colors
+                                    let dotStyle: React.CSSProperties | undefined = undefined;
+                                    let itemStyle: React.CSSProperties | undefined = undefined;
+                                    let dotClass = "h-2 w-2 rounded-full shrink-0";
+                                    let bgBorderClass = "bg-slate-900/40 border border-white/5 text-slate-300 hover:bg-slate-900 hover:border-white/10 transition-colors duration-200";
+                                    
+                                    if (isHexColor) {
+                                      dotStyle = {
+                                        backgroundColor: item.color,
+                                        boxShadow: `0 0 5px ${item.color}`
+                                      };
+                                      dotClass += " animate-pulse";
+                                      itemStyle = {
+                                        borderColor: `${item.color}25`,
+                                        backgroundColor: `${item.color}08`
+                                      };
+                                    } else {
+                                      if (isCustom) {
+                                        const tailwindColorMap: Record<string, string> = {
+                                          purple: "bg-purple-400 shadow-[0_0_5px_rgba(168,85,247,0.5)]",
+                                          violet: "bg-violet-400 shadow-[0_0_5px_rgba(139,92,246,0.5)]",
+                                          pink: "bg-pink-400 shadow-[0_0_5px_rgba(236,72,153,0.5)]",
+                                          cyan: "bg-cyan-400 shadow-[0_0_5px_rgba(6,182,212,0.5)]",
+                                          amber: "bg-amber-400 shadow-[0_0_5px_rgba(245,158,11,0.5)]",
+                                          blue: "bg-blue-400 shadow-[0_0_5px_rgba(59,130,246,0.5)]",
+                                          emerald: "bg-emerald-400 shadow-[0_0_5px_rgba(16,185,129,0.5)]",
+                                          slate: "bg-slate-400 shadow-[0_0_5px_rgba(100,116,139,0.5)]"
+                                        };
+                                        dotClass += ` ${tailwindColorMap[item.color] || "bg-purple-400"} animate-pulse`;
+                                        
+                                        const tailwindBgMap: Record<string, string> = {
+                                          purple: "bg-purple-500/5 border-purple-500/10 text-purple-300",
+                                          violet: "bg-violet-500/5 border-violet-500/10 text-violet-300",
+                                          pink: "bg-pink-500/5 border-pink-500/10 text-pink-300",
+                                          cyan: "bg-cyan-500/5 border-cyan-500/10 text-cyan-300",
+                                          amber: "bg-amber-500/5 border-amber-500/10 text-amber-300",
+                                          blue: "bg-blue-500/5 border-blue-500/10 text-blue-300",
+                                          emerald: "bg-emerald-500/5 border-emerald-500/10 text-emerald-300",
+                                          slate: "bg-slate-500/5 border-slate-500/10 text-slate-300"
+                                        };
+                                        bgBorderClass = tailwindBgMap[item.color] || bgBorderClass;
+                                      } else {
+                                        const defaultDotMap: Record<string, string> = {
+                                          pending: "bg-amber-400 shadow-[0_0_5px_rgba(245,158,11,0.5)] animate-pulse",
+                                          processing: "bg-blue-400 shadow-[0_0_5px_rgba(59,130,246,0.5)] animate-pulse",
+                                          quoted: "bg-indigo-400 shadow-[0_0_5px_rgba(99,102,241,0.5)]",
+                                          completed: "bg-emerald-400 shadow-[0_0_5px_rgba(16,185,129,0.5)]",
+                                          cancelled: "bg-rose-400 shadow-[0_0_5px_rgba(239,68,68,0.5)]"
+                                        };
+                                        dotClass += ` ${defaultDotMap[item.value] || ""}`;
+                                        
+                                        const defaultBgMap: Record<string, string> = {
+                                          pending: "bg-amber-500/5 border-amber-500/10 text-amber-300",
+                                          processing: "bg-blue-500/5 border-blue-500/10 text-blue-300",
+                                          quoted: "bg-indigo-500/5 border-indigo-500/10 text-indigo-300",
+                                          completed: "bg-emerald-500/5 border-emerald-500/10 text-emerald-300",
+                                          cancelled: "bg-rose-500/5 border-rose-500/10 text-rose-300"
+                                        };
+                                        bgBorderClass = defaultBgMap[item.value] || bgBorderClass;
+                                      }
+                                    }
+                                    
+                                    const displayLabel = isCustom ? item.label : (
+                                      item.value === "pending" ? "Pending" :
+                                      item.value === "processing" ? "Processing" :
+                                      item.value === "quoted" ? "Quoted" :
+                                      item.value === "completed" ? "Completed" :
+                                      item.value === "cancelled" ? "Cancelled" : item.label
+                                    );
+
+                                    return (
+                                      <div
+                                        key={`summary-${item.value}`}
+                                        className={`flex items-center justify-between gap-2 px-2 py-1 rounded-lg text-[10px] font-bold transition-all ${bgBorderClass}`}
+                                        style={itemStyle}
+                                      >
+                                        <div className="flex items-center gap-1.5 min-w-0">
+                                          <span className={dotClass} style={dotStyle} />
+                                          <span className="truncate text-slate-300">{displayLabel}</span>
+                                        </div>
+                                        <span className="font-mono text-[10px] font-black bg-slate-950/40 px-1 py-0.5 rounded border border-white/5 min-w-[16px] text-center">
+                                          {count}
+                                        </span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+
+                                {/* Financial Workload Overview Row */}
+                                <div className="mt-2 border-t border-white/5 pt-2" id="rfq_status_financial_overview">
+                                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-1.5 gap-1">
+                                    <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                                      <Icons.DollarSign className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                                      <span>Ringkasan Nilai Keuangan RFQ per Status (Financial Summary of RFQs)</span>
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 font-mono font-semibold flex items-center gap-1">
+                                      <span>Total Terfilter:</span>
+                                      <span className="text-emerald-400 font-extrabold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">{formatRupiah(adminRfqStatusValues[""] || 0)}</span>
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-1.5 mt-1">
+                                    {filteredLegendStatuses.map((item) => {
+                                      const isCustom = item.isCustom;
+                                      const isHexColor = (item.color || "").startsWith("#");
+                                      const totalValue = adminRfqStatusValues[item.value] || 0;
+                                      
+                                      // Determine dot style & bg/border colors
+                                      let dotStyle: React.CSSProperties | undefined = undefined;
+                                      let itemStyle: React.CSSProperties | undefined = undefined;
+                                      let dotClass = "h-1.5 w-1.5 rounded-full shrink-0";
+                                      let bgBorderClass = "bg-slate-900/40 border border-white/5 text-slate-300 hover:bg-slate-900 hover:border-white/10 transition-colors duration-200";
+                                      
+                                      if (isHexColor) {
+                                        dotStyle = {
+                                          backgroundColor: item.color,
+                                          boxShadow: `0 0 5px ${item.color}`
+                                        };
+                                        dotClass += " animate-pulse";
+                                        itemStyle = {
+                                          borderColor: `${item.color}25`,
+                                          backgroundColor: `${item.color}08`
+                                        };
+                                      } else {
+                                        if (isCustom) {
+                                          const tailwindColorMap: Record<string, string> = {
+                                            purple: "bg-purple-400 shadow-[0_0_5px_rgba(168,85,247,0.5)]",
+                                            violet: "bg-violet-400 shadow-[0_0_5px_rgba(139,92,246,0.5)]",
+                                            pink: "bg-pink-400 shadow-[0_0_5px_rgba(236,72,153,0.5)]",
+                                            cyan: "bg-cyan-400 shadow-[0_0_5px_rgba(6,182,212,0.5)]",
+                                            amber: "bg-amber-400 shadow-[0_0_5px_rgba(245,158,11,0.5)]",
+                                            blue: "bg-blue-400 shadow-[0_0_5px_rgba(59,130,246,0.5)]",
+                                            emerald: "bg-emerald-400 shadow-[0_0_5px_rgba(16,185,129,0.5)]",
+                                            slate: "bg-slate-400 shadow-[0_0_5px_rgba(100,116,139,0.5)]"
+                                          };
+                                          dotClass += ` ${tailwindColorMap[item.color] || "bg-purple-400"} animate-pulse`;
+                                          
+                                          const tailwindBgMap: Record<string, string> = {
+                                            purple: "bg-purple-500/5 border-purple-500/10 text-purple-300",
+                                            violet: "bg-violet-500/5 border-violet-500/10 text-violet-300",
+                                            pink: "bg-pink-500/5 border-pink-500/10 text-pink-300",
+                                            cyan: "bg-cyan-500/5 border-cyan-500/10 text-cyan-300",
+                                            amber: "bg-amber-500/5 border-amber-500/10 text-amber-300",
+                                            blue: "bg-blue-500/5 border-blue-500/10 text-blue-300",
+                                            emerald: "bg-emerald-500/5 border-emerald-500/10 text-emerald-300",
+                                            slate: "bg-slate-500/5 border-slate-500/10 text-slate-300"
+                                          };
+                                          bgBorderClass = tailwindBgMap[item.color] || bgBorderClass;
+                                        } else {
+                                          const defaultDotMap: Record<string, string> = {
+                                            pending: "bg-amber-400 shadow-[0_0_5px_rgba(245,158,11,0.5)] animate-pulse",
+                                            processing: "bg-blue-400 shadow-[0_0_5px_rgba(59,130,246,0.5)] animate-pulse",
+                                            quoted: "bg-indigo-400 shadow-[0_0_5px_rgba(99,102,241,0.5)]",
+                                            completed: "bg-emerald-400 shadow-[0_0_5px_rgba(16,185,129,0.5)]",
+                                            cancelled: "bg-rose-400 shadow-[0_0_5px_rgba(239,68,68,0.5)]"
+                                          };
+                                          dotClass += ` ${defaultDotMap[item.value] || ""}`;
+                                          
+                                          const defaultBgMap: Record<string, string> = {
+                                            pending: "bg-amber-500/5 border-amber-500/10 text-amber-300",
+                                            processing: "bg-blue-500/5 border-blue-500/10 text-blue-300",
+                                            quoted: "bg-indigo-500/5 border-indigo-500/10 text-indigo-300",
+                                            completed: "bg-emerald-500/5 border-emerald-500/10 text-emerald-300",
+                                            cancelled: "bg-rose-500/5 border-rose-500/10 text-rose-300"
+                                          };
+                                          bgBorderClass = defaultBgMap[item.value] || bgBorderClass;
+                                        }
+                                      }
+                                      
+                                      const displayLabel = isCustom ? item.label : (
+                                        item.value === "pending" ? "Pending" :
+                                        item.value === "processing" ? "Processing" :
+                                        item.value === "quoted" ? "Quoted" :
+                                        item.value === "completed" ? "Completed" :
+                                        item.value === "cancelled" ? "Cancelled" : item.label
+                                      );
+
+                                      return (
+                                        <div
+                                          key={`financial-${item.value}`}
+                                          className={`flex flex-col justify-between gap-1 px-2 py-1.5 rounded-lg text-[10px] font-bold transition-all ${bgBorderClass}`}
+                                          style={itemStyle}
+                                        >
+                                          <div className="flex items-center gap-1.5 min-w-0">
+                                            <span className={dotClass} style={dotStyle} />
+                                            <span className="truncate text-slate-300">{displayLabel}</span>
+                                          </div>
+                                          <div className="font-mono text-[9px] font-black text-right text-emerald-400/90 truncate">
+                                            {formatRupiah(totalValue)}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Small Dynamic Clickable Legend Row */}
+                              <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-[10px] text-slate-400 border-t border-white/5 pt-1.5 mt-0.5 z-10 w-full">
+                                <span className="text-[9px] uppercase tracking-wider text-slate-300 font-extrabold mr-1 flex items-center gap-1">
+                                  <Icons.Tags className="h-3 w-3 text-slate-400" />
+                                  <span>Legenda Status (Klik untuk Filter):</span>
+                                </span>
+
+                                <span className="text-[9px] text-slate-400/80 mr-2 flex items-center gap-1 bg-indigo-950/40 border border-indigo-500/10 px-1.5 py-0.5 rounded-md">
+                                  <Icons.Palette className="h-2.5 w-2.5 text-indigo-400/80 animate-pulse" />
+                                  <span>Tip: Klik bulatan untuk warna kustom, drag status untuk atur priority!</span>
+                                </span>
+
+                                <button
+                                  type="button"
+                                  onClick={handleResetStatusColors}
+                                  className="text-[9px] text-indigo-300 hover:text-white bg-indigo-950/60 hover:bg-indigo-900/80 border border-indigo-500/30 px-2 py-0.5 rounded-md flex items-center gap-1 transition-all cursor-pointer shadow-sm hover:shadow-indigo-500/10"
+                                  title="Kembalikan semua warna status ke setelan bawaan"
+                                >
+                                  <Icons.RotateCcw className="h-2.5 w-2.5" />
+                                  <span>Reset Warna Status</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => setHideEmptyStatuses(!hideEmptyStatuses)}
+                                  className={`text-[9px] px-2 py-0.5 rounded-md flex items-center gap-1 transition-all cursor-pointer shadow-sm ${
+                                    hideEmptyStatuses 
+                                      ? "bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 shadow-amber-500/5 font-extrabold"
+                                      : "bg-indigo-950/60 hover:bg-indigo-900/80 text-slate-400 hover:text-white border border-indigo-500/30"
+                                  }`}
+                                  title="Sembunyikan status yang tidak memiliki RFQ di tampilan aktif ini"
+                                >
+                                  {hideEmptyStatuses ? (
+                                    <Icons.EyeOff className="h-2.5 w-2.5 text-amber-400" />
+                                  ) : (
+                                    <Icons.Eye className="h-2.5 w-2.5 text-slate-400" />
+                                  )}
+                                  <span>Hide Empty Statuses</span>
+                                </button>
+                                
+                                {filteredLegendStatuses.map((item) => {
+                                  const isCustom = item.isCustom;
+                                  const isHexColor = (item.color || "").startsWith("#");
+                                  const isSelected = adminRfqStatuses.includes(item.value);
+                                  const isAnyFilterActive = adminRfqStatuses.length > 0;
+                                  
+                                  // Determine dot style & class
+                                  let dotStyle: React.CSSProperties | undefined = undefined;
+                                  let dotClass = "h-1.5 w-1.5 rounded-full shrink-0 transition-transform duration-200 group-hover:scale-125";
+                                  
+                                  if (isHexColor) {
+                                    dotStyle = {
+                                      backgroundColor: item.color,
+                                      boxShadow: `0 0 4px ${item.color}`
+                                    };
+                                    dotClass += " animate-pulse";
+                                  } else {
+                                    if (isCustom) {
+                                      const tailwindColorMap: Record<string, string> = {
+                                        purple: "bg-purple-400 shadow-[0_0_4px_rgba(168,85,247,0.5)]",
+                                        violet: "bg-violet-400 shadow-[0_0_4px_rgba(139,92,246,0.5)]",
+                                        pink: "bg-pink-400 shadow-[0_0_4px_rgba(236,72,153,0.5)]",
+                                        cyan: "bg-cyan-400 shadow-[0_0_4px_rgba(6,182,212,0.5)]",
+                                        amber: "bg-amber-400 shadow-[0_0_4px_rgba(245,158,11,0.5)]",
+                                        blue: "bg-blue-400 shadow-[0_0_4px_rgba(59,130,246,0.5)]",
+                                        emerald: "bg-emerald-400 shadow-[0_0_4px_rgba(16,185,129,0.5)]",
+                                        slate: "bg-slate-400 shadow-[0_0_4px_rgba(100,116,139,0.5)]"
+                                      };
+                                      dotClass += ` ${tailwindColorMap[item.color] || "bg-purple-400 shadow-[0_0_4px_rgba(168,85,247,0.5)]"} animate-pulse`;
+                                    } else {
+                                      const defaultDotMap: Record<string, string> = {
+                                        pending: "bg-amber-400 shadow-[0_0_4px_rgba(245,158,11,0.5)] animate-pulse",
+                                        processing: "bg-blue-400 shadow-[0_0_4px_rgba(59,130,246,0.5)] animate-pulse",
+                                        quoted: "bg-indigo-400 shadow-[0_0_4px_rgba(99,102,241,0.5)]",
+                                        completed: "bg-emerald-400 shadow-[0_0_4px_rgba(16,185,129,0.5)]",
+                                        cancelled: "bg-rose-400 shadow-[0_0_4px_rgba(239,68,68,0.5)]"
+                                      };
+                                      dotClass += ` ${defaultDotMap[item.value] || ""}`;
+                                    }
+                                  }
+ 
+                                  const count = adminRfqStatusCounts[item.value as keyof typeof adminRfqStatusCounts] || 0;
+                                  const displayLabel = isCustom ? item.label : (
+                                    item.value === "pending" ? "Pending" :
+                                    item.value === "processing" ? "Processing" :
+                                    item.value === "quoted" ? "Quoted" :
+                                    item.value === "completed" ? "Completed" :
+                                    item.value === "cancelled" ? "Cancelled" : item.label
+                                  );
+ 
+                                  // Resolve color picker value
+                                  const tailwindHexColors: Record<string, string> = {
+                                    amber: "#f59e0b",
+                                    blue: "#3b82f6",
+                                    indigo: "#6366f1",
+                                    emerald: "#10b981",
+                                    rose: "#f43f5e",
+                                    purple: "#a855f7",
+                                    violet: "#8b5cf6",
+                                    pink: "#ec4899",
+                                    cyan: "#06b6d4",
+                                    slate: "#64748b"
+                                  };
+                                  const currentRawColor = item.color || "slate";
+                                  const hexColorPickerVal = currentRawColor.startsWith("#") 
+                                    ? currentRawColor 
+                                    : (tailwindHexColors[currentRawColor] || "#64748b");
+ 
+                                  return (
+                                    <button
+                                      key={item.value}
+                                      type="button"
+                                      draggable="true"
+                                      onDragStart={(e) => {
+                                        setDraggingStatus(item.value);
+                                        e.dataTransfer.setData("text/plain", item.value);
+                                        e.dataTransfer.effectAllowed = "move";
+                                      }}
+                                      onDragEnd={() => {
+                                        setDraggingStatus(null);
+                                      }}
+                                      onDragOver={(e) => {
+                                        e.preventDefault();
+                                      }}
+                                      onDragEnter={(e) => {
+                                        e.preventDefault();
+                                        e.currentTarget.classList.add("bg-indigo-950/45", "border-indigo-500/60", "scale-105");
+                                      }}
+                                      onDragLeave={(e) => {
+                                        e.currentTarget.classList.remove("bg-indigo-950/45", "border-indigo-500/60", "scale-105");
+                                      }}
+                                      onDrop={(e) => {
+                                        e.preventDefault();
+                                        e.currentTarget.classList.remove("bg-indigo-950/45", "border-indigo-500/60", "scale-105");
+                                        const draggedValue = e.dataTransfer.getData("text/plain");
+                                        const targetValue = item.value;
+                                        if (draggedValue && draggedValue !== targetValue) {
+                                          const isDraggedPinned = pinnedStatuses.includes(draggedValue);
+                                          const isTargetPinned = pinnedStatuses.includes(targetValue);
+                                          if (isDraggedPinned && isTargetPinned) {
+                                            const newPinned = [...pinnedStatuses];
+                                            const draggedIdx = newPinned.indexOf(draggedValue);
+                                            const targetIdx = newPinned.indexOf(targetValue);
+                                            if (draggedIdx !== -1 && targetIdx !== -1) {
+                                              newPinned.splice(draggedIdx, 1);
+                                              newPinned.splice(targetIdx, 0, draggedValue);
+                                              setPinnedStatuses(newPinned);
+                                            }
+                                          } else {
+                                            const currentOrder = orderedLegendStatuses.map(s => s.value);
+                                            const draggedIdx = currentOrder.indexOf(draggedValue);
+                                            const targetIdx = currentOrder.indexOf(targetValue);
+                                            if (draggedIdx !== -1 && targetIdx !== -1) {
+                                              const newOrder = [...currentOrder];
+                                              newOrder.splice(draggedIdx, 1);
+                                              newOrder.splice(targetIdx, 0, draggedValue);
+                                              setLegendStatusOrder(newOrder);
+                                              localStorage.setItem("bbs_rfq_status_priority", JSON.stringify(newOrder));
+                                            }
+                                          }
+                                        }
+                                      }}
+                                      onClick={() => {
+                                        if (adminRfqStatuses.includes(item.value)) {
+                                          setAdminRfqStatuses(adminRfqStatuses.filter(s => s !== item.value));
+                                        } else {
+                                          setAdminRfqStatuses([...adminRfqStatuses, item.value]);
+                                        }
+                                      }}
+                                      className={`group flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[10px] font-bold transition-all cursor-grab active:cursor-grabbing select-none ${
+                                        draggingStatus === item.value
+                                          ? "opacity-50 scale-95 border-dashed border-indigo-500/50 bg-slate-900/40"
+                                          : isSelected
+                                          ? "bg-indigo-600/25 text-indigo-300 border-indigo-500/40 shadow-[0_0_6px_rgba(99,102,241,0.2)]"
+                                          : isAnyFilterActive
+                                          ? "bg-transparent text-slate-500 border-transparent hover:border-white/5 hover:text-slate-300 opacity-50 hover:opacity-90"
+                                          : "bg-slate-950/40 text-slate-400 border-white/5 hover:border-white/10 hover:text-slate-200"
+                                      }`}
+                                      style={isHexColor ? {
+                                        borderColor: isSelected ? `${item.color}50` : undefined,
+                                        color: isSelected ? item.color : undefined
+                                      } : undefined}
+                                    >
+                                      {/* Small visual grip handle */}
+                                      <Icons.GripVertical className="h-3 w-3 text-indigo-400 group-hover:text-indigo-300 transition-colors cursor-grab shrink-0 -mr-0.5" />
+
+                                      {/* Small interactive checkbox */}
+                                      <div 
+                                        className={`h-3 w-3 rounded border flex items-center justify-center transition-all shrink-0 ${
+                                          isSelected 
+                                            ? "bg-indigo-500 border-indigo-400 text-white" 
+                                            : "border-white/20 bg-slate-950/60 text-transparent group-hover:border-white/40"
+                                        }`}
+                                        style={isHexColor && isSelected ? {
+                                          backgroundColor: item.color,
+                                          borderColor: item.color
+                                        } : undefined}
+                                      >
+                                        <Icons.Check className="h-2 w-2 stroke-[4]" />
+                                      </div>
+ 
+                                      {/* Clickable color dot that triggers native color picker */}
+                                      <div 
+                                        className="relative flex items-center justify-center shrink-0 w-3 h-3 cursor-pointer hover:scale-130 transition-transform"
+                                        onClick={(e) => e.stopPropagation()}
+                                        title="Klik untuk memilih warna status kustom"
+                                      >
+                                        <span className={dotClass} style={dotStyle} />
+                                        <input
+                                          type="color"
+                                          value={hexColorPickerVal}
+                                          onChange={(e) => handleUpdateCustomStatusColor(item.value, e.target.value)}
+                                          className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+                                        />
+                                      </div>
+ 
+                                      <span>{displayLabel}</span>
+                                      <span className={`text-[8.5px] font-mono px-1 rounded-sm ${
+                                        isSelected ? "bg-indigo-500/30 text-indigo-300" : "bg-slate-950/40 text-slate-500"
+                                      }`}
+                                      style={isHexColor && isSelected ? {
+                                        backgroundColor: `${item.color}25`,
+                                        color: item.color
+                                      } : undefined}>
+                                        {count}
+                                      </span>
+
+                                      {/* Pin Button */}
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          const isPinned = pinnedStatuses.includes(item.value);
+                                          if (isPinned) {
+                                            setPinnedStatuses(pinnedStatuses.filter(s => s !== item.value));
+                                          } else {
+                                            setPinnedStatuses([...pinnedStatuses, item.value]);
+                                          }
+                                        }}
+                                        className={`p-0.5 rounded transition-all cursor-pointer shrink-0 ml-1 border ${
+                                          pinnedStatuses.includes(item.value)
+                                            ? "text-amber-400 hover:text-amber-300 bg-amber-500/15 border-amber-500/30"
+                                            : "text-slate-500 hover:text-slate-300 hover:bg-slate-800 border-transparent"
+                                        }`}
+                                        title="Klik pin untuk menyematkan status di atas"
+                                      >
+                                        <motion.div
+                                          key={pinnedStatuses.includes(item.value) ? "pinned" : "unpinned"}
+                                          initial={{ scale: 0.7, rotate: pinnedStatuses.includes(item.value) ? 45 : 0 }}
+                                          animate={{ scale: 1, rotate: pinnedStatuses.includes(item.value) ? 45 : 0 }}
+                                          whileHover={{ scale: 1.25 }}
+                                          whileTap={{ scale: 0.8 }}
+                                          transition={{ type: "spring", stiffness: 450, damping: 13 }}
+                                          className="inline-flex items-center justify-center shrink-0"
+                                        >
+                                          <Icons.Pin className={`h-3 w-3 ${pinnedStatuses.includes(item.value) ? "fill-amber-400" : ""}`} />
+                                        </motion.div>
+                                      </button>
+
+                                      {isCustom && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleDeleteCustomStatus(item.value);
+                                          }}
+                                          className="p-0.5 rounded hover:bg-rose-500/20 text-slate-500 hover:text-rose-400 transition-colors cursor-pointer shrink-0 ml-1"
+                                          title="Hapus status kustom"
+                                        >
+                                          <Icons.Trash2 className="h-3 w-3" />
+                                        </button>
+                                      )}
+                                    </button>
+                                  );
+                                })}
                               </div>
                             </div>
                           </div>
@@ -6505,7 +9041,20 @@ export default function App() {
                                 </th>
                                 <th className="p-4">
                                   <div className="flex items-center gap-1.5">
-                                    <span>No RFQ</span>
+                                    <span 
+                                      className="cursor-pointer hover:text-indigo-400 select-none transition-colors flex items-center gap-1 font-bold"
+                                      onClick={() => {
+                                        if (adminRfqSortBy === "rfq-asc") {
+                                          setAdminRfqSortBy("rfq-desc");
+                                        } else {
+                                          setAdminRfqSortBy("rfq-asc");
+                                        }
+                                      }}
+                                    >
+                                      No RFQ
+                                      {adminRfqSortBy === "rfq-asc" && <Icons.ArrowUp className="h-3 w-3 text-indigo-400" />}
+                                      {adminRfqSortBy === "rfq-desc" && <Icons.ArrowDown className="h-3 w-3 text-indigo-400" />}
+                                    </span>
                                     {selectedRfqIds.length > 0 && (
                                       <div className="flex items-center gap-1.5 relative inline-block text-left text-[10px] normal-case">
                                         <select
@@ -6554,11 +9103,60 @@ export default function App() {
                                     )}
                                   </div>
                                 </th>
-                                <th className="p-4">Tanggal</th>
-                                <th className="p-4">Info Klien</th>
+                                <th 
+                                  className="p-4 cursor-pointer hover:text-indigo-400 select-none transition-colors"
+                                  onClick={() => {
+                                    if (adminRfqSortBy === "date-desc") {
+                                      setAdminRfqSortBy("date-asc");
+                                    } else {
+                                      setAdminRfqSortBy("date-desc");
+                                    }
+                                  }}
+                                >
+                                  <div className="flex items-center gap-1">
+                                    <span>Tanggal</span>
+                                    {adminRfqSortBy === "date-desc" && <Icons.ArrowDown className="h-3 w-3 text-indigo-400" />}
+                                    {adminRfqSortBy === "date-asc" && <Icons.ArrowUp className="h-3 w-3 text-indigo-400" />}
+                                    {adminRfqSortBy !== "date-desc" && adminRfqSortBy !== "date-asc" && <Icons.ArrowUpDown className="h-3 w-3 text-slate-600 opacity-50" />}
+                                  </div>
+                                </th>
+                                <th 
+                                  className="p-4 cursor-pointer hover:text-indigo-400 select-none transition-colors"
+                                  onClick={() => {
+                                    if (adminRfqSortBy === "client-asc") {
+                                      setAdminRfqSortBy("client-desc");
+                                    } else {
+                                      setAdminRfqSortBy("client-asc");
+                                    }
+                                  }}
+                                >
+                                  <div className="flex items-center gap-1">
+                                    <span>Info Klien</span>
+                                    {adminRfqSortBy === "client-asc" && <Icons.ArrowUp className="h-3 w-3 text-indigo-400" />}
+                                    {adminRfqSortBy === "client-desc" && <Icons.ArrowDown className="h-3 w-3 text-indigo-400" />}
+                                    {adminRfqSortBy !== "client-asc" && adminRfqSortBy !== "client-desc" && <Icons.ArrowUpDown className="h-3 w-3 text-slate-600 opacity-50" />}
+                                  </div>
+                                </th>
                                 <th className="p-4">Kategori</th>
                                 <th className="p-4">Daftar Barang</th>
-                                <th className="p-4">Status</th>
+                                <th 
+                                  className="p-4 cursor-pointer hover:text-indigo-400 select-none transition-colors"
+                                  onClick={() => {
+                                    if (adminRfqSortBy === "status-asc") {
+                                      setAdminRfqSortBy("status-desc");
+                                    } else {
+                                      setAdminRfqSortBy("status-asc");
+                                    }
+                                  }}
+                                >
+                                  <div className="flex items-center gap-1">
+                                    <span>Status</span>
+                                    {adminRfqSortBy === "status-asc" && <Icons.ArrowUp className="h-3 w-3 text-indigo-400" />}
+                                    {adminRfqSortBy === "status-desc" && <Icons.ArrowDown className="h-3 w-3 text-indigo-400" />}
+                                    {adminRfqSortBy !== "status-asc" && adminRfqSortBy !== "status-desc" && <Icons.ArrowUpDown className="h-3 w-3 text-slate-600 opacity-50" />}
+                                  </div>
+                                </th>
+                                <th className="p-4 text-center">Time in Status</th>
                                 <th className="p-4">Komentar Internal</th>
                                 <th className="p-4 text-center">SLA Response (48j)</th>
                                 <th className="p-4 text-center">Aksi / Penawaran AI</th>
@@ -6593,10 +9191,47 @@ export default function App() {
 
                                   return (
                                     <tr key={rfq.id} className={rowClass}>
+                                      <td className="p-4 text-center w-12">
+                                        <input
+                                          type="checkbox"
+                                          checked={selectedRfqIds.includes(rfq.id)}
+                                          onChange={(e) => {
+                                            if (e.target.checked) {
+                                              setSelectedRfqIds(prev => [...prev, rfq.id]);
+                                            } else {
+                                              setSelectedRfqIds(prev => prev.filter(id => id !== rfq.id));
+                                            }
+                                          }}
+                                          className="rounded border-white/20 bg-slate-900 text-indigo-600 focus:ring-indigo-500/30 h-3.5 w-3.5 cursor-pointer"
+                                        />
+                                      </td>
                                       <td className="p-4 font-mono font-bold text-indigo-400">
-                                        <div className="flex items-center space-x-1.5">
-                                          {isOverdue && <Icons.AlertCircle className="h-3.5 w-3.5 text-red-500 shrink-0 animate-pulse animate-duration-1000" />}
-                                          <span>{rfq.rfqNumber}</span>
+                                        <div className="flex flex-col gap-1">
+                                          <div className="flex items-center space-x-1.5">
+                                            {isOverdue && <Icons.AlertCircle className="h-3.5 w-3.5 text-red-500 shrink-0 animate-pulse animate-duration-1000" />}
+                                            <span>{rfq.rfqNumber}</span>
+                                          </div>
+                                          {/* Priority Tag */}
+                                          {(() => {
+                                            const prio = rfq.priority || "medium";
+                                            const colors = {
+                                              low: "bg-slate-500/10 text-slate-400 border-slate-500/20",
+                                              medium: "bg-indigo-500/10 text-indigo-400 border-indigo-500/20",
+                                              high: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+                                              urgent: "bg-rose-500/10 text-rose-400 border-rose-500/20 animate-pulse"
+                                            };
+                                            const labels = {
+                                              low: "⚡ Low",
+                                              medium: "⚡ Medium",
+                                              high: "⚡ High",
+                                              urgent: "🚨 Urgent"
+                                            };
+                                            return (
+                                              <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[8px] font-extrabold uppercase border w-max ${colors[prio]}`}>
+                                                {labels[prio]}
+                                              </span>
+                                            );
+                                          })()}
                                         </div>
                                       </td>
                                       <td className="p-4 text-slate-300">
@@ -6784,8 +9419,94 @@ export default function App() {
                                           );
                                         })()}
                                       </td>
-                                      <td className="p-4">
-                                        <div className="flex flex-col gap-1 min-w-[140px] max-w-[220px]">
+                                      <td className="p-4 text-center">
+                                        {(() => {
+                                          const statusChangeDate = getLatestStatusChangeTime(rfq);
+                                          const now = new Date();
+                                          const timeInStatusMs = now.getTime() - statusChangeDate.getTime();
+                                          const timeInStatusHours = Math.max(0, timeInStatusMs / (1000 * 60 * 60));
+                                          
+                                          const formatTimeInStatus = (hours: number): string => {
+                                            if (hours < 1) {
+                                              const mins = Math.max(1, Math.round(hours * 60));
+                                              return `${mins}m`;
+                                            }
+                                            if (hours < 24) {
+                                              const h = Math.floor(hours);
+                                              const m = Math.round((hours % 1) * 60);
+                                              return m > 0 ? `${h}j ${m}m` : `${h}j`;
+                                            }
+                                            const d = Math.floor(hours / 24);
+                                            const h = Math.floor(hours % 24);
+                                            return h > 0 ? `${d}h ${h}j` : `${d}h`;
+                                          };
+
+                                          // Detect if it is a bottleneck
+                                          const status = rfq.status || "pending";
+                                          const isPendingOrProcessing = status === "pending" || status === "processing";
+                                          
+                                          let badgeClass = "bg-white/5 border border-white/10 text-slate-300";
+                                          let dotColor = "bg-slate-400";
+                                          let titleText = "Waktu di status saat ini";
+                                          
+                                          if (isPendingOrProcessing) {
+                                            if (timeInStatusHours >= 24) {
+                                              badgeClass = "bg-red-500/10 border border-red-500/30 text-red-400 animate-pulse";
+                                              dotColor = "bg-red-500 shadow-[0_0_5px_rgba(239,68,68,0.6)]";
+                                              titleText = "Sangat lambat! Berada di status ini lebih dari 24 jam (Bottleneck)";
+                                            } else if (timeInStatusHours >= 12) {
+                                              badgeClass = "bg-amber-500/10 border border-amber-500/30 text-amber-400";
+                                              dotColor = "bg-amber-500 shadow-[0_0_5px_rgba(245,158,11,0.6)]";
+                                              titleText = "Perhatian! Berada di status ini lebih dari 12 jam";
+                                            } else {
+                                              badgeClass = "bg-indigo-500/10 border border-indigo-500/20 text-indigo-400";
+                                              dotColor = "bg-indigo-500";
+                                              titleText = "Status aman, di bawah 12 jam";
+                                            }
+                                          } else if (status === "quoted" && timeInStatusHours >= 48) {
+                                            badgeClass = "bg-pink-500/10 border border-pink-500/30 text-pink-400";
+                                            dotColor = "bg-pink-500 shadow-[0_0_5px_rgba(236,72,153,0.6)]";
+                                            titleText = "Sudah di-quote selama lebih dari 48 jam, silakan follow up klien";
+                                          }
+
+                                          return (
+                                            <span 
+                                              className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold font-mono ${badgeClass}`}
+                                              title={titleText}
+                                            >
+                                              <span className={`h-1.5 w-1.5 rounded-full ${dotColor}`} />
+                                              <span>{formatTimeInStatus(timeInStatusHours)}</span>
+                                            </span>
+                                           );
+                                         })()}
+                                       </td>
+                                       <td className="p-4">
+
+                                        <div className="flex flex-col gap-2 min-w-[150px] max-w-[220px]">
+                                          {/* Admin Note preview & edit trigger */}
+                                          {rfq.notes ? (
+                                            <div 
+                                              onClick={() => setSelectedNotesRfq(rfq)}
+                                              className="bg-indigo-500/10 hover:bg-indigo-500/15 border border-indigo-500/20 rounded-xl p-2.5 text-[10px] text-slate-300 leading-normal flex items-start gap-1.5 cursor-pointer transition-all duration-200 shadow-sm"
+                                              title="Klik untuk ubah catatan atau prioritas"
+                                            >
+                                              <Icons.FileText className="h-3.5 w-3.5 text-indigo-400 shrink-0 mt-0.5" />
+                                              <div className="flex-1">
+                                                <div className="font-extrabold text-indigo-300 text-[9px] uppercase tracking-wider mb-0.5">Catatan Admin</div>
+                                                <p className="line-clamp-2 italic text-slate-200 font-medium">"{rfq.notes}"</p>
+                                              </div>
+                                            </div>
+                                          ) : (
+                                            <button
+                                              onClick={() => setSelectedNotesRfq(rfq)}
+                                              className="text-[10px] text-slate-400 hover:text-white font-bold flex items-center gap-1.5 px-2 py-1.5 bg-white/5 border border-white/5 hover:border-white/10 rounded-xl transition-all self-start cursor-pointer"
+                                            >
+                                              <Icons.Plus className="h-3 w-3 text-slate-500" />
+                                              <span>Tambah Catatan Admin</span>
+                                            </button>
+                                          )}
+
+                                          {/* Comments Thread preview */}
                                           {rfq.internalComments && rfq.internalComments.length > 0 ? (
                                             (() => {
                                               const totalComments = rfq.internalComments.length;
@@ -6793,13 +9514,13 @@ export default function App() {
                                               const unreadCount = Math.max(0, totalComments - readCount);
 
                                               return (
-                                                <>
+                                                <div className="flex flex-col gap-1 mt-1">
                                                   <button
                                                     onClick={() => setSelectedCommentRfq(rfq)}
-                                                    className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1.5 self-start transition-colors relative"
+                                                    className="text-[10px] text-slate-400 hover:text-slate-300 font-bold flex items-center gap-1.5 self-start transition-colors relative"
                                                   >
                                                     <div className="relative">
-                                                      <Icons.MessageSquare className="h-3 w-3 shrink-0" />
+                                                      <Icons.MessageSquare className="h-3 w-3 text-slate-500 shrink-0" />
                                                       {unreadCount > 0 && (
                                                         <span className="absolute -top-1.5 -right-1.5 flex h-2 w-2">
                                                           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
@@ -6814,7 +9535,7 @@ export default function App() {
                                                       </span>
                                                     )}
                                                   </button>
-                                                  <div className="text-[10px] text-slate-300 bg-white/5 p-1.5 rounded border border-white/5 leading-normal">
+                                                  <div className="text-[10px] text-slate-300 bg-white/5 p-1.5 rounded-xl border border-white/5 leading-normal">
                                                     <div className="flex items-center gap-1 mb-0.5">
                                                       <span className="font-bold text-indigo-300">@{rfq.internalComments[totalComments - 1].author.split(" ")[0]}</span>
                                                       <span className="text-[8px] text-slate-500">
@@ -6825,13 +9546,13 @@ export default function App() {
                                                       "{rfq.internalComments[totalComments - 1].text}"
                                                     </p>
                                                   </div>
-                                                </>
+                                                </div>
                                               );
                                             })()
                                           ) : (
                                             <button
                                               onClick={() => setSelectedCommentRfq(rfq)}
-                                              className="text-[10px] text-slate-500 hover:text-slate-300 font-semibold flex items-center gap-1 py-1 transition-colors"
+                                              className="text-[10px] text-slate-500 hover:text-slate-300 font-semibold flex items-center gap-1 py-1 transition-colors self-start cursor-pointer pl-1"
                                             >
                                               <Icons.MessageSquare className="h-3 w-3 shrink-0 text-slate-600" />
                                               <span>Tulis Komentar...</span>
@@ -6911,7 +9632,7 @@ export default function App() {
                                 })
                               ) : (
                                 <tr>
-                                  <td colSpan={9} className="p-12 text-center text-slate-500">
+                                  <td colSpan={11} className="p-12 text-center text-slate-500">
                                     <Search className="h-8 w-8 text-slate-600 mx-auto mb-2" />
                                     <h5 className="font-bold text-slate-400">Tidak ada RFQ yang cocok</h5>
                                     <p className="text-xs text-slate-600">Cobalah kata kunci pencarian atau nomor RFQ lainnya.</p>
@@ -7603,13 +10324,14 @@ export default function App() {
                       </button>
                     </div>
                   ) : (
-                    <form 
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      updateSettings(settings);
-                    }}
-                    className="bg-slate-900/40 border border-white/10 backdrop-blur-xl rounded-2xl p-6 sm:p-8 space-y-6 max-w-3xl"
-                  >
+                    <div className="space-y-6 max-w-3xl">
+                      <form 
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        updateSettings(settings);
+                      }}
+                      className="bg-slate-900/40 border border-white/10 backdrop-blur-xl rounded-2xl p-6 sm:p-8 space-y-6"
+                    >
                     <h3 className="font-extrabold text-white text-lg border-b border-white/10 pb-3 flex items-center space-x-2">
                       <Settings className="h-5.5 w-5.5 text-indigo-400" />
                       <span>Konfigurasi Kredensial Kop Surat & Invoice</span>
@@ -7807,7 +10529,102 @@ export default function App() {
                       <span>Simpan Kredensial Baru</span>
                     </button>
                   </form>
-                ))}
+
+                  {/* Status Color Configuration Section */}
+                  <div className="bg-slate-900/40 border border-white/10 backdrop-blur-xl rounded-2xl p-6 sm:p-8 space-y-6">
+                    <h3 className="font-extrabold text-white text-lg border-b border-white/10 pb-3 flex items-center space-x-2">
+                      <Icons.Palette className="h-5.5 w-5.5 text-indigo-400" />
+                      <span>Konfigurasi Warna Status RFQ</span>
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Atur warna kustom untuk membedakan visual status RFQ standar maupun status kustom Anda pada tabel dan papan pantau.
+                    </p>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {/* Standard Statuses */}
+                      <div className="space-y-4 bg-slate-950/40 p-4 border border-white/5 rounded-2xl">
+                        <h4 className="text-xs font-bold text-white uppercase tracking-wider border-b border-white/5 pb-2 flex items-center gap-1.5">
+                          <Icons.CheckCircle className="h-3.5 w-3.5 text-indigo-400" />
+                          <span>Status Standar</span>
+                        </h4>
+                        {[
+                          { value: "pending", label: "Pending" },
+                          { value: "processing", label: "Processing" },
+                          { value: "quoted", label: "Quoted" },
+                          { value: "completed", label: "Completed" },
+                          { value: "cancelled", label: "Cancelled" }
+                        ].map((item) => {
+                          const customColors = settings.defaultRfqStatusColors || {};
+                          const currentColor = customColors[item.value] || (
+                            item.value === "pending" ? "#fbbf24" :
+                            item.value === "processing" ? "#60a5fa" :
+                            item.value === "quoted" ? "#818cf8" :
+                            item.value === "completed" ? "#34d399" :
+                            item.value === "cancelled" ? "#f87171" : "#a855f7"
+                          );
+
+                          return (
+                            <div key={item.value} className="flex items-center justify-between text-xs bg-slate-900/60 p-2.5 rounded-xl border border-white/5">
+                              <span className="font-semibold text-slate-300">{item.label}</span>
+                              <div className="flex items-center gap-2">
+                                <input 
+                                  type="color" 
+                                  value={currentColor}
+                                  onChange={(e) => handleUpdateCustomStatusColor(item.value, e.target.value)}
+                                  className="h-6 w-6 rounded cursor-pointer border-0 bg-transparent p-0"
+                                />
+                                <span className="text-[10px] font-mono text-slate-500 uppercase">{currentColor}</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Custom Statuses */}
+                      <div className="space-y-4 bg-slate-950/40 p-4 border border-white/5 rounded-2xl">
+                        <h4 className="text-xs font-bold text-white uppercase tracking-wider border-b border-white/5 pb-2 flex items-center gap-1.5">
+                          <Icons.Sliders className="h-3.5 w-3.5 text-purple-400" />
+                          <span>Status Kustom</span>
+                        </h4>
+                        {(settings.customRfqStatuses || []).length === 0 ? (
+                          <div className="text-center py-8 text-xs text-slate-500">
+                            Belum ada status kustom yang dibuat.
+                          </div>
+                        ) : (
+                          (settings.customRfqStatuses || []).map((item) => {
+                            const currentColor = item.color || "#a855f7";
+                            return (
+                              <div key={item.value} className="flex items-center justify-between text-xs bg-slate-900/60 p-2.5 rounded-xl border border-white/5">
+                                <span className="font-semibold text-slate-300">{item.label}</span>
+                                <div className="flex items-center gap-2">
+                                  <input 
+                                    type="color" 
+                                    value={currentColor}
+                                    onChange={(e) => handleUpdateCustomStatusColor(item.value, e.target.value)}
+                                    className="h-6 w-6 rounded cursor-pointer border-0 bg-transparent p-0"
+                                  />
+                                  <span className="text-[10px] font-mono text-slate-500 uppercase">{currentColor}</span>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end pt-2">
+                      <button
+                        type="button"
+                        onClick={() => handleResetStatusColors()}
+                        className="px-4 py-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Icons.RotateCcw className="h-3.5 w-3.5" />
+                        <span>Reset Semua Warna</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
 
                 {/* ================================== */}
                 {/* ADMIN T5: CATALOG MANAGEMENT        */}
@@ -8526,6 +11343,237 @@ export default function App() {
                 )}
 
                 {/* ================================== */}
+                {/* ADMIN T8: DATABASE KLIEN           */}
+                {/* ================================== */}
+                {activeAdminSubTab === ("clients" as any) && (
+                  <div className="space-y-6 animate-fadeIn">
+                    {/* Header */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-900/40 border border-white/10 backdrop-blur-xl rounded-2xl p-6">
+                      <div className="space-y-1">
+                        <h3 className="font-extrabold text-white text-lg flex items-center gap-2">
+                          <Icons.Users className="h-5 w-5 text-indigo-400" />
+                          <span>Database & Profil Klien</span>
+                        </h3>
+                        <p className="text-xs text-indigo-200">
+                          Melihat daftar riwayat, kategori loyalitas, dan integrasi permintaan RFQ per klien secara terpusat.
+                        </p>
+                      </div>
+
+                      {/* KPI Clients */}
+                      <div className="flex items-center gap-6 bg-slate-950/40 px-6 py-3 border border-white/5 rounded-xl">
+                        <div className="text-center">
+                          <span className="text-[10px] text-slate-500 block uppercase font-bold">Total Klien</span>
+                          <span className="text-xl font-black text-white">{uniqueClients.length}</span>
+                        </div>
+                        <div className="h-8 w-[1px] bg-white/10" />
+                        <div className="text-center">
+                          <span className="text-[10px] text-slate-500 block uppercase font-bold">VIP Client</span>
+                          <span className="text-xl font-black text-amber-400">
+                            {uniqueClients.filter(c => c.rfqsCount >= 5).length}
+                          </span>
+                        </div>
+                        <div className="h-8 w-[1px] bg-white/10" />
+                        <div className="text-center">
+                          <span className="text-[10px] text-slate-500 block uppercase font-bold">Instansi/BUMN</span>
+                          <span className="text-xl font-black text-indigo-400">
+                            {uniqueClients.filter(c => c.category === "pemerintah" || c.category === "bumn").length}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Filter & Search Bar */}
+                    <div className="bg-slate-900/40 border border-white/10 rounded-2xl p-4 flex flex-col md:flex-row gap-4 items-center">
+                      {/* Search */}
+                      <div className="relative flex-1 w-full">
+                        <Icons.Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+                        <input
+                          type="text"
+                          value={clientSearchQuery}
+                          onChange={(e) => setClientSearchQuery(e.target.value)}
+                          placeholder="Cari berdasarkan nama klien, email, whatsapp, perusahaan..."
+                          className="w-full bg-slate-950/60 border border-white/5 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                        {clientSearchQuery && (
+                          <button
+                            onClick={() => setClientSearchQuery("")}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                          >
+                            <Icons.X className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Category Filter */}
+                      <div className="w-full md:w-64">
+                        <select
+                          value={clientCategoryFilter}
+                          onChange={(e) => setClientCategoryFilter(e.target.value)}
+                          className="w-full bg-slate-950/60 border border-white/5 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        >
+                          <option value="">Semua Kategori Klien</option>
+                          <option value="pemerintah">Pemerintah (Govt)</option>
+                          <option value="bumn">BUMN / BUMD</option>
+                          <option value="swasta">Swasta / Korporasi</option>
+                          <option value="retail">Retail / Individu</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Table List */}
+                    <div className="bg-slate-900/40 border border-white/10 rounded-2xl overflow-hidden">
+                      <div className="overflow-x-auto">
+                        {(() => {
+                          const filtered = uniqueClients.filter(c => {
+                            const q = clientSearchQuery.toLowerCase().trim();
+                            const matchSearch = !q || 
+                              c.name.toLowerCase().includes(q) ||
+                              c.email.toLowerCase().includes(q) ||
+                              c.whatsapp.toLowerCase().includes(q) ||
+                              c.company.toLowerCase().includes(q);
+
+                            const cat = clientCategoryFilter;
+                            const matchCat = !cat || c.category === cat;
+
+                            return matchSearch && matchCat;
+                          });
+
+                          if (filtered.length === 0) {
+                            return (
+                              <div className="text-center py-16 text-slate-500 space-y-2">
+                                <Icons.Users className="h-10 w-10 text-slate-600 mx-auto animate-pulse" />
+                                <p className="text-xs">Tidak ada data klien yang cocok dengan filter pencarian.</p>
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <table className="w-full text-left border-collapse">
+                              <thead>
+                                <tr className="border-b border-white/10 bg-white/5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                                  <th className="py-4 px-5">Nama Klien</th>
+                                  <th className="py-4 px-5">Perusahaan</th>
+                                  <th className="py-4 px-5">Kategori</th>
+                                  <th className="py-4 px-5">Kontak</th>
+                                  <th className="py-4 px-5 text-center">Jumlah RFQ</th>
+                                  <th className="py-4 px-5 text-center">Status Loyalitas</th>
+                                  <th className="py-4 px-5 text-right">Aksi</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-white/5 text-xs">
+                                {filtered.map((client, index) => {
+                                  return (
+                                    <tr key={index} className="hover:bg-white/5 transition-all">
+                                      {/* Name with initials avatar */}
+                                      <td className="py-4 px-5">
+                                        <div className="flex items-center space-x-3">
+                                          <div className="h-9 w-9 rounded-full bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 font-extrabold text-xs uppercase shrink-0">
+                                            {client.name ? client.name.charAt(0) : "C"}
+                                          </div>
+                                          <div>
+                                            <div className="font-extrabold text-white">{client.name}</div>
+                                            <div className="text-[10px] text-slate-500 font-mono mt-0.5">{client.email || "No email"}</div>
+                                          </div>
+                                        </div>
+                                      </td>
+
+                                      {/* Company */}
+                                      <td className="py-4 px-5 font-medium text-slate-300">
+                                        {client.company || <span className="text-slate-600 italic">Personal</span>}
+                                      </td>
+
+                                      {/* Category Badge */}
+                                      <td className="py-4 px-5">
+                                        {(() => {
+                                          const cat = client.category;
+                                          const labelMap: Record<string, string> = {
+                                            pemerintah: "Pemerintah",
+                                            bumn: "BUMN",
+                                            swasta: "Swasta",
+                                            retail: "Retail"
+                                          };
+                                          const colorMap: Record<string, string> = {
+                                            pemerintah: "bg-purple-500/10 border-purple-500/20 text-purple-300",
+                                            bumn: "bg-blue-500/10 border-blue-500/20 text-blue-300",
+                                            swasta: "bg-indigo-500/10 border-indigo-500/20 text-indigo-300",
+                                            retail: "bg-amber-500/10 border-amber-500/20 text-amber-300"
+                                          };
+                                          const cls = colorMap[cat] || "bg-slate-500/10 border-slate-500/20 text-slate-300";
+                                          return (
+                                            <span className={`inline-block px-2 py-0.5 rounded text-[9px] uppercase font-bold border ${cls}`}>
+                                              {labelMap[cat] || cat || "Umum"}
+                                            </span>
+                                          );
+                                        })()}
+                                      </td>
+
+                                      {/* Contacts with WA / Mail icons */}
+                                      <td className="py-4 px-5 text-slate-400">
+                                        <div className="space-y-1">
+                                          {client.whatsapp && (
+                                            <div className="flex items-center gap-1 font-mono text-[10px]">
+                                              <Icons.PhoneCall className="h-3 w-3 text-emerald-500" />
+                                              <span>{client.whatsapp}</span>
+                                            </div>
+                                          )}
+                                        </div>
+                                      </td>
+
+                                      {/* RFQ Count */}
+                                      <td className="py-4 px-5 text-center font-extrabold text-white">
+                                        <span className="px-2.5 py-1 bg-white/5 rounded-lg border border-white/5 text-indigo-300">
+                                          {client.rfqsCount} RFQ
+                                        </span>
+                                      </td>
+
+                                      {/* Loyalty tier */}
+                                      <td className="py-4 px-5 text-center">
+                                        {(() => {
+                                          if (client.rfqsCount >= 5) {
+                                            return (
+                                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-amber-500/15 border border-amber-500/35 text-amber-400 font-extrabold text-[9px] uppercase tracking-wider animate-pulse">
+                                                👑 VIP Client
+                                              </span>
+                                            );
+                                          } else if (client.rfqsCount >= 2) {
+                                            return (
+                                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 font-extrabold text-[9px] uppercase tracking-wider">
+                                                ⭐ Regular
+                                              </span>
+                                            );
+                                          } else {
+                                            return (
+                                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-500/10 border border-slate-500/20 text-slate-400 font-bold text-[9px] uppercase tracking-wider">
+                                                🌱 Baru
+                                              </span>
+                                            );
+                                          }
+                                        })()}
+                                      </td>
+
+                                      {/* Action buttons */}
+                                      <td className="py-4 px-5 text-right">
+                                        <button
+                                          onClick={() => setSelectedClientProfile(client)}
+                                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] rounded-lg transition-all flex items-center gap-1 ml-auto cursor-pointer"
+                                        >
+                                          <Icons.User className="h-3.5 w-3.5" />
+                                          <span>Detail Profil</span>
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ================================== */}
                 {/* ADMIN T4: USER MANAGEMENT PORTAL   */}
                 {/* ================================== */}
                 {activeAdminSubTab === "users" && adminRole === "superadmin" && (
@@ -8576,7 +11624,8 @@ export default function App() {
                             name: newUserForm.name.trim(),
                             role: newUserForm.role,
                             status: newUserForm.status,
-                            lastLogin: "Belum pernah"
+                            lastLogin: "Belum pernah",
+                            assignedClients: []
                           };
 
                           setAdminUsers([...adminUsers, newUser]);
@@ -8671,6 +11720,7 @@ export default function App() {
                               <th className="py-4 px-6">Level Hak Akses</th>
                               <th className="py-4 px-6">Status Akun</th>
                               <th className="py-4 px-6">Login Terakhir</th>
+                              <th className="py-4 px-6">Klien Ditugaskan</th>
                               <th className="py-4 px-6 text-right">Aksi Otorisasi</th>
                             </tr>
                           </thead>
@@ -8706,6 +11756,71 @@ export default function App() {
                                   </span>
                                 </td>
                                 <td className="py-4 px-6 text-slate-400 font-mono text-[11px]">{user.lastLogin}</td>
+                                <td className="py-4 px-6 min-w-[200px]">
+                                  <div className="flex flex-wrap gap-1 mb-1.5 max-h-[80px] overflow-y-auto custom-scrollbar">
+                                    {(user.assignedClients || []).map((client: string) => (
+                                      <span key={client} className="inline-flex items-center gap-1 bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded-full text-[10px] font-bold">
+                                        <span>{client}</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const updated = adminUsers.map((u) => {
+                                              if (u.id === user.id) {
+                                                return {
+                                                  ...u,
+                                                  assignedClients: (u.assignedClients || []).filter((c: string) => c !== client)
+                                                };
+                                              }
+                                              return u;
+                                            });
+                                            setAdminUsers(updated);
+                                            showToast(`Klien ${client} dihapus dari tugas @${user.username}`, "info");
+                                          }}
+                                          className="text-indigo-400 hover:text-rose-400 cursor-pointer text-[10px] leading-none font-black"
+                                          title="Hapus tugas klien"
+                                        >
+                                          &times;
+                                        </button>
+                                      </span>
+                                    ))}
+                                    {(!user.assignedClients || user.assignedClients.length === 0) && (
+                                      <span className="text-[10px] text-slate-500 italic">Semua Klien</span>
+                                    )}
+                                  </div>
+                                  <select
+                                    onChange={(e) => {
+                                      const clientName = e.target.value;
+                                      if (!clientName) return;
+                                      
+                                      const currentAssigned = user.assignedClients || [];
+                                      if (currentAssigned.includes(clientName)) {
+                                        showToast(`Klien ${clientName} sudah ditugaskan ke @${user.username}`, "error");
+                                        e.target.value = "";
+                                        return;
+                                      }
+                                      
+                                      const updated = adminUsers.map((u) => {
+                                        if (u.id === user.id) {
+                                          return {
+                                            ...u,
+                                            assignedClients: [...currentAssigned, clientName]
+                                          };
+                                        }
+                                        return u;
+                                      });
+                                      setAdminUsers(updated);
+                                      showToast(`Tugas baru: ${clientName} &rarr; @${user.username}`, "success");
+                                      e.target.value = "";
+                                    }}
+                                    className="bg-slate-950 border border-white/5 rounded-lg text-[10px] text-slate-400 px-2 py-1 w-full max-w-[160px] focus:outline-none focus:border-indigo-500/50 cursor-pointer"
+                                    value=""
+                                  >
+                                    <option value="">+ Tugaskan Klien...</option>
+                                    {uniqueClientsAndCompanies.map((clientName) => (
+                                      <option key={clientName} value={clientName}>{clientName}</option>
+                                    ))}
+                                  </select>
+                                </td>
                                 <td className="py-4 px-6 text-right">
                                   <div className="flex items-center justify-end gap-2">
                                     {/* Disable status toggling or deletion of default/critical accounts to prevent complete self-lockout */}
@@ -10951,17 +14066,58 @@ export default function App() {
         .animate-headerFadeScale {
           animation: headerFadeScale 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
+        @keyframes premiumPulse {
+          0% {
+            box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.5), 0 0 0 0 rgba(59, 130, 246, 0.3), 0 0 4px rgba(99, 102, 241, 0.2);
+            filter: drop-shadow(0 0 1px rgba(99, 102, 241, 0.3));
+          }
+          45% {
+            box-shadow: 0 0 0 6px rgba(99, 102, 241, 0.25), 0 0 0 9px rgba(59, 130, 246, 0.15), 0 0 18px rgba(99, 102, 241, 0.5);
+            filter: drop-shadow(0 0 8px rgba(99, 102, 241, 0.7));
+          }
+          75% {
+            box-shadow: 0 0 0 14px rgba(99, 102, 241, 0), 0 0 0 20px rgba(59, 130, 246, 0), 0 0 24px rgba(99, 102, 241, 0.1);
+            filter: drop-shadow(0 0 3px rgba(99, 102, 241, 0.3));
+          }
+          100% {
+            box-shadow: 0 0 0 0 rgba(99, 102, 241, 0), 0 0 0 0 rgba(59, 130, 246, 0), 0 0 4px rgba(99, 102, 241, 0.1);
+            filter: drop-shadow(0 0 1px rgba(99, 102, 241, 0.2));
+          }
+        }
+        .animate-premiumPulse {
+          animation: premiumPulse 2s infinite ease-in-out;
+          transition: all 0.1s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .animate-premiumPulse:hover {
+          animation: premiumPulse 0.7s infinite ease-in-out;
+          box-shadow: 0 0 20px rgba(99, 102, 241, 0.6);
+        }
       `}</style>
 
       {/* BARCODE / QR SCANNER MODAL */}
       {isScannerOpen && (
         <BarcodeScanner
           catalogProducts={catalogProducts}
-          onScanSuccess={(product) => addToCart(product)}
+          isCatalogScanBtn={isCatalogScanTriggered}
+          onScanSuccess={(product) => {
+            addToCart(product);
+            incrementSessionScannedCount();
+            incrementTotalScannedCount();
+            if (isCatalogScanTriggered) {
+              setShowSuccessFlash(true);
+              setTimeout(() => setShowSuccessFlash(false), 1000);
+            }
+          }}
           onClose={() => setIsScannerOpen(false)}
           onAddCustomItem={(item) => {
             setCustomCartItems((prev) => [...prev, item]);
             showToast(`"${item.name}" berhasil ditambahkan ke keranjang RFQ!`, "success");
+            incrementSessionScannedCount();
+            incrementTotalScannedCount();
+            if (isCatalogScanTriggered) {
+              setShowSuccessFlash(true);
+              setTimeout(() => setShowSuccessFlash(false), 1000);
+            }
           }}
         />
       )}
@@ -11742,6 +14898,640 @@ export default function App() {
                   </div>
                 </form>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 7.5. RFQ NOTES & PRIORITY MODAL */}
+      {selectedNotesRfq && (
+        <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-fadeIn no-print" id="rfq-notes-modal">
+          <div className="bg-slate-900 border border-white/10 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl flex flex-col">
+            {/* Header */}
+            <div className="p-4 bg-white/5 border-b border-white/10 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Icons.FileText className="h-4.5 w-4.5 text-indigo-400" />
+                <div>
+                  <h3 className="font-extrabold text-white text-sm">Kelola Catatan & Prioritas RFQ</h3>
+                  <p className="text-[10px] text-indigo-300 font-mono mt-0.5">{selectedNotesRfq.rfqNumber} &bull; {selectedNotesRfq.clientName}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedNotesRfq(null)}
+                className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors cursor-pointer"
+              >
+                <Icons.X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6">
+              {/* Priority Selector */}
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider">Tingkat Prioritas RFQ</label>
+                <div className="grid grid-cols-4 gap-2">
+                  {(["low", "medium", "high", "urgent"] as const).map((prio) => {
+                    const active = priorityInput === prio;
+                    const configs = {
+                      low: {
+                        label: "Low",
+                        activeBg: "bg-slate-500/20 border-slate-500 text-slate-300",
+                        inactiveBg: "bg-white/5 border-white/10 text-slate-400 hover:bg-white/10",
+                        dot: "bg-slate-400"
+                      },
+                      medium: {
+                        label: "Medium",
+                        activeBg: "bg-indigo-500/20 border-indigo-500 text-indigo-300",
+                        inactiveBg: "bg-white/5 border-white/10 text-slate-400 hover:bg-white/10",
+                        dot: "bg-indigo-400"
+                      },
+                      high: {
+                        label: "High",
+                        activeBg: "bg-amber-500/20 border-amber-500 text-amber-300",
+                        inactiveBg: "bg-white/5 border-white/10 text-slate-400 hover:bg-white/10",
+                        dot: "bg-amber-400"
+                      },
+                      urgent: {
+                        label: "Urgent",
+                        activeBg: "bg-red-500/20 border-red-500 text-red-300 animate-pulse",
+                        inactiveBg: "bg-white/5 border-white/10 text-slate-400 hover:bg-white/10",
+                        dot: "bg-red-400"
+                      }
+                    };
+                    const cfg = configs[prio];
+                    return (
+                      <button
+                        key={prio}
+                        type="button"
+                        onClick={() => setPriorityInput(prio)}
+                        className={`py-2 px-3 border rounded-xl text-xs font-extrabold flex flex-col items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                          active ? cfg.activeBg : cfg.inactiveBg
+                        }`}
+                      >
+                        <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
+                        <span>{cfg.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Notes Input */}
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider">Catatan Internal Admin / Sales</label>
+                <textarea
+                  value={notesInput}
+                  onChange={(e) => setNotesInput(e.target.value)}
+                  placeholder="Tulis instruksi khusus, spesifikasi tambahan, nomor PO, atau catatan tindak lanjut..."
+                  rows={4}
+                  className="w-full bg-slate-950 border border-white/10 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl p-3 text-xs text-white placeholder-slate-600 transition-colors resize-none"
+                />
+              </div>
+            </div>
+
+            {/* Footer Actions */}
+            <div className="p-4 bg-white/5 border-t border-white/10 flex gap-2 justify-end">
+              <button
+                onClick={() => setSelectedNotesRfq(null)}
+                className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-slate-400 hover:text-white text-xs font-bold transition-all cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`/api/rfqs/${selectedNotesRfq.id}`, {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ notes: notesInput, priority: priorityInput })
+                    });
+                    if (res.ok) {
+                      const updated = await res.json();
+                      setRfqs(prev => prev.map(r => r.id === selectedNotesRfq.id ? updated : r));
+                      setSelectedNotesRfq(null);
+                      showToast("Catatan & Prioritas RFQ berhasil diperbarui!", "success");
+                    } else {
+                      showToast("Gagal menyimpan catatan", "error");
+                    }
+                  } catch (err) {
+                    showToast("Kesalahan sistem menyimpan catatan", "error");
+                  }
+                }}
+                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-all shadow-md cursor-pointer flex items-center gap-1.5"
+              >
+                <Icons.Check className="h-3.5 w-3.5" />
+                <span>Simpan Perubahan</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* RFQ HISTORY LOGS MODAL */}
+      {selectedHistoryRfq && (
+        <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-fadeIn no-print" id="rfq-history-modal">
+          <div className="bg-slate-900 border border-white/10 rounded-2xl max-w-4xl w-full overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+            {/* Header */}
+            <div className="p-4 bg-white/5 border-b border-white/10 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Icons.History className="h-5 w-5 text-indigo-400" />
+                <div>
+                  <h3 className="font-extrabold text-white text-sm">Riwayat & Log Status RFQ</h3>
+                  <p className="text-[10px] text-indigo-300 font-mono mt-0.5">
+                    {selectedHistoryRfq.rfqNumber} &bull; {selectedHistoryRfq.clientName} {selectedHistoryRfq.companyName ? `(${selectedHistoryRfq.companyName})` : ""}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedHistoryRfq(null)}
+                className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors cursor-pointer"
+              >
+                <Icons.X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 overflow-y-auto flex-1 grid grid-cols-1 md:grid-cols-12 gap-6">
+              {/* Left Column: Timeline */}
+              <div className="md:col-span-7 space-y-4">
+                <h4 className="text-xs font-bold text-white uppercase tracking-wider border-b border-white/5 pb-2 flex items-center gap-1.5">
+                  <Icons.Activity className="h-3.5 w-3.5 text-indigo-400" />
+                  <span>Timeline Perubahan Status</span>
+                </h4>
+
+                <div className="space-y-4 max-h-[55vh] overflow-y-auto pr-2 custom-scrollbar">
+                  {(() => {
+                    // Populate initial state transition if history array is empty
+                    const historyList = [...(selectedHistoryRfq.history || [])];
+                    if (historyList.length === 0) {
+                      historyList.push({
+                        status: selectedHistoryRfq.status || "pending",
+                        timestamp: new Date(selectedHistoryRfq.date || Date.now()).toISOString(),
+                        note: "Permintaan Penawaran (RFQ) diajukan oleh klien.",
+                        operator: "Klien"
+                      });
+                    }
+
+                    // Sort newest first
+                    const sortedHistory = historyList.sort(
+                      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+                    );
+
+                    return sortedHistory.map((item, idx) => {
+                      const dateObj = new Date(item.timestamp);
+                      const formattedDate = dateObj.toLocaleDateString("id-ID", {
+                        day: "numeric",
+                        month: "long",
+                        year: "numeric"
+                      });
+                      const formattedTime = dateObj.toLocaleTimeString("id-ID", {
+                        hour: "2-digit",
+                        minute: "2-digit"
+                      });
+
+                      const stat = item.status;
+                      const customColorConfig = (settings.customRfqStatuses || []).find(cs => cs.value === stat);
+                      const customColors = settings.defaultRfqStatusColors || {};
+
+                      let badgeColor = "text-amber-400 bg-amber-500/10 border-amber-500/20";
+                      let dotColor = "bg-amber-400";
+                      let label = "Pending";
+
+                      if (customColorConfig) {
+                        const hex = customColorConfig.color || "#a855f7";
+                        badgeColor = ""; // styled inline
+                        dotColor = ""; // styled inline
+                        label = customColorConfig.label;
+                      } else {
+                        const standardConfigs: Record<string, { label: string; text: string; bg: string; border: string; dot: string }> = {
+                          pending: { label: "Pending", text: "text-amber-400", bg: "bg-amber-500/10", border: "border-amber-500/20", dot: "bg-amber-400" },
+                          processing: { label: "Processing", text: "text-blue-400", bg: "bg-blue-500/10", border: "border-blue-500/20", dot: "bg-blue-400" },
+                          quoted: { label: "Quoted", text: "text-indigo-400", bg: "bg-indigo-500/10", border: "border-indigo-500/20", dot: "bg-indigo-400" },
+                          completed: { label: "Completed", text: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/20", dot: "bg-emerald-400" },
+                          cancelled: { label: "Cancelled", text: "text-rose-400", bg: "bg-rose-500/10", border: "border-rose-500/20", dot: "bg-rose-400" }
+                        };
+                        const cfg = standardConfigs[stat] || standardConfigs.pending;
+                        badgeColor = `${cfg.text} ${cfg.bg} ${cfg.border}`;
+                        dotColor = cfg.dot;
+                        label = cfg.label;
+                      }
+
+                      // Check if custom HEX color for inline styles
+                      const customHex = customColorConfig?.color || customColors[stat];
+                      const isHexStyle = customHex && customHex.startsWith("#");
+
+                      return (
+                        <div key={idx} className="relative pl-6 pb-4 border-l border-white/10 last:border-0 last:pb-0">
+                          {/* Timeline Circle */}
+                          <span 
+                            className={`absolute left-0 top-1.5 -translate-x-1/2 flex h-3.5 w-3.5 items-center justify-center rounded-full border border-slate-900 ${dotColor}`}
+                            style={isHexStyle ? { backgroundColor: customHex } : undefined}
+                          />
+
+                          <div className="bg-slate-950/40 border border-white/5 rounded-xl p-3 space-y-2">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              {/* Status Badge */}
+                              <span 
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${badgeColor}`}
+                                style={isHexStyle ? {
+                                  backgroundColor: `${customHex}15`,
+                                  borderColor: `${customHex}30`,
+                                  color: customHex
+                                } : undefined}
+                              >
+                                {label}
+                              </span>
+
+                              {/* Time & Date */}
+                              <span className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
+                                <Icons.Clock className="h-3 w-3 text-slate-500" />
+                                <span>{formattedDate} - {formattedTime} WIB</span>
+                              </span>
+                            </div>
+
+                            {/* Comment Note */}
+                            <p className="text-xs text-slate-200 italic font-medium">
+                              "{item.note || 'Tidak ada catatan khusus.'}"
+                            </p>
+
+                            {/* Operator / Staff info */}
+                            <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1 border-t border-white/5">
+                              <span className="flex items-center gap-1">
+                                <Icons.User className="h-3 w-3" />
+                                <span>Oleh: <strong className="text-slate-400">{item.operator || "Sales Admin"}</strong></span>
+                              </span>
+                              {idx === 0 && (
+                                <span className="px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 text-[8px] font-black uppercase">Terbaru</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+              </div>
+
+              {/* Right Column: Update Action Form */}
+              <div className="md:col-span-5 space-y-4 border-t md:border-t-0 md:border-l border-white/10 pt-4 md:pt-0 md:pl-6">
+                <h4 className="text-xs font-bold text-white uppercase tracking-wider border-b border-white/5 pb-2 flex items-center gap-1.5">
+                  <Icons.PenTool className="h-3.5 w-3.5 text-indigo-400" />
+                  <span>Perbarui Status & Tambah Log</span>
+                </h4>
+
+                <div className="space-y-4 bg-slate-950/40 p-4 border border-white/5 rounded-2xl">
+                  {/* Select Status */}
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider">Status Baru</label>
+                    <select
+                      value={historyStatusInput}
+                      onChange={(e) => setHistoryStatusInput(e.target.value)}
+                      className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    >
+                      {[
+                        { value: "pending", label: "Pending (Menunggu Proposal)" },
+                        { value: "processing", label: "Processing (Sedang Diproses)" },
+                        { value: "quoted", label: "Quoted (Sudah Di-Quoted)" },
+                        { value: "completed", label: "Completed (Selesai)" },
+                        { value: "cancelled", label: "Cancelled (Dibatalkan)" },
+                        ...(settings.customRfqStatuses || []).map((cs: any) => ({
+                          value: cs.value,
+                          label: `${cs.label} (Kustom)`
+                        }))
+                      ].map((st) => (
+                        <option key={st.value} value={st.value} className="bg-slate-900">
+                          {st.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Operator Name */}
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider">Operator (Staf Sales)</label>
+                    <input
+                      type="text"
+                      value={historyOperatorInput}
+                      onChange={(e) => setHistoryOperatorInput(e.target.value)}
+                      placeholder="Nama admin pemroses"
+                      className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                  </div>
+
+                  {/* History Note */}
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider">Catatan Perubahan / Log</label>
+                    <textarea
+                      rows={4}
+                      value={historyNoteInput}
+                      onChange={(e) => setHistoryNoteInput(e.target.value)}
+                      placeholder="Masukkan alasan atau detail update (misal: 'Sudah deal via WhatsApp, mengirim penawaran alternatif...')"
+                      className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                  </div>
+
+                  <button
+                    onClick={async () => {
+                      try {
+                        const res = await fetch(`/api/rfqs/${selectedHistoryRfq.id}`, {
+                          method: "PUT",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            status: historyStatusInput,
+                            historyNote: historyNoteInput.trim() || undefined,
+                            operator: historyOperatorInput.trim() || undefined
+                          })
+                        });
+
+                        if (res.ok) {
+                          const updated = await res.json();
+                          setRfqs(prev => prev.map(r => r.id === selectedHistoryRfq.id ? updated : r));
+                          setSelectedHistoryRfq(updated);
+                          setHistoryNoteInput("");
+                          showToast("Status & Riwayat Log berhasil diperbarui!", "success");
+                        } else {
+                          showToast("Gagal menyimpan riwayat status", "error");
+                        }
+                      } catch (err) {
+                        showToast("Kesalahan sistem menyimpan status log", "error");
+                      }
+                    }}
+                    className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Icons.Save className="h-3.5 w-3.5" />
+                    <span>Perbarui Status & Rekam Log</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 bg-white/5 border-t border-white/10 flex justify-end">
+              <button
+                onClick={() => setSelectedHistoryRfq(null)}
+                className="px-5 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-400 hover:text-white font-bold text-xs rounded-xl transition-all cursor-pointer"
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CLIENT PROFILE DETAILED MODAL */}
+      {selectedClientProfile && (
+        <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-fadeIn no-print" id="client-profile-modal">
+          <div className="bg-slate-900 border border-white/10 rounded-2xl max-w-4xl w-full overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+            {/* Header */}
+            <div className="p-4 bg-white/5 border-b border-white/10 flex items-center justify-between">
+              <div className="flex items-center space-x-2.5">
+                <div className="h-10 w-10 rounded-full bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400 font-extrabold text-sm uppercase">
+                  {selectedClientProfile.name ? selectedClientProfile.name.charAt(0) : "C"}
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-white text-sm">Profil Lengkap Klien</h3>
+                  <p className="text-[10px] text-indigo-300 font-mono mt-0.5">
+                    {selectedClientProfile.name} {selectedClientProfile.company ? `(${selectedClientProfile.company})` : ""}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedClientProfile(null)}
+                className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors cursor-pointer"
+              >
+                <Icons.X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 overflow-y-auto flex-1 grid grid-cols-1 md:grid-cols-12 gap-6">
+              {/* Left Column: Client Details */}
+              <div className="md:col-span-4 space-y-4">
+                <div className="bg-slate-950/40 border border-white/5 rounded-2xl p-4 space-y-4">
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider border-b border-white/5 pb-2">
+                    Informasi Klien
+                  </h4>
+
+                  <div className="space-y-3 text-xs">
+                    <div>
+                      <span className="text-slate-500 block">Nama Lengkap</span>
+                      <span className="text-white font-medium">{selectedClientProfile.name}</span>
+                    </div>
+
+                    <div>
+                      <span className="text-slate-500 block">Kategori Klien</span>
+                      {(() => {
+                        const cat = selectedClientProfile.category;
+                        const labelMap: Record<string, string> = {
+                          pemerintah: "Pemerintah (Govt)",
+                          bumn: "BUMN / BUMD",
+                          swasta: "Swasta / Korporasi",
+                          retail: "Retail / Individu"
+                        };
+                        const colorMap: Record<string, string> = {
+                          pemerintah: "bg-purple-500/10 border-purple-500/20 text-purple-300",
+                          bumn: "bg-blue-500/10 border-blue-500/20 text-blue-300",
+                          swasta: "bg-indigo-500/10 border-indigo-500/20 text-indigo-300",
+                          retail: "bg-amber-500/10 border-amber-500/20 text-amber-300"
+                        };
+                        const cls = colorMap[cat] || "bg-slate-500/10 border-slate-500/20 text-slate-300";
+                        return (
+                          <span className={`inline-block px-2 py-0.5 mt-0.5 rounded text-[10px] uppercase font-bold border ${cls}`}>
+                            {labelMap[cat] || cat || "Umum"}
+                          </span>
+                        );
+                      })()}
+                    </div>
+
+                    {selectedClientProfile.company && (
+                      <div>
+                        <span className="text-slate-500 block">Perusahaan / Instansi</span>
+                        <span className="text-white font-medium">{selectedClientProfile.company}</span>
+                      </div>
+                    )}
+
+                    {selectedClientProfile.email && (
+                      <div>
+                        <span className="text-slate-500 block">Email</span>
+                        <a 
+                          href={`mailto:${selectedClientProfile.email}`} 
+                          className="text-indigo-400 hover:underline flex items-center gap-1"
+                        >
+                          <Icons.Mail className="h-3 w-3" />
+                          <span>{selectedClientProfile.email}</span>
+                        </a>
+                      </div>
+                    )}
+
+                    {selectedClientProfile.whatsapp && (
+                      <div>
+                        <span className="text-slate-500 block">WhatsApp</span>
+                        <a 
+                          href={`https://wa.me/${selectedClientProfile.whatsapp.replace(/\D/g, "")}`} 
+                          target="_blank" 
+                          rel="noopener noreferrer" 
+                          className="text-emerald-400 hover:underline flex items-center gap-1 font-mono"
+                        >
+                          <Icons.PhoneCall className="h-3 w-3" />
+                          <span>{selectedClientProfile.whatsapp}</span>
+                        </a>
+                      </div>
+                    )}
+
+                    <div className="pt-2 border-t border-white/5 grid grid-cols-2 gap-2 text-center">
+                      <div className="bg-white/5 p-2 rounded-xl">
+                        <span className="text-[10px] text-slate-500 block">Total RFQ</span>
+                        <span className="text-lg font-black text-indigo-400">{selectedClientProfile.rfqsCount}</span>
+                      </div>
+                      <div className="bg-white/5 p-2 rounded-xl">
+                        <span className="text-[10px] text-slate-500 block">Loyalitas</span>
+                        <span className="text-[10px] font-bold text-emerald-400 block mt-1">
+                          {selectedClientProfile.rfqsCount >= 5 ? "👑 VIP Client" : selectedClientProfile.rfqsCount >= 2 ? "⭐ Regular" : "🌱 Baru"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Quick actions */}
+                <div className="flex gap-2">
+                  {selectedClientProfile.whatsapp && (
+                    <a
+                      href={`https://wa.me/${selectedClientProfile.whatsapp.replace(/\D/g, "")}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Icons.PhoneCall className="h-3.5 w-3.5" />
+                      <span>WhatsApp</span>
+                    </a>
+                  )}
+                  {selectedClientProfile.email && (
+                    <a
+                      href={`mailto:${selectedClientProfile.email}`}
+                      className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Icons.Mail className="h-3.5 w-3.5" />
+                      <span>Email</span>
+                    </a>
+                  )}
+                </div>
+              </div>
+
+              {/* Right Column: RFQ Lists */}
+              <div className="md:col-span-8 space-y-4">
+                <h4 className="text-xs font-bold text-white uppercase tracking-wider border-b border-white/5 pb-2 flex items-center gap-1.5">
+                  <Icons.FileText className="h-3.5 w-3.5 text-indigo-400" />
+                  <span>Daftar Permintaan Penawaran (RFQ)</span>
+                </h4>
+
+                <div className="space-y-3 max-h-[55vh] overflow-y-auto pr-2 custom-scrollbar">
+                  {(() => {
+                    const clientRfqs = rfqs.filter(r => (r.clientName || "").trim().toLowerCase() === selectedClientProfile.name.trim().toLowerCase());
+                    
+                    if (clientRfqs.length === 0) {
+                      return (
+                        <div className="text-center py-8 text-slate-500 text-xs">
+                          Belum ada data RFQ yang tercatat.
+                        </div>
+                      );
+                    }
+
+                    return clientRfqs.map((rfq) => {
+                      const stat = rfq.status || "pending";
+                      const customColorConfig = (settings.customRfqStatuses || []).find(cs => cs.value === stat);
+                      const customColors = settings.defaultRfqStatusColors || {};
+
+                      let badgeColor = "text-amber-400 bg-amber-500/10 border-amber-500/20";
+                      let label = "Pending";
+
+                      if (customColorConfig) {
+                        badgeColor = ""; // styled inline
+                        label = customColorConfig.label;
+                      } else {
+                        const standardConfigs: Record<string, { label: string; text: string; bg: string; border: string }> = {
+                          pending: { label: "Pending", text: "text-amber-400", bg: "bg-amber-500/10", border: "border-amber-500/20" },
+                          processing: { label: "Processing", text: "text-blue-400", bg: "bg-blue-500/10", border: "border-blue-500/20" },
+                          quoted: { label: "Quoted", text: "text-indigo-400", bg: "bg-indigo-500/10", border: "border-indigo-500/20" },
+                          completed: { label: "Completed", text: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
+                          cancelled: { label: "Cancelled", text: "text-rose-400", bg: "bg-rose-500/10", border: "border-rose-500/20" }
+                        };
+                        const cfg = standardConfigs[stat] || standardConfigs.pending;
+                        badgeColor = `${cfg.text} ${cfg.bg} ${cfg.border}`;
+                        label = cfg.label;
+                      }
+
+                      const customHex = customColorConfig?.color || customColors[stat];
+                      const isHexStyle = customHex && customHex.startsWith("#");
+
+                      return (
+                        <div 
+                          key={rfq.id} 
+                          className="bg-slate-950/40 border border-white/5 hover:border-indigo-500/30 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 transition-all"
+                        >
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-extrabold text-white text-xs">{rfq.rfqNumber}</span>
+                              <span 
+                                className={`px-1.5 py-0.5 rounded text-[9px] font-bold border ${badgeColor}`}
+                                style={isHexStyle ? {
+                                  backgroundColor: `${customHex}15`,
+                                  borderColor: `${customHex}30`,
+                                  color: customHex
+                                } : undefined}
+                              >
+                                {label}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <span>Tanggal: {rfq.date}</span>
+                              <span>&bull;</span>
+                              <span>Prioritas: <strong className="text-slate-300 font-bold uppercase">{rfq.priority || "medium"}</strong></span>
+                            </div>
+                            <div className="text-[10px] text-slate-500 truncate max-w-md">
+                              {rfq.items && rfq.items.length > 0 ? (
+                                <span>{rfq.items.length} Barang: {rfq.items.map(i => `${i.productName} (${i.qty})`).join(", ")}</span>
+                              ) : (
+                                <span>Deskripsi: {rfq.itemsDescription || "Tidak ada detail item"}</span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between sm:justify-end gap-3 pt-2 sm:pt-0 border-t sm:border-0 border-white/5">
+                            {rfq.totalPrice ? (
+                              <div className="text-right">
+                                <span className="text-[9px] text-slate-500 block">Total Penawaran</span>
+                                <span className="text-xs font-bold text-emerald-400">Rp {rfq.totalPrice.toLocaleString("id-ID")}</span>
+                              </div>
+                            ) : (
+                              <span className="text-[10px] text-slate-500 italic">Belum Di-quoted</span>
+                            )}
+
+                            <button
+                              onClick={() => {
+                                setSelectedHistoryRfq(rfq);
+                                setSelectedClientProfile(null);
+                              }}
+                              className="px-2.5 py-1 bg-white/5 hover:bg-indigo-500/20 hover:text-indigo-400 border border-white/10 hover:border-indigo-500/30 text-slate-400 font-bold text-[10px] rounded-lg transition-all cursor-pointer"
+                            >
+                              Lihat Detail
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 bg-white/5 border-t border-white/10 flex justify-end">
+              <button
+                onClick={() => setSelectedClientProfile(null)}
+                className="px-5 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-400 hover:text-white font-bold text-xs rounded-xl transition-all cursor-pointer"
+              >
+                Tutup
+              </button>
             </div>
           </div>
         </div>

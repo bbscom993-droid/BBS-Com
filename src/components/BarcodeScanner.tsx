@@ -8,6 +8,7 @@ interface BarcodeScannerProps {
   onScanSuccess: (product: ProductItem) => void;
   onClose: () => void;
   onAddCustomItem?: (item: { name: string; quantity: number; description?: string }) => void;
+  isCatalogScanBtn?: boolean;
 }
 
 interface RecentScanItem {
@@ -15,7 +16,65 @@ interface RecentScanItem {
   scannedAt: number;
 }
 
-export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose, onAddCustomItem }: BarcodeScannerProps) {
+const playBeepSound = (isCatalogScanBtn?: boolean) => {
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+    const audioCtx = new AudioContextClass();
+    const oscillator = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+
+    oscillator.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+
+    // Dynamic volume adjustment from localStorage (defaulting to 0.5)
+    let volumeLevel = 0.5;
+    try {
+      const storedVol = localStorage.getItem("bbs_scanner_volume");
+      if (storedVol !== null) {
+        volumeLevel = parseFloat(storedVol);
+      }
+    } catch (e) {
+      console.warn("Could not retrieve volume from localStorage", e);
+    }
+
+    if (isCatalogScanBtn) {
+      // Crisp, high-frequency 'beep' sound effect (exclusively for #scan_barcode_from_catalog_btn)
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(2500, audioCtx.currentTime); // Crisp 2500Hz high pitch
+      
+      const targetGain = 0.22 * volumeLevel;
+      gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+      gainNode.gain.linearRampToValueAtTime(targetGain, audioCtx.currentTime + 0.004); // Instantaneous attack
+      gainNode.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.065); // Snappy decay
+      
+      oscillator.start(audioCtx.currentTime);
+      oscillator.stop(audioCtx.currentTime + 0.07);
+    } else {
+      // Standard pleasant system scan beep
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(880, audioCtx.currentTime); // 880Hz (A5)
+      
+      const targetGain = 0.15 * volumeLevel;
+      gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+      gainNode.gain.linearRampToValueAtTime(targetGain, audioCtx.currentTime + 0.01); // fast fade-in
+      gainNode.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.12); // smooth decay
+
+      oscillator.start(audioCtx.currentTime);
+      oscillator.stop(audioCtx.currentTime + 0.12);
+    }
+  } catch (e) {
+    console.warn("Failed to play scan beep sound:", e);
+  }
+};
+
+export default function BarcodeScanner({ 
+  catalogProducts, 
+  onScanSuccess, 
+  onClose, 
+  onAddCustomItem,
+  isCatalogScanBtn = false
+}: BarcodeScannerProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const [scannerActive, setScannerActive] = useState<boolean>(false);
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
@@ -24,6 +83,83 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
   const [lastScanned, setLastScanned] = useState<ProductItem | null>(null);
   const [scanHistory, setScanHistory] = useState<{ product: ProductItem; time: string }[]>([]);
   const [simulateMode, setSimulateMode] = useState<boolean>(false);
+
+  // Success Confirmation overlay states
+  const [showSuccessOverlay, setShowSuccessOverlay] = useState<boolean>(false);
+  const [scannedProductName, setScannedProductName] = useState<string>("");
+
+  const triggerScanSuccessConfirmation = (productName: string) => {
+    setScannedProductName(productName);
+    setShowSuccessOverlay(true);
+    setTimeout(() => {
+      setShowSuccessOverlay(false);
+    }, 1500);
+  };
+
+  // Dynamic Scan Counters
+  const [modalTotalScans, setModalTotalScans] = useState<number>(() => {
+    try {
+      const val = localStorage.getItem("bbs_total_scanned_count");
+      return val ? parseInt(val, 10) || 0 : 0;
+    } catch {
+      return 0;
+    }
+  });
+
+  const [modalSessionScans, setModalSessionScans] = useState<number>(() => {
+    try {
+      const val = sessionStorage.getItem("bbs_session_scanned_count");
+      return val ? parseInt(val, 10) || 0 : 0;
+    } catch {
+      return 0;
+    }
+  });
+
+  const handleSuccessfulScanCountIncrement = () => {
+    setModalTotalScans((prev) => {
+      const next = prev + 1;
+      localStorage.setItem("bbs_total_scanned_count", next.toString());
+      return next;
+    });
+    setModalSessionScans((prev) => {
+      const next = prev + 1;
+      sessionStorage.setItem("bbs_session_scanned_count", next.toString());
+      return next;
+    });
+  };
+
+  // Haptic feedback state and action handlers
+  const [hapticEnabled, setHapticEnabled] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem("bbs_haptic_enabled");
+      return stored !== "false"; // default to true
+    } catch {
+      return true;
+    }
+  });
+
+  const triggerHapticFeedback = (pattern: number | number[] = 100) => {
+    if (hapticEnabled && typeof navigator !== "undefined" && navigator.vibrate) {
+      try {
+        navigator.vibrate(pattern);
+      } catch (e) {
+        console.warn("Haptic feedback error:", e);
+      }
+    }
+  };
+
+  const toggleHaptic = () => {
+    setHapticEnabled((prev) => {
+      const next = !prev;
+      localStorage.setItem("bbs_haptic_enabled", next.toString());
+      if (next && typeof navigator !== "undefined" && navigator.vibrate) {
+        try {
+          navigator.vibrate([80, 40, 80]);
+        } catch {}
+      }
+      return next;
+    });
+  };
 
   // Dynamic categories and category filter state
   const categories = ["Semua", ...Array.from(new Set(catalogProducts.map(p => p.category)))];
@@ -90,8 +226,11 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
   };
 
   const handleQuickAddProduct = (product: ProductItem) => {
+    playBeepSound(isCatalogScanBtn);
     onScanSuccess(product);
     addToRecentScans(product);
+    handleSuccessfulScanCountIncrement();
+    triggerScanSuccessConfirmation(product.name);
     
     // Set transient "Added!" state for visual feedback
     setRecentlyAddedIds((prev) => ({ ...prev, [product.id]: true }));
@@ -100,9 +239,7 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
     }, 1500);
 
     // Vibration feedback if supported
-    if (typeof navigator !== "undefined" && navigator.vibrate) {
-      navigator.vibrate(100);
-    }
+    triggerHapticFeedback(isCatalogScanBtn ? [35, 25, 35] : 100);
   };
 
   const clearRecentScans = () => {
@@ -115,9 +252,13 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
   };
 
   const handleRevisitProduct = (product: ProductItem) => {
+    playBeepSound(isCatalogScanBtn);
     onScanSuccess(product);
     setLastScanned(product);
     addToRecentScans(product);
+    handleSuccessfulScanCountIncrement();
+    triggerScanSuccessConfirmation(product.name);
+    triggerHapticFeedback(isCatalogScanBtn ? [35, 25, 35] : 100);
     
     const newHistoryItem = {
       product: product,
@@ -159,11 +300,10 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
     }
 
     setUnmatchedCode(null);
+    handleSuccessfulScanCountIncrement();
 
     // Vibrate to confirm success
-    if (typeof navigator !== "undefined" && navigator.vibrate) {
-      navigator.vibrate([100, 50, 100]);
-    }
+    triggerHapticFeedback(isCatalogScanBtn ? [35, 25, 35] : [100, 50, 100]);
 
     // Auto close or keep open? Usually let's reset or let user continue.
     // Since we added successfully, let's keep it open but reset states so they can scan again if desired.
@@ -267,6 +407,25 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
     setScannerActive(false);
   };
 
+  // Automatically start the scanner once the component is mounted, camera is ready,
+  // and we are not in simulateMode (removing the need for a manual click).
+  useEffect(() => {
+    let isCurrent = true;
+    if (selectedCameraId && !simulateMode) {
+      // Set a tiny timeout to ensure the DOM element #html5-qr-reader has fully mounted and is ready
+      const autoStartTimer = setTimeout(() => {
+        if (isCurrent && !scannerActive && !lastScanned && !categoryMismatchError && !unmatchedCode) {
+          startScanner();
+        }
+      }, 350);
+
+      return () => {
+        isCurrent = false;
+        clearTimeout(autoStartTimer);
+      };
+    }
+  }, [selectedCameraId, simulateMode]);
+
   // Process the scanned QR code or barcode
   const handleScannedCode = (code: string) => {
     const trimmedCode = code.trim().toLowerCase();
@@ -319,8 +478,11 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
       }
 
       setCategoryMismatchError(null);
+      playBeepSound(isCatalogScanBtn);
       onScanSuccess(matchedProduct);
       setLastScanned(matchedProduct);
+      handleSuccessfulScanCountIncrement();
+      triggerScanSuccessConfirmation(matchedProduct.name);
       
       const newHistoryItem = {
         product: matchedProduct,
@@ -332,9 +494,7 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
       addToRecentScans(matchedProduct);
 
       // Vibrate if supported by device
-      if (typeof navigator !== "undefined" && navigator.vibrate) {
-        navigator.vibrate(200);
-      }
+      triggerHapticFeedback(isCatalogScanBtn ? [35, 25, 35] : 200);
 
       // Briefly stop camera and restart to allow user to view scan or scan again
       stopScanner();
@@ -371,7 +531,14 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
               <Scan className="h-5 w-5 text-indigo-400 animate-pulse" />
             </div>
             <div>
-              <h3 className="font-extrabold text-sm text-white">Scanner Label Produk</h3>
+              <div className="flex items-center gap-1.5">
+                <h3 className="font-extrabold text-sm text-white">Scanner Label Produk</h3>
+                {modalTotalScans > 0 && (
+                  <span className="px-1.5 py-0.5 bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 text-[9px] font-black rounded-full leading-none animate-scaleIn">
+                    {modalTotalScans} Scans
+                  </span>
+                )}
+              </div>
               <p className="text-[10px] text-slate-400">Scan QR Code / Barcode produk untuk menambah ke RFQ</p>
             </div>
           </div>
@@ -484,6 +651,9 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
                       onScanSuccess(matched);
                       setLastScanned(matched);
                       addToRecentScans(matched);
+                      handleSuccessfulScanCountIncrement();
+                      triggerScanSuccessConfirmation(matched.name);
+                      triggerHapticFeedback(isCatalogScanBtn ? [35, 25, 35] : 100);
                     }
                     setCategoryMismatchError(null);
                   }}
@@ -640,31 +810,36 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
                   {/* Viewport Box */}
                   <div className={`relative aspect-video bg-slate-950 border rounded-xl overflow-hidden flex flex-col items-center justify-center transition-all duration-300 ${
                     scannerActive 
-                      ? "border-indigo-500/50 ring-2 ring-indigo-500/20 shadow-[0_0_20px_rgba(99,102,241,0.15)] animate-pulseGlow" 
+                      ? "border-indigo-500 ring-2 ring-indigo-500/30 shadow-[0_0_25px_rgba(99,102,241,0.35)] animate-pulseGlow" 
                       : "border-white/10"
                   }`}>
                     <div id={containerId} className="absolute inset-0 w-full h-full object-cover [&>video]:object-cover [&>video]:w-full [&>video]:h-full" />
+
+                    {/* Glowing Perimeter Scan Border Overlay */}
+                    {scannerActive && (
+                      <div className="absolute inset-0 border-2 border-indigo-500/40 rounded-xl pointer-events-none z-10 animate-pulse" />
+                    )}
 
                     {/* Scanning Target Frame & Brackets overlay */}
                     {scannerActive && (
                       <div className="absolute inset-0 pointer-events-none flex items-center justify-center z-10">
                         {/* Target Frame Area */}
-                        <div className="w-36 h-36 border border-white/10 rounded-2xl relative flex items-center justify-center">
-                          {/* Corner brackets */}
-                          <div className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-indigo-400 rounded-tl-lg" />
-                          <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-indigo-400 rounded-tr-lg" />
-                          <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-indigo-400 rounded-bl-lg" />
-                          <div className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-indigo-400 rounded-br-lg" />
+                        <div className="w-40 h-40 border border-indigo-500/30 rounded-2xl relative flex items-center justify-center shadow-[0_0_15px_rgba(99,102,241,0.2)]">
+                          {/* Corner brackets with neon drop-shadow */}
+                          <div className="absolute -top-1 -left-1 w-5 h-5 border-t-4 border-l-4 border-indigo-400 rounded-tl-xl shadow-[0_0_10px_rgba(129,140,248,0.9)]" />
+                          <div className="absolute -top-1 -right-1 w-5 h-5 border-t-4 border-r-4 border-indigo-400 rounded-tr-xl shadow-[0_0_10px_rgba(129,140,248,0.9)]" />
+                          <div className="absolute -bottom-1 -left-1 w-5 h-5 border-b-4 border-l-4 border-indigo-400 rounded-bl-xl shadow-[0_0_10px_rgba(129,140,248,0.9)]" />
+                          <div className="absolute -bottom-1 -right-1 w-5 h-5 border-b-4 border-r-4 border-indigo-400 rounded-br-xl shadow-[0_0_10px_rgba(129,140,248,0.9)]" />
                           
                           {/* Subtle pulsating center target dot */}
-                          <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full shadow-[0_0_8px_rgba(129,140,248,0.8)] animate-ping" />
+                          <div className="w-2 h-2 bg-indigo-400 rounded-full shadow-[0_0_10px_rgba(129,140,248,0.9)] animate-ping" />
                         </div>
                       </div>
                     )}
 
                     {/* Laser Overlay scanning effect */}
                     {scannerActive && (
-                      <div className="absolute inset-x-0 h-0.5 bg-gradient-to-r from-transparent via-indigo-400 to-transparent shadow-[0_0_12px_rgba(129,140,248,0.9)] animate-scanLine z-10" />
+                      <div className="absolute inset-x-0 h-0.5 bg-gradient-to-r from-transparent via-indigo-400 to-transparent shadow-[0_0_15px_rgba(129,140,248,1)] animate-scanLine z-10" />
                     )}
 
                     {!scannerActive && (
@@ -693,6 +868,21 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
                         >
                           Matikan Kamera
                         </button>
+                      </div>
+                    )}
+
+                    {/* Camera Success Confirmation Overlay */}
+                    {showSuccessOverlay && (
+                      <div className="absolute inset-0 bg-emerald-950/90 backdrop-blur-sm flex flex-col items-center justify-center z-30 animate-fadeIn">
+                        <div className="relative flex items-center justify-center w-14 h-14 rounded-full bg-emerald-500/20 border border-emerald-400">
+                          <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400/40 animate-ping" />
+                          <CheckCircle className="h-7 w-7 text-emerald-400" />
+                        </div>
+                        <div className="text-center mt-3 px-4">
+                          <span className="text-[10px] text-emerald-400 uppercase tracking-widest font-black block">BERHASIL DIPINDAI!</span>
+                          <h4 className="text-xs font-bold text-white mt-0.5 truncate max-w-[240px]">{scannedProductName}</h4>
+                          <p className="text-[9px] text-emerald-500/70 mt-0.5">Item ditambahkan ke RFQ</p>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -726,6 +916,51 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
                     </p>
                   </div>
 
+                  {/* Virtual Scanner Viewport for Simulator Mode */}
+                  <div className="relative aspect-video bg-slate-950 border border-indigo-500 rounded-xl overflow-hidden flex flex-col items-center justify-center shadow-[0_0_25px_rgba(99,102,241,0.25)]">
+                    {/* Laser overlay effect running continuously in simulator */}
+                    <div className="absolute inset-x-0 h-0.5 bg-gradient-to-r from-transparent via-indigo-500 to-transparent shadow-[0_0_15px_rgba(99,102,241,1)] animate-scanLine z-10" />
+                    
+                    {/* Glowing Perimeter Scan Border Overlay */}
+                    <div className="absolute inset-0 border-2 border-indigo-500/40 rounded-xl pointer-events-none z-10 animate-pulse" />
+
+                    {/* Simulator target frames */}
+                    <div className="absolute inset-0 pointer-events-none flex items-center justify-center z-10">
+                      <div className="w-28 h-28 border border-indigo-500/30 rounded-xl relative flex items-center justify-center shadow-[0_0_12px_rgba(99,102,241,0.25)]">
+                        <div className="absolute -top-1 -left-1 w-4 h-4 border-t-4 border-l-4 border-indigo-400 rounded-tl shadow-[0_0_10px_rgba(129,140,248,0.9)]" />
+                        <div className="absolute -top-1 -right-1 w-4 h-4 border-t-4 border-r-4 border-indigo-400 rounded-tr shadow-[0_0_10px_rgba(129,140,248,0.9)]" />
+                        <div className="absolute -bottom-1 -left-1 w-4 h-4 border-b-4 border-l-4 border-indigo-400 rounded-bl shadow-[0_0_10px_rgba(129,140,248,0.9)]" />
+                        <div className="absolute -bottom-1 -right-1 w-4 h-4 border-b-4 border-r-4 border-indigo-400 rounded-br shadow-[0_0_10px_rgba(129,140,248,0.9)]" />
+                        <Scan className="h-6 w-6 text-indigo-400 animate-pulse" />
+                      </div>
+                    </div>
+
+                    <div className="text-center p-4 z-10 space-y-1">
+                      <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest block">Simulasi Scanner Aktif</span>
+                      <p className="text-[9px] text-slate-500">Klik salah satu produk di bawah untuk memindai</p>
+                    </div>
+
+                    {/* Success Overlay directly inside the simulator viewport! */}
+                    {showSuccessOverlay && (
+                      <div className="absolute inset-0 bg-emerald-950/95 backdrop-blur-sm flex flex-col items-center justify-center z-30 animate-fadeIn">
+                        <div className="relative flex items-center justify-center w-12 h-12 rounded-full bg-emerald-500/20 border border-emerald-400">
+                          <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400/40 animate-ping" />
+                          <CheckCircle className="h-6 w-6 text-emerald-400" />
+                        </div>
+                        <div className="text-center mt-2 px-3">
+                          <span className="text-[9px] text-emerald-400 uppercase tracking-wider font-black block">BERHASIL DIPINDAI!</span>
+                          <h4 className="text-[11px] font-bold text-white mt-0.5 truncate max-w-[220px]">{scannedProductName}</h4>
+                          {hapticEnabled && (
+                            <div className="flex items-center justify-center gap-1 mt-1 text-[8px] text-emerald-400/70 font-semibold animate-pulse">
+                              <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400/20 border border-emerald-400/30 animate-ping mr-1" />
+                              <span>Vibration Feedback Active ⚡</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   <div className="space-y-2">
                     <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Simulasikan Scan Label Produk:</label>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -749,7 +984,7 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
                           <button
                             key={product.id}
                             onClick={() => simulateScan(product.id)}
-                            className="flex items-center p-2.5 bg-slate-950 border border-white/5 rounded-xl text-left hover:border-indigo-500/30 hover:bg-white/5 transition-all group cursor-pointer"
+                            className="flex items-center p-2.5 bg-slate-950 border border-white/5 rounded-xl text-left hover:border-indigo-500/50 hover:bg-slate-900 hover:shadow-[0_0_15px_rgba(99,102,241,0.2)] hover:-translate-y-0.5 active:scale-95 transition-all duration-200 group cursor-pointer"
                           >
                             <div className="p-1.5 bg-white/5 rounded-lg mr-2.5 text-slate-400 group-hover:text-indigo-400 group-hover:bg-indigo-500/5">
                               <Scan className="h-3.5 w-3.5" />
@@ -981,8 +1216,24 @@ export default function BarcodeScanner({ catalogProducts, onScanSuccess, onClose
             <ShoppingCart className="h-3.5 w-3.5 text-indigo-400" />
             <span>Format label yang didukung: <b>QR Code, EAN-13, Code-128</b></span>
           </div>
-          <div>
-            V1.0
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={toggleHaptic}
+              className={`flex items-center space-x-1.5 px-2 py-0.5 rounded border text-[9px] font-bold transition-all cursor-pointer ${
+                !(typeof navigator !== "undefined" && typeof navigator.vibrate === "function")
+                  ? "bg-slate-950/40 text-slate-500 border-white/5 cursor-not-allowed"
+                  : hapticEnabled
+                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20"
+                    : "bg-slate-950/40 text-slate-400 border-white/5 hover:bg-white/5"
+              }`}
+              disabled={!(typeof navigator !== "undefined" && typeof navigator.vibrate === "function")}
+              title={typeof navigator !== "undefined" && typeof navigator.vibrate === "function" ? "Toggle getaran haptic ketika sukses scan" : "Haptic tidak didukung oleh browser ini"}
+            >
+              <span>Vibrate</span>
+              <span className={`w-1.5 h-1.5 rounded-full ${!(typeof navigator !== "undefined" && typeof navigator.vibrate === "function") ? "bg-slate-600" : hapticEnabled ? "bg-emerald-400 animate-pulse" : "bg-slate-500"}`} />
+            </button>
+            <span className="text-slate-700">|</span>
+            <span>V1.0</span>
           </div>
         </div>
       </div>

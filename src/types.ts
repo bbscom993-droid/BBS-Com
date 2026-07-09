@@ -58,6 +58,7 @@ export interface RFQ {
   items: RFQItem[];
   customRequirements?: string;
   notes?: string;
+  priority?: 'low' | 'medium' | 'high' | 'urgent';
   generatedQuotationId?: string;
   internalComments?: RFQComment[];
   history?: RFQHistoryEntry[];
@@ -109,6 +110,7 @@ export interface CompanySettings {
     accountHolder: string;
   };
   customRfqStatuses?: Array<{ value: string; label: string; desc: string; color: string }>;
+  defaultRfqStatusColors?: Record<string, string>;
 }
 
 export interface ConsultMessage {

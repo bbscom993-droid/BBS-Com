@@ -217,6 +217,122 @@ app.post("/api/settings", async (req, res) => {
   }
 });
 
+// API: Status Filter Layout Preferences (Pinned & Order)
+app.get("/api/settings/layout-preferences", async (req, res) => {
+  try {
+    const doc = await adminDb.collection("settings").doc("layoutPreferences").get();
+    if (doc.exists) {
+      res.json(doc.data());
+    } else {
+      res.json({
+        pinnedStatuses: [],
+        legendStatusOrder: ["pending", "processing", "quoted", "completed", "cancelled"]
+      });
+    }
+  } catch (error: any) {
+    res.status(500).json({ error: "Gagal mendapatkan preferensi layout", details: error.message });
+  }
+});
+
+app.post("/api/settings/layout-preferences", async (req, res) => {
+  try {
+    const { pinnedStatuses, legendStatusOrder } = req.body;
+    await adminDb.collection("settings").doc("layoutPreferences").set({
+      pinnedStatuses: pinnedStatuses || [],
+      legendStatusOrder: legendStatusOrder || ["pending", "processing", "quoted", "completed", "cancelled"]
+    }, { merge: true });
+    res.json({ success: true, pinnedStatuses, legendStatusOrder });
+  } catch (error: any) {
+    res.status(500).json({ error: "Gagal menyimpan preferensi layout", details: error.message });
+  }
+});
+
+// Helper to send simulated email alerts to admin
+async function triggerAdminEmailAlert(rfq: any, settings: any, actionType: "new" | "update") {
+  const emailAlertsEnabled = settings.emailAlertsEnabled !== false;
+  if (!emailAlertsEnabled) return;
+
+  const adminAlertEmail = settings.adminAlertEmail || "admin@berkahbintangsolusindo.com";
+  const alertOnHighPriorityOnly = settings.alertOnHighPriorityOnly || false;
+  const priority = rfq.priority || "medium";
+
+  if (alertOnHighPriorityOnly && priority !== "high" && priority !== "urgent") {
+    return;
+  }
+
+  const companyEmail = settings.email || "noreply@berkahbintangsolusindo.com";
+  const companyName = settings.companyName || "PT. Berkah Bintang Solusindo";
+
+  let subject = "";
+  let html = "";
+
+  if (actionType === "new") {
+    subject = `🚨 [ADMIN ALERT] RFQ Baru Masuk: ${rfq.rfqNumber} [${priority.toUpperCase()}]`;
+    html = `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #0f172a; color: #f1f5f9;">
+        <div style="border-bottom: 2px solid #6366f1; padding-bottom: 12px; margin-bottom: 20px;">
+          <h2 style="color: #6366f1; margin: 0; font-size: 20px;">Notifikasi RFQ Masuk Baru</h2>
+          <p style="color: #94a3b8; margin: 4px 0 0 0; font-size: 12px;">Sistem Otomatis PT. Berkah Bintang Solusindo</p>
+        </div>
+        <p>Ada permintaan penawaran (RFQ) baru masuk ke sistem dengan detail sebagai berikut:</p>
+        <div style="background-color: #1e293b; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+          <p style="margin: 0 0 8px 0;"><strong>Nomor RFQ:</strong> <span style="font-family: monospace; color: #38bdf8; font-weight: bold;">${rfq.rfqNumber}</span></p>
+          <p style="margin: 0 0 8px 0;"><strong>Nama Klien:</strong> ${rfq.clientName}</p>
+          <p style="margin: 0 0 8px 0;"><strong>Instansi/Perusahaan:</strong> ${rfq.companyName || "Personal/Retail"}</p>
+          <p style="margin: 0 0 8px 0;"><strong>Skala Prioritas:</strong> <span style="color: ${priority === 'urgent' ? '#f43f5e' : priority === 'high' ? '#f59e0b' : '#38bdf8'}; font-weight: bold; text-transform: uppercase;">${priority}</span></p>
+          <p style="margin: 0;"><strong>Kategori:</strong> ${rfq.clientCategory}</p>
+        </div>
+        <div style="margin-bottom: 20px;">
+          <h3 style="color: #f1f5f9; font-size: 14px; border-bottom: 1px solid #334155; padding-bottom: 6px;">Daftar Perangkat yang Dicari:</h3>
+          <ul style="padding-left: 20px; margin: 10px 0;">
+            ${(rfq.items || []).map((it: any) => `<li style="margin-bottom: 6px;"><strong>${it.name}</strong> (${it.quantity} unit)</li>`).join('')}
+          </ul>
+        </div>
+        <div style="text-align: center; margin-top: 25px; border-top: 1px solid #334155; padding-top: 15px;">
+          <span style="font-size: 11px; color: #64748b; display: block; margin-bottom: 10px;">Gunakan Portal Admin untuk segera melakukan analisis & generate quotation AI</span>
+          <span style="background-color: #4f46e5; color: white; padding: 10px 20px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">Masuk ke Portal Admin</span>
+        </div>
+      </div>
+    `;
+  } else {
+    subject = `⚠️ [ADMIN ALERT] RFQ Diperbarui: ${rfq.rfqNumber} [${priority.toUpperCase()}]`;
+    html = `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #0f172a; color: #f1f5f9;">
+        <div style="border-bottom: 2px solid #f59e0b; padding-bottom: 12px; margin-bottom: 20px;">
+          <h2 style="color: #f59e0b; margin: 0; font-size: 20px;">Pembaruan Informasi RFQ</h2>
+          <p style="color: #94a3b8; margin: 4px 0 0 0; font-size: 12px;">Sistem Otomatis PT. Berkah Bintang Solusindo</p>
+        </div>
+        <p>RFQ berikut telah diperbarui catatannya atau tingkat prioritasnya:</p>
+        <div style="background-color: #1e293b; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+          <p style="margin: 0 0 8px 0;"><strong>Nomor RFQ:</strong> <span style="font-family: monospace; color: #38bdf8; font-weight: bold;">${rfq.rfqNumber}</span></p>
+          <p style="margin: 0 0 8px 0;"><strong>Klien:</strong> ${rfq.clientName}</p>
+          <p style="margin: 0 0 8px 0;"><strong>Status:</strong> <span style="text-transform: uppercase; font-weight: bold;">${rfq.status}</span></p>
+          <p style="margin: 0 0 8px 0;"><strong>Skala Prioritas:</strong> <span style="color: ${priority === 'urgent' ? '#f43f5e' : priority === 'high' ? '#f59e0b' : '#38bdf8'}; font-weight: bold; text-transform: uppercase;">${priority}</span></p>
+          <p style="margin: 0;"><strong>Catatan Admin terbaru:</strong> <span style="color: #94a3b8; font-style: italic;">"${rfq.notes || "Tidak ada catatan."}"</span></p>
+        </div>
+        <div style="text-align: center; margin-top: 25px; border-top: 1px solid #334155; padding-top: 15px;">
+          <span style="font-size: 11px; color: #64748b; display: block; margin-bottom: 10px;">Pembaruan ini tersinkronisasi langsung ke database Firestore</span>
+        </div>
+      </div>
+    `;
+  }
+
+  const newEmail = {
+    id: "alert_" + Date.now(),
+    to: adminAlertEmail,
+    from: companyEmail,
+    subject,
+    body: html,
+    sentAt: new Date().toISOString(),
+    rfqNumber: rfq.rfqNumber,
+    clientName: rfq.clientName,
+    companyName: rfq.companyName || "",
+    status: "sent"
+  };
+
+  await adminDb.collection("emails").doc(newEmail.id).set(newEmail);
+}
+
 // Helper to send simulated email
 async function triggerSimulatedEmail(rfq: any, settings: any) {
   const companyEmail = settings.email || "noreply@berkahbintangsolusindo.com";
@@ -478,6 +594,13 @@ app.post("/api/rfqs", async (req, res) => {
       console.error("Error sending simulated email:", err);
     }
 
+    // Trigger admin email alert
+    try {
+      await triggerAdminEmailAlert(newRfq, settings, "new");
+    } catch (err) {
+      console.error("Error sending admin alert email:", err);
+    }
+
     // Auto-schedule follow-up reminder if enabled
     try {
       const config = await getReminderConfig();
@@ -693,8 +816,17 @@ app.put("/api/rfqs/:id", async (req, res) => {
         });
       }
 
+      const settings = await getCompanySettings();
       const updated = { ...existingData, ...req.body, history };
       await rfqRef.set(updated);
+
+      // Trigger admin email alert
+      try {
+        await triggerAdminEmailAlert(updated, settings, "update");
+      } catch (err) {
+        console.error("Error sending admin alert email:", err);
+      }
+
       res.json(updated);
     } else {
       res.status(404).json({ error: "RFQ tidak ditemukan" });
@@ -757,6 +889,27 @@ app.post("/api/rfqs/bulk-status", async (req, res) => {
   } catch (error: any) {
     console.error("Error updating bulk status:", error);
     res.status(500).json({ error: "Gagal memperbarui status secara massal", details: error.message });
+  }
+});
+
+app.post("/api/rfqs/bulk-delete", async (req, res) => {
+  try {
+    const { rfqIds } = req.body;
+    if (!rfqIds || !Array.isArray(rfqIds) || rfqIds.length === 0) {
+      return res.status(400).json({ error: "Parameter rfqIds berupa array yang tidak kosong diperlukan." });
+    }
+
+    const batch = adminDb.batch();
+    for (const rfqId of rfqIds) {
+      const rfqRef = adminDb.collection("rfqs").doc(rfqId);
+      batch.delete(rfqRef);
+    }
+    await batch.commit();
+
+    res.json({ success: true, count: rfqIds.length });
+  } catch (error: any) {
+    console.error("Error deleting bulk RFQs:", error);
+    res.status(500).json({ error: "Gagal menghapus RFQ secara massal", details: error.message });
   }
 });
 
