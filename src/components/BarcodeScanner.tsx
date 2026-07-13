@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Html5Qrcode } from "html5-qrcode";
-import { Camera, Scan, X, RotateCw, CheckCircle, AlertCircle, ShoppingCart, Info, History, Trash2, Search, Filter, Zap, ZapOff } from "lucide-react";
+import { Camera, Scan, X, RotateCw, CheckCircle, AlertCircle, ShoppingCart, Info, History, Trash2, Search, Filter, Zap, ZapOff, Volume2, VolumeX } from "lucide-react";
 import { ProductItem } from "../types";
 
 interface BarcodeScannerProps {
@@ -99,9 +99,11 @@ export default function BarcodeScanner({
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string>("");
   const [scanError, setScanError] = useState<string>("");
+  const [retryCountdown, setRetryCountdown] = useState<number | null>(null);
   const [lastScanned, setLastScanned] = useState<ProductItem | null>(null);
   const [scanHistory, setScanHistory] = useState<{ product: ProductItem; time: string }[]>([]);
   const [simulateMode, setSimulateMode] = useState<boolean>(false);
+  const [showHistorySidebar, setShowHistorySidebar] = useState<boolean>(false);
 
   // Success Confirmation overlay states
   const [showSuccessOverlay, setShowSuccessOverlay] = useState<boolean>(false);
@@ -156,6 +158,22 @@ export default function BarcodeScanner({
       return true;
     }
   });
+
+  const [scannerVolume, setScannerVolume] = useState<number>(() => {
+    try {
+      const stored = localStorage.getItem("bbs_scanner_volume");
+      return stored !== null ? parseFloat(stored) : 0.5;
+    } catch {
+      return 0.5;
+    }
+  });
+
+  const handleVolumeChange = (newVol: number) => {
+    setScannerVolume(newVol);
+    try {
+      localStorage.setItem("bbs_scanner_volume", newVol.toString());
+    } catch {}
+  };
 
   const triggerHapticFeedback = (pattern: number | number[] = 100) => {
     if (hapticEnabled && typeof navigator !== "undefined" && navigator.vibrate) {
@@ -427,6 +445,7 @@ export default function BarcodeScanner({
   const startScanner = async () => {
     setScanError("");
     setLastScanned(null);
+    setRetryCountdown(null);
     try {
       // Create HTML5 QR Code instance
       const html5QrCode = new Html5Qrcode(containerId);
@@ -483,6 +502,11 @@ export default function BarcodeScanner({
       console.error("Failed to start scanner:", err);
       setScannerActive(false);
       setScanError(err?.message || "Gagal memulai kamera. Mohon izinkan akses kamera di browser Anda.");
+      
+      // Auto-retry countdown if not in simulation mode
+      if (!simulateMode) {
+        setRetryCountdown(5);
+      }
     }
   };
 
@@ -490,6 +514,7 @@ export default function BarcodeScanner({
   const stopScanner = async () => {
     setIsTorchOn(false);
     setTorchSupported(false);
+    setRetryCountdown(null);
     if (qrCodeInstanceRef.current) {
       try {
         if (qrCodeInstanceRef.current.isScanning) {
@@ -502,6 +527,22 @@ export default function BarcodeScanner({
     }
     setScannerActive(false);
   };
+
+  // Countdown timer for camera auto-retry
+  useEffect(() => {
+    if (retryCountdown === null) return;
+    if (retryCountdown <= 0) {
+      setRetryCountdown(null);
+      if (!simulateMode && !lastScanned && !categoryMismatchError && !unmatchedCode) {
+        startScanner();
+      }
+      return;
+    }
+    const timer = setTimeout(() => {
+      setRetryCountdown(prev => (prev !== null ? prev - 1 : null));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [retryCountdown, simulateMode, lastScanned, categoryMismatchError, unmatchedCode]);
 
   // Automatically start or switch the scanner once the camera is ready,
   // and we are not in simulateMode (removing the need for a manual click).
@@ -630,7 +671,9 @@ export default function BarcodeScanner({
       <div 
         ref={modalRef}
         tabIndex={-1}
-        className="bg-slate-900 border border-white/10 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col focus:outline-none"
+        className={`bg-slate-900 border border-white/10 rounded-2xl w-full transition-all duration-300 overflow-hidden shadow-2xl flex flex-col focus:outline-none ${
+          showHistorySidebar ? "max-w-4xl" : "max-w-lg"
+        }`}
       >
         {/* Header */}
         <div className="p-4 bg-slate-950 border-b border-white/5 flex items-center justify-between">
@@ -650,19 +693,38 @@ export default function BarcodeScanner({
               <p className="text-[10px] text-slate-400">Scan QR Code / Barcode produk untuk menambah ke RFQ</p>
             </div>
           </div>
-          <button 
-            onClick={() => {
-              stopScanner();
-              onClose();
-            }}
-            className="p-1.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white rounded-lg transition-colors"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex items-center space-x-2 shrink-0">
+            <button
+              type="button"
+              id="scan_barcode_from_catalog_btn_history_toggle"
+              onClick={() => setShowHistorySidebar((prev) => !prev)}
+              className={`p-1.5 rounded-lg border transition-all flex items-center space-x-1 cursor-pointer ${
+                showHistorySidebar 
+                  ? "bg-indigo-500/20 border-indigo-500/30 text-indigo-300" 
+                  : "bg-white/5 border-transparent text-slate-400 hover:text-white hover:bg-white/10"
+              }`}
+              title="Tampilkan Riwayat Scan"
+            >
+              <History className="h-4 w-4" />
+              <span className="text-[10px] font-black">{recentScans.length}</span>
+            </button>
+            <button 
+              type="button"
+              onClick={() => {
+                stopScanner();
+                onClose();
+              }}
+              className="p-1.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white rounded-lg transition-colors"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
-        {/* Scanner Body */}
-        <div className="p-5 space-y-4 flex-1 overflow-y-auto max-h-[80vh]">
+        {/* Split Layout Container */}
+        <div className="flex flex-col md:flex-row flex-1 overflow-hidden relative">
+          {/* Scanner Body (Left Panel) */}
+          <div className="p-5 space-y-4 flex-1 overflow-y-auto max-h-[80vh]">
           {/* Dedicated SKU Search Field */}
           <form onSubmit={handleSkuSearch} className="space-y-1.5 p-3.5 bg-slate-950/60 border border-white/5 rounded-2xl">
             <div className="flex items-center space-x-1.5 text-indigo-400 text-[10px] font-black uppercase tracking-wider mb-0.5">
@@ -1028,12 +1090,58 @@ export default function BarcodeScanner({
                   {scanError && (
                     <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl flex items-start space-x-2">
                       <AlertCircle className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
-                      <div className="space-y-1">
+                      <div className="space-y-1 w-full">
                         <p className="text-[11px] font-bold text-red-200 font-sans">Akses Kamera Bermasalah</p>
                         <p className="text-[10px] text-slate-400 leading-normal">{scanError}</p>
+
+                        {retryCountdown !== null ? (
+                          <div className="mt-2 p-2 bg-indigo-500/10 border border-indigo-500/25 rounded-lg flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-ping" />
+                              <span className="text-[9px] text-indigo-300 font-medium">
+                                Mencoba menginisialisasi ulang dalam <b>{retryCountdown}s</b>
+                              </span>
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setRetryCountdown(null);
+                                  startScanner();
+                                }}
+                                className="text-[9px] text-indigo-400 hover:text-indigo-300 font-bold underline cursor-pointer"
+                              >
+                                Mulai Sekarang
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setRetryCountdown(null);
+                                }}
+                                className="text-[9px] text-slate-400 hover:text-white underline cursor-pointer"
+                              >
+                                Batal
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              startScanner();
+                            }}
+                            className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold underline block mt-1 cursor-pointer"
+                          >
+                            Hubungkan Ulang Kamera Manual
+                          </button>
+                        )}
+
                         <button 
-                          onClick={() => setSimulateMode(true)}
-                          className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold underline block mt-1 cursor-pointer"
+                          onClick={() => {
+                            setRetryCountdown(null);
+                            setSimulateMode(true);
+                          }}
+                          className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold underline block mt-1.5 cursor-pointer"
                         >
                           Gunakan Fitur Simulasi Scanner Sebagai Gantinya
                         </button>
@@ -1371,30 +1479,188 @@ export default function BarcodeScanner({
           )}
         </div>
 
-        {/* Footer */}
-        <div className="p-4 bg-slate-950 border-t border-white/5 flex items-center justify-between text-[10px] text-slate-400">
+        {/* Right Panel: Sidebar Overlay */}
+        {showHistorySidebar && (
+          <div className="w-full md:w-80 border-t md:border-t-0 md:border-l border-white/10 bg-slate-950/45 backdrop-blur-md flex flex-col max-h-[80vh] overflow-hidden shrink-0 animate-fadeIn">
+            {/* Sidebar Header */}
+            <div className="p-4 bg-slate-950/80 border-b border-white/5 flex items-center justify-between shrink-0">
+              <div className="flex items-center space-x-2">
+                <div className="p-1.5 bg-indigo-500/10 rounded-lg text-indigo-400">
+                  <History className="h-4 w-4" />
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-xs text-white uppercase tracking-wider">Riwayat Scan</h4>
+                  <p className="text-[9px] text-slate-500">10 produk terakhir</p>
+                </div>
+              </div>
+              {recentScans.length > 0 && (
+                <button
+                  type="button"
+                  onClick={clearRecentScans}
+                  className="p-1.5 text-slate-500 hover:text-red-400 rounded-lg hover:bg-red-500/10 transition-colors flex items-center gap-1 cursor-pointer text-[10px] font-bold"
+                  title="Bersihkan Semua Riwayat"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span>Hapus</span>
+                </button>
+              )}
+            </div>
+
+            {/* Sidebar Content */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
+              {recentScans.length > 0 ? (
+                recentScans.slice(0, 10).map((item, index) => {
+                  const isAdded = recentlyAddedIds[item.product.id];
+                  return (
+                    <div 
+                      key={`${item.product.id}-${index}`}
+                      className="p-3 bg-slate-900/60 border border-white/5 hover:border-indigo-500/30 rounded-xl transition-all flex flex-col space-y-2 relative group"
+                    >
+                      <div className="flex items-start space-x-2.5">
+                        {/* Image Placeholder or Icon */}
+                        <div className="w-10 h-10 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center shrink-0 text-indigo-400 text-xs font-black font-sans">
+                          {item.product.sku ? item.product.sku.slice(-3) : "BBS"}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h5 className="font-bold text-xs text-white truncate group-hover:text-indigo-300 transition-colors">
+                            {item.product.name}
+                          </h5>
+                          <div className="flex items-center space-x-1.5 mt-0.5">
+                            <span className="px-1.5 py-0.5 bg-slate-950 text-[8px] text-indigo-400 border border-white/5 font-mono rounded">
+                              SKU: {item.product.sku || "N/A"}
+                            </span>
+                            <span className="text-[8px] text-slate-500 font-mono">
+                              {formatScannedTime(item.scannedAt)}
+                            </span>
+                          </div>
+                          <p className="text-[9px] text-slate-400 mt-1">
+                            Kat: <span className="text-slate-300 font-medium">{item.product.category}</span>
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Actions */}
+                      <div className="pt-2 border-t border-white/5 flex items-center justify-between">
+                        <span className="text-xs font-extrabold text-indigo-400 font-mono">
+                          Rp {item.product.price ? item.product.price.toLocaleString("id-ID") : "0"}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleQuickAddProduct(item.product)}
+                          disabled={isAdded}
+                          className={`px-3 py-1.5 rounded-lg text-[10px] font-extrabold flex items-center gap-1.5 transition-all duration-300 cursor-pointer ${
+                            isAdded
+                              ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 cursor-default"
+                              : "bg-indigo-600 hover:bg-indigo-500 text-white border border-transparent hover:scale-[1.02] active:scale-95 shadow-md shadow-indigo-600/10"
+                          }`}
+                        >
+                          {isAdded ? (
+                            <>
+                              <CheckCircle className="h-3.5 w-3.5 animate-scaleIn" />
+                              <span>Ditambahkan!</span>
+                            </>
+                          ) : (
+                            <>
+                              <ShoppingCart className="h-3.5 w-3.5" />
+                              <span>+ Re-add</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center py-10 px-4 text-center space-y-3">
+                  <div className="w-12 h-12 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-slate-500">
+                    <History className="h-6 w-6" />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs text-white font-extrabold uppercase tracking-wider">Belum Ada Riwayat</p>
+                    <p className="text-[10px] text-slate-500 leading-relaxed max-w-[180px] mx-auto">
+                      Produk yang Anda pindai akan muncul di sini untuk re-add cepat ke keranjang.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Footer */}
+        <div className="p-4 bg-slate-950 border-t border-white/5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between text-[10px] text-slate-400">
           <div className="flex items-center space-x-1.5">
             <ShoppingCart className="h-3.5 w-3.5 text-indigo-400" />
             <span>Format label yang didukung: <b>QR Code, EAN-13, Code-128</b></span>
           </div>
-          <div className="flex items-center space-x-2">
-            <button
-              onClick={toggleHaptic}
-              className={`flex items-center space-x-1.5 px-2 py-0.5 rounded border text-[9px] font-bold transition-all cursor-pointer ${
-                !(typeof navigator !== "undefined" && typeof navigator.vibrate === "function")
-                  ? "bg-slate-950/40 text-slate-500 border-white/5 cursor-not-allowed"
-                  : hapticEnabled
-                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20"
-                    : "bg-slate-950/40 text-slate-400 border-white/5 hover:bg-white/5"
-              }`}
-              disabled={!(typeof navigator !== "undefined" && typeof navigator.vibrate === "function")}
-              title={typeof navigator !== "undefined" && typeof navigator.vibrate === "function" ? "Toggle getaran haptic ketika sukses scan" : "Haptic tidak didukung oleh browser ini"}
-            >
-              <span>Vibrate</span>
-              <span className={`w-1.5 h-1.5 rounded-full ${!(typeof navigator !== "undefined" && typeof navigator.vibrate === "function") ? "bg-slate-600" : hapticEnabled ? "bg-emerald-400 animate-pulse" : "bg-slate-500"}`} />
-            </button>
-            <span className="text-slate-700">|</span>
-            <span>V1.0</span>
+          <div className="flex items-center gap-3 flex-wrap">
+            {/* Volume Control */}
+            <div className="flex items-center space-x-2 bg-slate-900 border border-white/5 px-2.5 py-1 rounded-xl">
+              {scannerVolume === 0 ? (
+                <button
+                  type="button"
+                  onClick={() => handleVolumeChange(0.5)}
+                  className="text-slate-500 hover:text-white transition-colors cursor-pointer"
+                  title="Unmute Beep"
+                >
+                  <VolumeX className="h-3.5 w-3.5 text-red-400" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => handleVolumeChange(0)}
+                  className="text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer"
+                  title="Mute Beep"
+                >
+                  <Volume2 className="h-3.5 w-3.5" />
+                </button>
+              )}
+              <div className="flex items-center space-x-1.5">
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={scannerVolume}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    handleVolumeChange(val);
+                  }}
+                  onMouseUp={() => {
+                    playBeepSound(isCatalogScanBtn);
+                  }}
+                  onTouchEnd={() => {
+                    playBeepSound(isCatalogScanBtn);
+                  }}
+                  className="w-16 sm:w-20 accent-indigo-500 h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer focus:outline-none"
+                  title={`Volume Beep: ${Math.round(scannerVolume * 100)}%`}
+                />
+                <span className="text-[9px] font-mono font-bold text-slate-300 min-w-[24px] text-right">
+                  {Math.round(scannerVolume * 100)}%
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={toggleHaptic}
+                className={`flex items-center space-x-1.5 px-2 py-1 rounded border text-[9px] font-bold transition-all cursor-pointer ${
+                  !(typeof navigator !== "undefined" && typeof navigator.vibrate === "function")
+                    ? "bg-slate-950/40 text-slate-500 border-white/5 cursor-not-allowed"
+                    : hapticEnabled
+                      ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20"
+                      : "bg-slate-950/40 text-slate-400 border-white/5 hover:bg-white/5"
+                }`}
+                disabled={!(typeof navigator !== "undefined" && typeof navigator.vibrate === "function")}
+                title={typeof navigator !== "undefined" && typeof navigator.vibrate === "function" ? "Toggle getaran haptic ketika sukses scan" : "Haptic tidak didukung oleh browser ini"}
+              >
+                <span>Vibrate</span>
+                <span className={`w-1.5 h-1.5 rounded-full ${!(typeof navigator !== "undefined" && typeof navigator.vibrate === "function") ? "bg-slate-600" : hapticEnabled ? "bg-emerald-400 animate-pulse" : "bg-slate-500"}`} />
+              </button>
+              <span className="text-slate-700">|</span>
+              <span>V1.0</span>
+            </div>
           </div>
         </div>
       </div>

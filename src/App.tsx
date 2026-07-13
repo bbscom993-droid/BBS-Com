@@ -47,7 +47,8 @@ import {
   ProductItem, 
   RFQItem, 
   ConsultMessage,
-  QuickTopic
+  QuickTopic,
+  AdminRfqFilterPreset
 } from "./types";
 
 // Dynamic Icon Component for rendering dynamic icons from data safely
@@ -409,6 +410,43 @@ function getRfqSubCategories(rfq: RFQ): string[] {
   return Array.from(subCats);
 }
 
+const AnimatedCounter = ({ value }: { value: number }) => {
+  const [count, setCount] = useState(value);
+
+  useEffect(() => {
+    const start = count;
+    const end = value;
+    if (start === end) return;
+
+    const duration = 400; // ms
+    const startTime = performance.now();
+    let animationFrameId: number;
+
+    const updateCount = (now: number) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      
+      // Easing function: easeOutQuad
+      const ease = progress * (2 - progress);
+      const current = Math.round(start + (end - start) * ease);
+      
+      setCount(current);
+
+      if (progress < 1) {
+        animationFrameId = requestAnimationFrame(updateCount);
+      }
+    };
+
+    animationFrameId = requestAnimationFrame(updateCount);
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+    };
+  }, [value, count]);
+
+  return <>{count}</>;
+};
+
 export default function App() {
   const [currentTab, setCurrentTab] = useState<string>("landing");
   const [isMobile, setIsMobile] = useState<boolean>(false);
@@ -646,8 +684,19 @@ export default function App() {
   const [isCatalogScanTriggered, setIsCatalogScanTriggered] = useState(false);
   const [isScannerActivelySearching, setIsScannerActivelySearching] = useState(false);
   const [showSuccessFlash, setShowSuccessFlash] = useState(false);
+  const [scannedSuccessToast, setScannedSuccessToast] = useState<{ visible: boolean; productName: string } | null>(null);
   const [selectedDetailProduct, setSelectedDetailProduct] = useState<ProductItem | null>(null);
   const [showSubtotalBreakdown, setShowSubtotalBreakdown] = useState(false);
+
+  // Auto-dismiss scanner success toast next to the scan button
+  useEffect(() => {
+    if (scannedSuccessToast && scannedSuccessToast.visible) {
+      const timer = setTimeout(() => {
+        setScannedSuccessToast(null);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [scannedSuccessToast]);
 
   // Deep linking to product details or comparison via query parameters
   useEffect(() => {
@@ -810,6 +859,53 @@ export default function App() {
     }
   }, [adminRfqStatuses]);
 
+  // Admin RFQ Filter Presets State
+  const [adminRfqFilterPresets, setAdminRfqFilterPresets] = useState<AdminRfqFilterPreset[]>(() => {
+    try {
+      const stored = localStorage.getItem("bbs_admin_rfq_filter_presets");
+      if (stored) {
+        return JSON.parse(stored);
+      }
+    } catch (e) {
+      console.error("Error reading filter presets from localStorage", e);
+    }
+    return [
+      {
+        id: "sys-pending-high",
+        name: "Prioritas Tinggi & Menunggu",
+        statuses: ["pending", "processing"],
+        priority: "high",
+        isSystem: true
+      },
+      {
+        id: "sys-done-cancelled",
+        name: "Selesai & Batal",
+        statuses: ["completed", "cancelled"],
+        isSystem: true
+      },
+      {
+        id: "sys-urgent",
+        name: "Urgent RFQs",
+        statuses: [],
+        priority: "urgent",
+        isSystem: true
+      }
+    ];
+  });
+
+  // Persist presets to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem("bbs_admin_rfq_filter_presets", JSON.stringify(adminRfqFilterPresets));
+    } catch (e) {
+      console.error("Error writing filter presets to localStorage", e);
+    }
+  }, [adminRfqFilterPresets]);
+
+  const [newPresetName, setNewPresetName] = useState("");
+  const [isSavingPreset, setIsSavingPreset] = useState(false);
+  const [isProcessingFilter, setIsProcessingFilter] = useState(false);
+
    // RFQ Notes, Priority, and Bulk Export states
   const [selectedNotesRfq, setSelectedNotesRfq] = useState<RFQ | null>(null);
   const [notesInput, setNotesInput] = useState("");
@@ -838,6 +934,25 @@ export default function App() {
   const [isAdminRfqCategoryDropdownOpen, setIsAdminRfqCategoryDropdownOpen] = useState(false);
   const [adminRfqSubCategoryFilter, setAdminRfqSubCategoryFilter] = useState<string>("");
   const [isAdminRfqSubCategoryDropdownOpen, setIsAdminRfqSubCategoryDropdownOpen] = useState(false);
+
+  useEffect(() => {
+    setIsProcessingFilter(true);
+    const timer = setTimeout(() => {
+      setIsProcessingFilter(false);
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [
+    adminRfqStatuses,
+    adminRfqPriorityFilter,
+    adminRfqStartDate,
+    adminRfqEndDate,
+    adminRfqSearch,
+    statusKeywordSearch,
+    adminRfqCategoryFilter,
+    adminRfqSubCategoryFilter,
+    adminRfqClientFilter,
+    showOnlyMyClients
+  ]);
   const [sessionScannedCount, setSessionScannedCount] = useState<number>(() => {
     try {
       const val = sessionStorage.getItem("bbs_session_scanned_count");
@@ -890,6 +1005,9 @@ export default function App() {
   });
 
   const [showRecentTooltip, setShowRecentTooltip] = useState(false);
+  const [isHistoryOverlayOpen, setIsHistoryOverlayOpen] = useState(false);
+  const [historySearchQuery, setHistorySearchQuery] = useState("");
+  const [isGeneratingQrSheet, setIsGeneratingQrSheet] = useState(false);
 
   const refreshRecentScans = () => {
     try {
@@ -1031,6 +1149,31 @@ export default function App() {
   const [adminUsername, setAdminUsername] = useState("");
 
   const [selectedHistoryRfq, setSelectedHistoryRfq] = useState<RFQ | null>(null);
+  const [showBulkQrModal, setShowBulkQrModal] = useState(false);
+  const [bulkQrSize, setBulkQrSize] = useState<"small" | "medium" | "large">("medium");
+  const [bulkQrTheme, setBulkQrTheme] = useState<"print" | "dark">("print");
+  const [bulkQrCols, setBulkQrCols] = useState<2 | 3 | 4>(3);
+  const [bulkQrEncoding, setBulkQrEncoding] = useState<"url" | "number">("url");
+
+  const [showCatalogBulkQrModal, setShowCatalogBulkQrModal] = useState(false);
+  const [catalogBulkQrSize, setCatalogBulkQrSize] = useState<"small" | "medium" | "large">("medium");
+  const [catalogBulkQrTheme, setCatalogBulkQrTheme] = useState<"print" | "dark" | "indigo">("print");
+  const [catalogBulkQrCols, setCatalogBulkQrCols] = useState<2 | 3 | 4>(3);
+  const [catalogBulkQrEncoding, setCatalogBulkQrEncoding] = useState<"url" | "code">("url");
+  const [catalogBulkQrShowSkuLabel, setCatalogBulkQrShowSkuLabel] = useState(true);
+  const [catalogBulkQrSkuFontSize, setCatalogBulkQrSkuFontSize] = useState<number>(11);
+  const [catalogBulkQrShowPreview, setCatalogBulkQrShowPreview] = useState(true);
+  const [catalogBulkQrMargin, setCatalogBulkQrMargin] = useState<number>(6);
+  const [catalogBulkQrQuietZone, setCatalogBulkQrQuietZone] = useState<number>(1);
+  const [catalogBulkQrCardPadding, setCatalogBulkQrCardPadding] = useState<number>(14);
+  const [catalogBulkQrBorderRadius, setCatalogBulkQrBorderRadius] = useState<number>(12);
+  const [catalogBulkQrSkuAlignment, setCatalogBulkQrSkuAlignment] = useState<"left" | "center" | "right">("center");
+  const [catalogBulkQrShowLabelBorder, setCatalogBulkQrShowLabelBorder] = useState(true);
+  const [catalogBulkQrShowSkuBorder, setCatalogBulkQrShowSkuBorder] = useState(true);
+  const [catalogBulkQrGutter, setCatalogBulkQrGutter] = useState<number>(16);
+  const [catalogBulkQrRotation, setCatalogBulkQrRotation] = useState<0 | 90 | 180 | 270>(0);
+  const [catalogBulkQrAutoCopySku, setCatalogBulkQrAutoCopySku] = useState(false);
+  const [catalogBulkQrColor, setCatalogBulkQrColor] = useState<string>("#000000");
   const [selectedClientProfile, setSelectedClientProfile] = useState<any | null>(null);
   const [clientSearchQuery, setClientSearchQuery] = useState("");
   const [clientCategoryFilter, setClientCategoryFilter] = useState("");
@@ -1048,6 +1191,7 @@ export default function App() {
       setHistoryOperatorInput(adminDisplayName || adminUsername || "Sales Admin");
     }
   }, [selectedHistoryRfq, adminDisplayName, adminUsername]);
+
   const [adminUsers, setAdminUsers] = useState<any[]>([
     { id: "u1", username: "superadmin", name: "Arif Suharyadi", role: "superadmin", status: "active", lastLogin: "Hari ini, 08:30", assignedClients: ["Budi Santoso", "Andi Wijaya"] },
     { id: "u2", username: "admin", name: "Fina Karlina", role: "admin", status: "active", lastLogin: "Kemarin, 14:15", assignedClients: ["Budi Santoso"] },
@@ -1315,6 +1459,12 @@ export default function App() {
   const [selectedCatalogPdf, setSelectedCatalogPdf] = useState(false);
   const [isCatalogMenuOpen, setIsCatalogMenuOpen] = useState(false);
   const [showQrCodeModal, setShowQrCodeModal] = useState(false);
+  const [showCustomCatalogQrModal, setShowCustomCatalogQrModal] = useState(false);
+  const [customQrIncludeCategory, setCustomQrIncludeCategory] = useState(true);
+  const [customQrIncludeSearch, setCustomQrIncludeSearch] = useState(true);
+  const [customQrIncludeSort, setCustomQrIncludeSort] = useState(true);
+  const [customQrTheme, setCustomQrTheme] = useState<"print" | "dark" | "indigo">("print");
+  const [customQrSize, setCustomQrSize] = useState<"small" | "medium" | "large">("medium");
   const [showQrCardModal, setShowQrCardModal] = useState(false);
   const [showQrInPdf, setShowQrInPdf] = useState(true);
   const [qrCardTheme, setQrCardTheme] = useState<"indigo" | "emerald" | "slate" | "amber">("emerald");
@@ -1339,6 +1489,22 @@ export default function App() {
   const [comparisonDetailMode, setComparisonDetailMode] = useState<"summary" | "detail">("detail");
   const [collapsedCompareProductIds, setCollapsedCompareProductIds] = useState<Record<string, boolean>>({});
   const [showOnlyDifferences, setShowOnlyDifferences] = useState(false);
+
+  // Catalog Print Preview States
+  const [showCatalogPrintModal, setShowCatalogPrintModal] = useState(false);
+  const [catalogPrintSelectedIds, setCatalogPrintSelectedIds] = useState<string[]>([]);
+  const [catalogPrintLayout, setCatalogPrintLayout] = useState<"table" | "list" | "grid">("table");
+  const [catalogPrintTitle, setCatalogPrintTitle] = useState("KATALOG ACUAN PERANGKAT & ESTIMASI HARGA");
+  const [catalogPrintDocNo, setCatalogPrintDocNo] = useState("BBS/CAT/2026/PRO-04");
+  const [catalogPrintShowImages, setCatalogPrintShowImages] = useState(true);
+  const [catalogPrintShowSpecs, setCatalogPrintShowSpecs] = useState(true);
+  const [catalogPrintShowPrices, setCatalogPrintShowPrices] = useState(true);
+  const [catalogPrintShowQr, setCatalogPrintShowQr] = useState(true);
+  const [catalogPrintShowSignature, setCatalogPrintShowSignature] = useState(true);
+  const [catalogPrintFilterCategory, setCatalogPrintFilterCategory] = useState("Semua");
+  const [catalogPrintWatermark, setCatalogPrintWatermark] = useState(true);
+  const [catalogPrintShowCover, setCatalogPrintShowCover] = useState(true);
+  const [catalogPrintScale, setCatalogPrintScale] = useState(100); // percentage sizing on-screen
 
   // Chat History
   const [chatMessages, setChatMessages] = useState<ConsultMessage[]>([
@@ -1449,10 +1615,29 @@ export default function App() {
 
   // Product Catalog search
   const [catalogSearch, setCatalogSearch] = useState("");
+  const [catalogSkuSearch, setCatalogSkuSearch] = useState("");
   const [catalogCategory, setCatalogCategory] = useState("Semua");
   const [catalogSort, setCatalogSort] = useState<"none" | "best-match" | "popularity" | "low-to-high" | "high-to-low">("none");
   const [isSortDropdownOpen, setIsSortDropdownOpen] = useState(false);
   const sortDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Sync catalog filters from URL parameters on page load
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const cat = params.get("category");
+    const search = params.get("search");
+    const sort = params.get("sort");
+    
+    if (cat) {
+      setCatalogCategory(cat);
+    }
+    if (search) {
+      setCatalogSearch(search);
+    }
+    if (sort) {
+      setCatalogSort(sort as any);
+    }
+  }, []);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -2015,6 +2200,140 @@ export default function App() {
       return count > 0;
     });
   }, [orderedLegendStatuses, hideEmptyStatuses, adminRfqStatusCounts]);
+
+  const bottleneckStatus = useMemo(() => {
+    let maxActiveCount = 0;
+    let maxActiveStatus = "";
+    orderedLegendStatuses.forEach((item) => {
+      if (item.value === "completed" || item.value === "cancelled") return;
+      const count = adminRfqStatusCounts[item.value] || 0;
+      if (count > maxActiveCount) {
+        maxActiveCount = count;
+        maxActiveStatus = item.value;
+      }
+    });
+    return maxActiveCount > 0 ? maxActiveStatus : "";
+  }, [orderedLegendStatuses, adminRfqStatusCounts]);
+
+  const activeFiltersList = useMemo(() => {
+    const list: { label: string; value: string; icon: React.ReactNode; onClear: () => void }[] = [];
+    
+    if (adminRfqSearch) {
+      list.push({
+        label: "Cari",
+        value: `"${adminRfqSearch}"`,
+        icon: <Icons.Search className="h-3.5 w-3.5 text-indigo-400" />,
+        onClear: () => setAdminRfqSearch("")
+      });
+    }
+    
+    if (adminRfqStartDate || adminRfqEndDate) {
+      let dateVal = "";
+      if (adminRfqStartDate && adminRfqEndDate) {
+        dateVal = `${adminRfqStartDate} s/d ${adminRfqEndDate}`;
+      } else if (adminRfqStartDate) {
+        dateVal = `>= ${adminRfqStartDate}`;
+      } else {
+        dateVal = `<= ${adminRfqEndDate}`;
+      }
+      list.push({
+        label: "Tanggal",
+        value: dateVal,
+        icon: <Icons.Calendar className="h-3.5 w-3.5 text-emerald-400" />,
+        onClear: () => {
+          setAdminRfqStartDate("");
+          setAdminRfqEndDate("");
+        }
+      });
+    }
+    
+    if (adminRfqClientFilter) {
+      let clientName = adminRfqClientFilter;
+      if (adminRfqClientFilter.startsWith("cat:")) {
+        const cat = adminRfqClientFilter.replace("cat:", "");
+        if (cat === "perusahaan") clientName = "Perusahaan / Corporate";
+        else if (cat === "pemerintah") clientName = "Pemerintah / Umum";
+        else if (cat === "pendidikan") clientName = "Lembaga Pendidikan";
+        else if (cat === "umkm") clientName = "UMKM";
+        else if (cat === "retail") clientName = "Retail";
+      }
+      list.push({
+        label: "Klien",
+        value: clientName,
+        icon: <Icons.User className="h-3.5 w-3.5 text-sky-400" />,
+        onClear: () => setAdminRfqClientFilter("")
+      });
+    }
+    
+    if (adminRfqStatuses && adminRfqStatuses.length > 0) {
+      list.push({
+        label: "Status Group",
+        value: adminRfqStatuses.map(s => {
+          if (s === "pending") return "Menunggu Proposal";
+          if (s === "processing") return "Sedang Diproses";
+          if (s === "quoted") return "Quoted";
+          if (s === "completed") return "Selesai";
+          if (s === "cancelled") return "Dibatalkan";
+          return s;
+        }).join(", "),
+        icon: <Icons.Filter className="h-3.5 w-3.5 text-teal-400" />,
+        onClear: () => setAdminRfqStatuses([])
+      });
+    }
+    
+    if (statusKeywordSearch) {
+      list.push({
+        label: "Status Cari",
+        value: `"${statusKeywordSearch}"`,
+        icon: <Icons.Type className="h-3.5 w-3.5 text-purple-400" />,
+        onClear: () => setStatusKeywordSearch("")
+      });
+    }
+    
+    if (adminRfqCategoryFilter) {
+      let catLabel = adminRfqCategoryFilter;
+      if (adminRfqCategoryFilter === "perusahaan") catLabel = "Perusahaan";
+      else if (adminRfqCategoryFilter === "pemerintah") catLabel = "Pemerintah";
+      else if (adminRfqCategoryFilter === "pendidikan") catLabel = "Pendidikan";
+      else if (adminRfqCategoryFilter === "umkm") catLabel = "UMKM";
+      else if (adminRfqCategoryFilter === "retail") catLabel = "Retail";
+      list.push({
+        label: "Kategori",
+        value: catLabel,
+        icon: <Icons.Tag className="h-3.5 w-3.5 text-indigo-400" />,
+        onClear: () => setAdminRfqCategoryFilter("")
+      });
+    }
+    
+    if (adminRfqSubCategoryFilter) {
+      list.push({
+        label: "Sub-Kategori",
+        value: adminRfqSubCategoryFilter,
+        icon: <Icons.Tags className="h-3.5 w-3.5 text-pink-400" />,
+        onClear: () => setAdminRfqSubCategoryFilter("")
+      });
+    }
+    
+    if (adminRfqPriorityFilter) {
+      list.push({
+        label: "Prioritas",
+        value: adminRfqPriorityFilter.toUpperCase(),
+        icon: <Icons.AlertTriangle className="h-3.5 w-3.5 text-amber-400" />,
+        onClear: () => setAdminRfqPriorityFilter("")
+      });
+    }
+    
+    if (showOnlyMyClients) {
+      list.push({
+        label: "Kepemilikan",
+        value: "Klien Saya",
+        icon: <Icons.UserCheck className="h-3.5 w-3.5 text-emerald-400" />,
+        onClear: () => setShowOnlyMyClients(false)
+      });
+    }
+    
+    return list;
+  }, [adminRfqSearch, adminRfqStartDate, adminRfqEndDate, adminRfqClientFilter, adminRfqStatuses, statusKeywordSearch, adminRfqCategoryFilter, adminRfqSubCategoryFilter, adminRfqPriorityFilter, showOnlyMyClients, setAdminRfqSearch, setAdminRfqStartDate, setAdminRfqEndDate, setAdminRfqClientFilter, setAdminRfqStatuses, setStatusKeywordSearch, setAdminRfqCategoryFilter, setAdminRfqSubCategoryFilter, setAdminRfqPriorityFilter, setShowOnlyMyClients]);
 
   const showToast = (message: string, type: "success" | "error" | "info" = "success") => {
     setToast({ message, type });
@@ -3700,8 +4019,9 @@ export default function App() {
   const filteredProducts = catalogProducts.filter(product => {
     const matchSearch = product.name.toLowerCase().includes(catalogSearch.toLowerCase()) || 
                         product.description.toLowerCase().includes(catalogSearch.toLowerCase());
+    const matchSku = !catalogSkuSearch.trim() || (product.sku && product.sku.toLowerCase().includes(catalogSkuSearch.toLowerCase().trim()));
     const matchCat = catalogCategory === "Semua" || product.category === catalogCategory;
-    return matchSearch && matchCat;
+    return matchSearch && matchSku && matchCat;
   }).sort((a, b) => {
     if (catalogSort === "low-to-high") {
       return getNumericPrice(a.estimatedPriceRange) - getNumericPrice(b.estimatedPriceRange);
@@ -3741,6 +4061,24 @@ export default function App() {
     const matchC = adminCatalogCategory === "Semua" || item.category === adminCatalogCategory;
     return matchQ && matchC;
   });
+
+  // Auto-Copy SKUs when QR generated
+  useEffect(() => {
+    if (showCatalogBulkQrModal && catalogBulkQrAutoCopySku && filteredAdminCatalog.length > 0) {
+      const skus = filteredAdminCatalog
+        .map(prod => prod.sku || prod.serialNumber)
+        .filter(sku => sku && sku.trim() !== "");
+      
+      if (skus.length > 0) {
+        const textToCopy = skus.join(", ");
+        navigator.clipboard.writeText(textToCopy)
+          .then(() => {
+            showToast(`Otomatis menyalin ${skus.length} SKU ke clipboard!`, "success");
+          })
+          .catch(() => {});
+      }
+    }
+  }, [showCatalogBulkQrModal, catalogBulkQrAutoCopySku, filteredAdminCatalog]);
 
   // Calculate total value of pending RFQs
   const pendingRfqsOnly = rfqs.filter(r => r.status === "pending" || r.status === "processing");
@@ -3996,11 +4334,25 @@ export default function App() {
                   {/* Quick Download Shortcut Button */}
                   <button
                     onClick={() => setSelectedCatalogPdf(true)}
-                    className="flex items-center justify-center space-x-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white border border-indigo-500/30 rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 cursor-pointer whitespace-nowrap"
+                    className="flex items-center justify-center space-x-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-white/10 rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 cursor-pointer whitespace-nowrap"
                     title="Unduh PDF Katalog Langsung"
                   >
                     <Download className="h-3.5 w-3.5" />
-                    <span>Download Now</span>
+                    <span>Download PDF</span>
+                  </button>
+
+                  {/* Print Preview A4 Button */}
+                  <button
+                    onClick={() => {
+                      setCatalogPrintSelectedIds(catalogProducts.map(p => p.id));
+                      setShowCatalogPrintModal(true);
+                      try { playClickSound(); } catch {}
+                    }}
+                    className="flex items-center justify-center space-x-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white border border-indigo-500/30 rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 cursor-pointer whitespace-nowrap animate-pulse"
+                    title="Buka Pratinjau Cetak Ukuran A4"
+                  >
+                    <Printer className="h-3.5 w-3.5" />
+                    <span>Print Preview A4</span>
                   </button>
 
                   <div className="relative flex items-center gap-2" ref={catalogMenuRef}>
@@ -4104,6 +4456,29 @@ export default function App() {
                             title="Scan Sesi Ini"
                           >
                             {sessionScannedCount}
+                          </span>
+                        )}
+                      </button>
+
+                      {/* CLOCK/HISTORY BUTTON FOR RECENT SCANS */}
+                      <button
+                        type="button"
+                        id="catalog_scan_history_btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          playClickSound();
+                          refreshRecentScans();
+                          setIsHistoryOverlayOpen(!isHistoryOverlayOpen);
+                        }}
+                        className={`group relative flex items-center justify-center p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-white/10 hover:border-indigo-500 rounded-xl text-xs font-bold transition-all duration-150 shadow-lg cursor-pointer hover:scale-105 active:scale-95 shrink-0 ${
+                          isHistoryOverlayOpen ? "ring-2 ring-indigo-500/50 bg-indigo-600 border-indigo-500 text-white" : ""
+                        }`}
+                        title="Tampilkan Riwayat Scan (10 Produk Terakhir)"
+                      >
+                        <Icons.History className={`h-4 w-4 ${isHistoryOverlayOpen ? "animate-spin [animation-duration:10s]" : "group-hover:rotate-[-30deg] transition-transform"}`} />
+                        {recentScans.length > 0 && (
+                          <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-rose-500 px-1 text-[9px] font-black text-white border border-slate-900 shadow-md animate-bounce [animation-duration:2.5s] z-10">
+                            {recentScans.length}
                           </span>
                         )}
                       </button>
@@ -4286,7 +4661,7 @@ export default function App() {
                         </div>
                       )}
 
-                      {showRecentTooltip && !isScannerOpen && (
+                      {showRecentTooltip && !isScannerOpen && !isHistoryOverlayOpen && (
                         <div 
                           className="absolute right-0 top-full mt-2 w-72 bg-slate-950/95 border border-white/10 rounded-2xl shadow-2xl z-50 p-4 backdrop-blur-xl animate-fadeIn space-y-3"
                           style={{ zIndex: 9999 }}
@@ -4366,6 +4741,453 @@ export default function App() {
                           )}
                         </div>
                       )}
+
+                      {/* HIGH-FIDELITY OVERLAY FOR 10 RECENT SCANS */}
+                      {isHistoryOverlayOpen && (() => {
+                        const filteredRecentScans = recentScans.filter((item) => {
+                          const prod = item.product || item;
+                          if (!prod) return false;
+                          const q = historySearchQuery.trim().toLowerCase();
+                          if (!q) return true;
+                          return (
+                            (prod.name && prod.name.toLowerCase().includes(q)) ||
+                            (prod.sku && prod.sku.toLowerCase().includes(q)) ||
+                            (prod.category && prod.category.toLowerCase().includes(q))
+                          );
+                        });
+
+                        return (
+                          <div 
+                            className="absolute right-0 top-full mt-2 w-96 bg-slate-950/95 border border-white/10 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.8)] z-50 p-4 backdrop-blur-xl animate-toastIn space-y-3.5 pointer-events-auto"
+                            style={{ zIndex: 9999 }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {/* Header */}
+                            <div className="flex items-center justify-between border-b border-white/5 pb-2.5">
+                              <div className="flex items-center space-x-2">
+                                <div className="p-1.5 bg-indigo-500/10 rounded-lg text-indigo-400 border border-indigo-500/20">
+                                  <Icons.History className="h-4 w-4" />
+                                </div>
+                                <div className="text-left">
+                                  <h4 className="font-extrabold text-xs text-white uppercase tracking-wider">Riwayat Scan</h4>
+                                  <p className="text-[9px] text-slate-500 font-medium">10 produk terakhir yang dipindai</p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                {recentScans.length > 0 && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      id="generate_scan_history_qr_sheet_btn"
+                                      disabled={isGeneratingQrSheet}
+                                      onClick={async () => {
+                                        if (recentScans.length === 0) {
+                                          showToast("Belum ada riwayat produk untuk dicetak.", "error");
+                                          return;
+                                        }
+                                        setIsGeneratingQrSheet(true);
+                                        showToast("Menyiapkan Lembar QR untuk dicetak...", "info");
+                                        try {
+                                          playClickSound();
+                                          const doc = new jsPDF("p", "mm", "a4");
+
+                                          // 1. Draw elegant modern header
+                                          doc.setFont("helvetica", "bold");
+                                          doc.setFontSize(18);
+                                          doc.setTextColor(15, 23, 42); // slate-900
+                                          doc.text("PT BERKAH BINTANG SOLUSINDO", 16, 18);
+
+                                          doc.setFontSize(11);
+                                          doc.setFont("helvetica", "normal");
+                                          doc.setTextColor(79, 70, 229); // indigo-600
+                                          doc.text("LEMBAR KATALOG FISIK (QR CODES SHEET)", 16, 23);
+
+                                          doc.setFontSize(8);
+                                          doc.setTextColor(100, 116, 139); // slate-500
+                                          const nowStr = new Date().toLocaleString("id-ID", {
+                                            dateStyle: "medium",
+                                            timeStyle: "short",
+                                          });
+                                          doc.text(`Waktu Cetak: ${nowStr}`, 16, 28);
+                                          doc.text(`Total: ${recentScans.length} Item`, 194, 28, { align: "right" });
+
+                                          // Divider line
+                                          doc.setDrawColor(79, 70, 229);
+                                          doc.setLineWidth(0.8);
+                                          doc.line(16, 30, 194, 30);
+
+                                          // Convert image URL to Base64 using a Canvas
+                                          const getBase64FromUrl = (url: string): Promise<string> => {
+                                            return new Promise((resolve, reject) => {
+                                              const img = new Image();
+                                              img.crossOrigin = "anonymous";
+                                              img.onload = () => {
+                                                try {
+                                                  const canvas = document.createElement("canvas");
+                                                  canvas.width = img.width;
+                                                  canvas.height = img.height;
+                                                  const ctx = canvas.getContext("2d");
+                                                  if (ctx) {
+                                                    ctx.drawImage(img, 0, 0);
+                                                    resolve(canvas.toDataURL("image/png"));
+                                                  } else {
+                                                    reject(new Error("No 2D context"));
+                                                  }
+                                                } catch (err) {
+                                                  reject(err);
+                                                }
+                                              };
+                                              img.onerror = () => reject(new Error("Load error"));
+                                              img.src = url;
+                                            });
+                                          };
+
+                                          // Load QR code images in parallel with fallbacks
+                                          const qrImages = await Promise.all(
+                                            recentScans.slice(0, 10).map(async (item) => {
+                                              const prod = item.product || item;
+                                              const codeValue = prod.sku || prod.barcode || prod.id || prod.name || "";
+                                              const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(codeValue)}`;
+                                              try {
+                                                const b64 = await getBase64FromUrl(qrUrl);
+                                                return { id: prod.id, base64: b64 };
+                                              } catch {
+                                                return { id: prod.id, base64: null };
+                                              }
+                                            })
+                                          );
+
+                                          // Grid Layout values
+                                          const cardWidth = 56;
+                                          const cardHeight = 52;
+                                          const marginHorizontal = 16;
+                                          const marginVertical = 34;
+                                          const spacingHorizontal = 8;
+                                          const spacingVertical = 6;
+
+                                          recentScans.slice(0, 10).forEach((item, index) => {
+                                            const prod = item.product || item;
+                                            const col = index % 3;
+                                            const row = Math.floor(index / 3);
+                                            const x = marginHorizontal + col * (cardWidth + spacingHorizontal);
+                                            const y = marginVertical + row * (cardHeight + spacingVertical);
+
+                                            // Draw rounded rectangle for tag/card border
+                                            doc.setDrawColor(226, 232, 240); // slate-200
+                                            doc.setLineWidth(0.3);
+                                            doc.setFillColor(248, 250, 252); // slate-50
+                                            doc.roundedRect(x, y, cardWidth, cardHeight, 3, 3, "FD");
+
+                                            // QR Code positioning inside the card
+                                            const qrSize = 28;
+                                            const qrX = x + (cardWidth - qrSize) / 2;
+                                            const qrY = y + 3.5;
+
+                                            const qrObj = qrImages.find((img) => img.id === prod.id);
+                                            if (qrObj && qrObj.base64) {
+                                              doc.addImage(qrObj.base64, "PNG", qrX, qrY, qrSize, qrSize);
+                                            } else {
+                                              // Fallback dotted outline for missing QR
+                                              doc.setDrawColor(203, 213, 225);
+                                              doc.setLineDashPattern([2, 2], 0);
+                                              doc.rect(qrX, qrY, qrSize, qrSize, "S");
+                                              doc.setLineDashPattern([], 0); // reset
+                                              doc.setFont("helvetica", "italic");
+                                              doc.setFontSize(7);
+                                              doc.setTextColor(148, 163, 184);
+                                              doc.text("[ No QR ]", qrX + qrSize / 2, qrY + qrSize / 2 + 1, { align: "center" });
+                                            }
+
+                                            // SKU Code label
+                                            doc.setFont("helvetica", "bold");
+                                            doc.setFontSize(7.5);
+                                            doc.setTextColor(79, 70, 229); // Indigo-600
+                                            doc.text(`SKU: ${prod.sku || "N/A"}`, x + 4, y + 35.5);
+
+                                            // Name text with 2 lines split limit
+                                            doc.setFont("helvetica", "bold");
+                                            doc.setFontSize(8);
+                                            doc.setTextColor(15, 23, 42); // slate-900
+                                            const lines = doc.splitTextToSize(prod.name || "", 48);
+                                            doc.text(lines.slice(0, 2), x + 4, y + 40);
+
+                                            // Category & Price
+                                            doc.setFont("helvetica", "normal");
+                                            doc.setFontSize(7);
+                                            doc.setTextColor(100, 116, 139); // slate-500
+                                            doc.text(prod.category || "Item", x + 4, y + 48.5);
+
+                                            doc.setFont("helvetica", "bold");
+                                            doc.setFontSize(7.5);
+                                            doc.setTextColor(15, 23, 42); // slate-900
+                                            const formattedPrice = `Rp ${(prod.price || 0).toLocaleString("id-ID")}`;
+                                            doc.text(formattedPrice, x + 52, y + 48.5, { align: "right" });
+                                          });
+
+                                          // Bottom footer banner
+                                          doc.setDrawColor(226, 232, 240);
+                                          doc.setLineWidth(0.4);
+                                          doc.line(16, 275, 194, 275);
+
+                                          doc.setFont("helvetica", "normal");
+                                          doc.setFontSize(7.5);
+                                          doc.setTextColor(148, 163, 184);
+                                          doc.text("Lembar katalog fisik ini digenerasi secara dinamis untuk memudahkan pemindaian produk di toko fisik.", 16, 280);
+                                          doc.text("Sistem Kasir & Inventaris BBS - Hak Cipta Terpelihara © PT Berkah Bintang Solusindo", 16, 284);
+
+                                          // Save file
+                                          const safeDate = new Date().toLocaleDateString("id-ID").replace(/\//g, "-");
+                                          doc.save(`BBS_QR_Catalog_Sheet_${safeDate}.pdf`);
+                                          showToast("Berhasil mengunduh Lembar QR Katalog!", "success");
+                                        } catch (err) {
+                                          console.error(err);
+                                          showToast("Gagal mengunduh Lembar QR Katalog.", "error");
+                                        } finally {
+                                          setIsGeneratingQrSheet(false);
+                                        }
+                                      }}
+                                      className={`p-1 rounded-lg transition-colors flex items-center gap-1 cursor-pointer text-[10px] font-bold ${
+                                        isGeneratingQrSheet 
+                                          ? "text-slate-600 bg-slate-900 cursor-not-allowed" 
+                                          : "text-slate-500 hover:text-indigo-400 hover:bg-indigo-500/10"
+                                      }`}
+                                      title="Cetak Lembar Katalog QR PDF"
+                                    >
+                                      <Icons.Printer className={`h-3.5 w-3.5 ${isGeneratingQrSheet ? "animate-pulse text-indigo-400" : ""}`} />
+                                      <span>{isGeneratingQrSheet ? "Cetak..." : "Cetak QR"}</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      id="download_scan_history_csv_btn"
+                                      onClick={() => {
+                                        try {
+                                          playClickSound();
+                                          const csvHeaders = ["No", "Nama Produk", "SKU", "Kategori", "Harga (Rp)", "Waktu Scan"];
+                                          const csvRows = recentScans.map((item, index) => {
+                                            const prod = item.product || item;
+                                            const name = `"${(prod.name || "").replace(/"/g, '""')}"`;
+                                            const sku = `"${(prod.sku || "").replace(/"/g, '""')}"`;
+                                            const category = `"${(prod.category || "").replace(/"/g, '""')}"`;
+                                            const price = prod.price || 0;
+                                            const time = item.scannedAt 
+                                              ? new Date(item.scannedAt).toLocaleString("id-ID")
+                                              : new Date().toLocaleString("id-ID");
+                                            return [index + 1, name, sku, category, price, `"${time}"`].join(",");
+                                          });
+                                          const csvContent = "\uFEFF" + [csvHeaders.join(","), ...csvRows].join("\r\n");
+                                          const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+                                          const url = URL.createObjectURL(blob);
+                                          const link = document.createElement("a");
+                                          link.setAttribute("href", url);
+                                          link.setAttribute("download", `BBS_Scan_History_${new Date().toLocaleDateString("id-ID").replace(/\//g, "-")}.csv`);
+                                          document.body.appendChild(link);
+                                          link.click();
+                                          document.body.removeChild(link);
+                                          showToast("Berhasil mengunduh CSV riwayat scan!", "success");
+                                        } catch (err) {
+                                          console.error(err);
+                                          showToast("Gagal mengunduh CSV.", "error");
+                                        }
+                                      }}
+                                      className="p-1 text-slate-500 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-colors flex items-center gap-1 cursor-pointer text-[10px] font-bold"
+                                      title="Unduh CSV Riwayat Scan"
+                                    >
+                                      <Icons.Download className="h-3.5 w-3.5" />
+                                      <span>CSV</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        try {
+                                          localStorage.removeItem("bbs_recent_scans");
+                                          setRecentScans([]);
+                                          setHistorySearchQuery("");
+                                          showToast("Riwayat pemindaian berhasil dibersihkan.", "info");
+                                        } catch {}
+                                      }}
+                                      className="p-1 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors flex items-center gap-1 cursor-pointer text-[10px] font-bold"
+                                      title="Bersihkan Semua Riwayat"
+                                    >
+                                      <Icons.Trash2 className="h-3.5 w-3.5" />
+                                      <span>Hapus</span>
+                                    </button>
+                                  </>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setIsHistoryOverlayOpen(false);
+                                    setHistorySearchQuery("");
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors cursor-pointer"
+                                  title="Tutup"
+                                >
+                                  <Icons.X className="h-4 w-4" />
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Search Input Filter */}
+                            {recentScans.length > 0 && (
+                              <div className="relative">
+                                <span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-400">
+                                  <Icons.Search className="h-3.5 w-3.5" />
+                                </span>
+                                <input
+                                  type="text"
+                                  placeholder="Cari nama, SKU, atau kategori..."
+                                  value={historySearchQuery}
+                                  onChange={(e) => setHistorySearchQuery(e.target.value)}
+                                  className="w-full bg-slate-900 border border-white/10 rounded-xl py-2 pl-9 pr-8 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+                                />
+                                {historySearchQuery && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setHistorySearchQuery("")}
+                                    className="absolute inset-y-0 right-0 flex items-center pr-2.5 text-slate-500 hover:text-slate-300 transition-colors"
+                                  >
+                                    <Icons.X className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Content */}
+                            {recentScans.length > 0 ? (
+                              filteredRecentScans.length > 0 ? (
+                                <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
+                                  {filteredRecentScans.slice(0, 10).map((item, index) => {
+                                    const prod = item.product || item;
+                                    return (
+                                      <div 
+                                        key={`${prod.id}-${index}`}
+                                        className="p-3 bg-slate-900/60 border border-white/5 hover:border-indigo-500/30 rounded-xl transition-all flex flex-col space-y-2 group"
+                                      >
+                                        <div className="flex items-start gap-2.5">
+                                          {prod.image ? (
+                                            <img src={prod.image} className="w-9 h-9 object-contain bg-white rounded-lg p-0.5 shrink-0" referrerPolicy="no-referrer" />
+                                          ) : (
+                                            <div className="w-9 h-9 bg-indigo-500/10 text-indigo-400 rounded-lg flex items-center justify-center font-black text-[10px] shrink-0 font-sans">
+                                              {prod.sku ? prod.sku.slice(-3) : "BBS"}
+                                            </div>
+                                          )}
+                                          <div className="min-w-0 flex-1 text-left">
+                                            <h5 className="font-bold text-xs text-white truncate leading-tight group-hover:text-indigo-300 transition-colors">{prod.name}</h5>
+                                            <div className="flex items-center gap-1.5 mt-1">
+                                              <span className="px-1 py-0.5 bg-slate-950 text-[8px] text-indigo-400 border border-white/5 font-mono rounded">
+                                                SKU: {prod.sku || "N/A"}
+                                              </span>
+                                              <span className="text-[9px] text-slate-400 truncate font-medium">
+                                                {prod.category || "Item"}
+                                              </span>
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        {/* Action row */}
+                                        <div className="flex items-center justify-between pt-2 border-t border-white/5">
+                                          <span className="text-xs font-black text-indigo-400 font-mono">
+                                            Rp {prod.price ? prod.price.toLocaleString("id-ID") : "0"}
+                                          </span>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              addToCart(prod);
+                                              incrementSessionScannedCount();
+                                              incrementTotalScannedCount();
+                                              setScannedSuccessToast({ visible: true, productName: prod.name });
+                                              showToast(`"${prod.name}" ditambahkan ke keranjang!`, "success");
+                                            }}
+                                            className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-[10px] rounded-lg transition-all duration-300 cursor-pointer flex items-center gap-1 hover:scale-[1.02] active:scale-95 shadow-md shadow-indigo-600/10"
+                                          >
+                                            <Icons.ShoppingCart className="h-3 w-3" />
+                                            <span>+ Re-add to Cart</span>
+                                          </button>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <div className="flex flex-col items-center justify-center py-8 px-4 text-center space-y-2.5">
+                                  <div className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-slate-500">
+                                    <Icons.Search className="h-5 w-5" />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <p className="text-xs text-white font-extrabold uppercase tracking-wider">Tidak Ada Hasil</p>
+                                    <p className="text-[10px] text-slate-500 leading-relaxed max-w-[200px] mx-auto">
+                                      Tidak ditemukan produk dengan kata kunci "{historySearchQuery}" di riwayat scan.
+                                    </p>
+                                  </div>
+                                </div>
+                              )
+                            ) : (
+                              <div className="flex flex-col items-center justify-center py-8 px-4 text-center space-y-2.5">
+                                <div className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-slate-500 animate-pulse">
+                                  <Icons.History className="h-5 w-5" />
+                                </div>
+                                <div className="space-y-1">
+                                  <p className="text-xs text-white font-extrabold uppercase tracking-wider">Belum Ada Riwayat</p>
+                                  <p className="text-[10px] text-slate-500 leading-relaxed max-w-[200px] mx-auto">
+                                    Produk yang dipindai akan terekam otomatis di sini untuk ditambahkan kembali secara cepat.
+                                  </p>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+
+                      {/* INFORMATIVE SCAN SUCCESS TOAST */}
+                      {scannedSuccessToast && scannedSuccessToast.visible && (
+                        <div 
+                          className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 w-80 bg-slate-900 border-2 border-emerald-500/50 rounded-2xl shadow-[0_15px_30px_rgba(16,185,129,0.35),0_0_20px_rgba(16,185,129,0.15)] p-4 backdrop-blur-xl animate-toastIn z-[9999] pointer-events-auto"
+                          id="scan_success_toast_notification"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {/* Decorative green pulsing dot in the corner */}
+                          <div className="absolute top-2.5 right-2.5 flex h-2 w-2">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                          </div>
+
+                          <div className="flex items-start gap-3">
+                            <div className="p-2 bg-emerald-500/10 rounded-xl text-emerald-400 border border-emerald-500/20 shrink-0 mt-0.5 shadow-sm shadow-emerald-500/5">
+                              <Icons.CheckCircle className="h-4.5 w-4.5" />
+                            </div>
+                            <div className="flex-1 min-w-0 text-left">
+                              <div className="text-[10px] text-emerald-400 font-extrabold uppercase tracking-wider mb-0.5">
+                                Scan Berhasil!
+                              </div>
+                              <p className="text-xs text-white font-extrabold leading-tight line-clamp-2">
+                                {scannedSuccessToast.productName}
+                              </p>
+                              <p className="text-[10px] text-slate-400 mt-1">
+                                Berhasil ditambahkan ke keranjang RFQ.
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                                setScannedSuccessToast(null);
+                              }}
+                              className="text-slate-400 hover:text-white p-1 hover:bg-white/5 rounded-lg transition-colors cursor-pointer shrink-0"
+                              title="Tutup Notifikasi"
+                            >
+                              <Icons.X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+
+                          {/* Little tooltip arrow pointing down at the button */}
+                          <div className="absolute top-full left-1/2 -translate-x-1/2 border-[7px] border-transparent border-t-slate-900 filter drop-shadow-[0_2px_4px_rgba(16,185,129,0.2)]" />
+                          {/* Double border for the arrow using a nested layer */}
+                          <div className="absolute top-[calc(100%+2px)] left-1/2 -translate-x-1/2 border-[7px] border-transparent border-t-emerald-500/50" style={{ zIndex: -1 }} />
+                        </div>
+                      )}
                     </div>
 
                     {isCatalogMenuOpen && (
@@ -4392,6 +5214,20 @@ export default function App() {
                         </button>
                         <button
                           onClick={() => {
+                            setCustomQrIncludeCategory(catalogCategory !== "Semua");
+                            setCustomQrIncludeSearch(catalogSearch !== "");
+                            setCustomQrIncludeSort(catalogSort !== "none");
+                            setShowCustomCatalogQrModal(true);
+                            setIsCatalogMenuOpen(false);
+                          }}
+                          className="w-full flex items-center space-x-2.5 px-4 py-2.5 text-left text-xs font-semibold text-slate-200 hover:bg-white/5 hover:text-white transition-colors border-t border-white/5 cursor-pointer"
+                          id="generate_custom_catalog_qr_btn"
+                        >
+                          <QrCode className="h-4 w-4 text-cyan-400" />
+                          <span>Generate QR Code Filter</span>
+                        </button>
+                        <button
+                          onClick={() => {
                             setShowQrCardModal(true);
                             setIsCatalogMenuOpen(false);
                           }}
@@ -4410,6 +5246,18 @@ export default function App() {
                         >
                           <Icons.Eye className="h-4 w-4 text-indigo-400" />
                           <span>Preview PDF Katalog</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            setCatalogPrintSelectedIds(catalogProducts.map(p => p.id));
+                            setShowCatalogPrintModal(true);
+                            setIsCatalogMenuOpen(false);
+                            try { playClickSound(); } catch {}
+                          }}
+                          className="w-full flex items-center space-x-2.5 px-4 py-2.5 text-left text-xs font-semibold text-slate-200 hover:bg-white/5 hover:text-white transition-colors border-t border-white/5 cursor-pointer"
+                        >
+                          <Icons.Printer className="h-4 w-4 text-emerald-400 animate-pulse" />
+                          <span>Print Preview A4 (Kop Resmi)</span>
                         </button>
 
                         {/* Settings & Toggle Panel */}
@@ -4443,12 +5291,27 @@ export default function App() {
                     id="print_barcode_labels_btn"
                     title="Cetak Label Barcode Produk"
                   >
-                    <Printer className="h-3.5 w-3.5 text-emerald-400" />
+                    <Icons.Printer className="h-3.5 w-3.5 text-emerald-400" />
                     <span>Print Barcodes</span>
                   </button>
 
+                  {/* Print A4 Catalog Button */}
+                  <button
+                    onClick={() => {
+                      setCatalogPrintSelectedIds(catalogProducts.map(p => p.id));
+                      setShowCatalogPrintModal(true);
+                      try { playClickSound(); } catch {}
+                    }}
+                    className="flex items-center justify-center space-x-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-indigo-300 hover:text-white border border-white/10 rounded-xl text-xs font-bold transition-all shadow-lg active:scale-95 cursor-pointer whitespace-nowrap"
+                    id="print_catalog_a4_btn"
+                    title="Cetak Katalog Resmi A4 BBS"
+                  >
+                    <Icons.Printer className="h-3.5 w-3.5 text-indigo-400" />
+                    <span>Print A4 Catalog</span>
+                  </button>
+
                   <div className="relative">
-                    <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                    <Icons.Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                     <input 
                       type="text" 
                       placeholder="Cari barang..." 
@@ -4456,6 +5319,26 @@ export default function App() {
                       onChange={(e) => setCatalogSearch(e.target.value)}
                       className="pl-10 pr-4 py-2 bg-slate-900/60 border border-white/10 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 w-full sm:w-56 text-slate-100"
                     />
+                  </div>
+
+                  <div className="relative">
+                    <Icons.Hash className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                    <input 
+                      type="text" 
+                      placeholder="Cari SKU..." 
+                      value={catalogSkuSearch}
+                      onChange={(e) => setCatalogSkuSearch(e.target.value)}
+                      className="pl-10 pr-10 py-2 bg-slate-900/60 border border-white/10 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 w-full sm:w-44 text-slate-100 placeholder-slate-500"
+                    />
+                    {catalogSkuSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setCatalogSkuSearch("")}
+                        className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                      >
+                        <Icons.X className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </div>
 
                   <div className="relative" ref={sortDropdownRef}>
@@ -4618,11 +5501,12 @@ export default function App() {
                     ))}
                   </div>
 
-                  {(catalogSearch !== "" || catalogCategory !== "Semua" || catalogSort !== "none") && (
+                  {(catalogSearch !== "" || catalogSkuSearch !== "" || catalogCategory !== "Semua" || catalogSort !== "none") && (
                     <button
                       type="button"
                       onClick={() => {
                         setCatalogSearch("");
+                        setCatalogSkuSearch("");
                         setCatalogCategory("Semua");
                         setCatalogSort("none");
                         showToast("Filter dan pencarian katalog telah di-reset ke default.", "success");
@@ -6916,11 +7800,51 @@ export default function App() {
                           {/* Status Dropdown Filter Section */}
                           <div className="flex flex-wrap items-center gap-2 md:border-l md:border-white/10 md:pl-4">
                             <div className="flex items-center space-x-2 text-slate-300 font-semibold shrink-0">
-                              <Icons.Filter className="h-4 w-4 text-emerald-400" />
+                              <motion.div
+                                animate={isProcessingFilter ? { rotate: 360 } : { rotate: adminRfqStatuses.length * 180 }}
+                                transition={isProcessingFilter ? { repeat: Infinity, duration: 1, ease: "linear" } : { type: "spring", stiffness: 180, damping: 14 }}
+                                className="inline-flex items-center justify-center"
+                              >
+                                <Icons.Filter className="h-4 w-4 text-emerald-400" />
+                              </motion.div>
                               <span>Status RFQ:</span>
                             </div>
                             <div className="flex flex-col gap-1.5">
-                              <div className="relative flex flex-col gap-2 p-1 rounded-xl" ref={statusFilterRef} id="rfq_status_filter_container">
+                              <motion.div
+                                className="relative flex flex-col gap-2 p-1 rounded-xl"
+                                ref={statusFilterRef}
+                                id="rfq_status_filter_container"
+                                layout
+                                transition={{ type: "spring", stiffness: 300, damping: 26 }}
+                              >
+                              {/* Dynamic Animated Numerical Badge for total matching RFQs */}
+                              <motion.div
+                                key={`matching-rfq-count-badge-${filteredRfqsForAdmin.length}`}
+                                className="absolute -top-3.5 -right-2.5 bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-400/30 rounded-full px-2 py-0.5 text-[9px] font-extrabold tracking-wide shadow-md shadow-slate-950/80 z-30 flex items-center gap-1 cursor-default select-none transition-colors"
+                                initial={{ scale: 0.4, opacity: 0, y: -4 }}
+                                animate={{ 
+                                  scale: [0.4, 1.25, 0.95, 1], 
+                                  opacity: 1, 
+                                  y: 0,
+                                  boxShadow: [
+                                    "0 0 0px rgba(16, 185, 129, 0)",
+                                    "0 0 10px 2px rgba(16, 185, 129, 0.5)",
+                                    "0 0 0px rgba(16, 185, 129, 0)"
+                                  ]
+                                }}
+                                whileHover={{ scale: 1.15 }}
+                                transition={{ 
+                                  type: "spring",
+                                  stiffness: 450,
+                                  damping: 14,
+                                  boxShadow: { duration: 0.8 }
+                                }}
+                                title="Jumlah total RFQ yang cocok dengan semua filter aktif saat ini"
+                              >
+                                <Icons.FileText className="h-3 w-3 text-emerald-100" />
+                                <span><AnimatedCounter value={filteredRfqsForAdmin.length} /> Cocok</span>
+                              </motion.div>
+
                               {/* Glowing border animation overlay when active filters are detected */}
                               {(adminRfqStatuses.length > 0 || !!adminRfqSearch || !!adminRfqStartDate || !!adminRfqEndDate || !!adminRfqClientFilter || !!statusKeywordSearch || !!adminRfqCategoryFilter || !!adminRfqSubCategoryFilter || !!adminRfqPriorityFilter || showOnlyMyClients) && (
                                 <motion.div
@@ -6948,6 +7872,60 @@ export default function App() {
                                   }}
                                 />
                               )}
+
+                              {/* High-intensity reactive border pulse that fires on visible RFQ list count change */}
+                              <motion.div
+                                key={`border-pulse-count-${filteredRfqsForAdmin.length}`}
+                                className="absolute inset-0 rounded-xl pointer-events-none z-10 border"
+                                initial={{
+                                  opacity: 0.1,
+                                  scale: 0.99,
+                                  borderColor: "rgba(16, 185, 129, 0)",
+                                  boxShadow: "0 0 0px rgba(16, 185, 129, 0)"
+                                }}
+                                animate={{
+                                  opacity: [0.1, 1, 0.5, 0.1],
+                                  scale: [0.99, 1.012, 1.002, 1],
+                                  borderColor: [
+                                    "rgba(16, 185, 129, 0.1)",
+                                    "rgba(16, 185, 129, 0.95)",
+                                    "rgba(99, 102, 241, 0.5)",
+                                    "rgba(99, 102, 241, 0.1)"
+                                  ],
+                                  boxShadow: [
+                                    "0 0 0px 0px rgba(16, 185, 129, 0)",
+                                    "0 0 18px 4px rgba(16, 185, 129, 0.75)",
+                                    "0 0 6px 1px rgba(99, 102, 241, 0.35)",
+                                    "0 0 0px 0px rgba(16, 185, 129, 0)"
+                                  ]
+                                }}
+                                transition={{
+                                  duration: 1.1,
+                                  ease: "easeOut"
+                                }}
+                              />
+
+                              {/* Subtle radial gradient background pulse that triggers on change of visible RFQ count */}
+                              <motion.div
+                                key={`bg-pulse-count-${filteredRfqsForAdmin.length}`}
+                                className="absolute inset-0 rounded-xl pointer-events-none z-0"
+                                initial={{
+                                  background: "radial-gradient(circle, rgba(16, 185, 129, 0) 0%, rgba(99, 102, 241, 0) 100%)",
+                                  opacity: 0,
+                                }}
+                                animate={{
+                                  background: [
+                                    "radial-gradient(circle, rgba(16, 185, 129, 0) 0%, rgba(99, 102, 241, 0) 100%)",
+                                    "radial-gradient(circle, rgba(16, 185, 129, 0.15) 15%, rgba(99, 102, 241, 0.08) 70%, rgba(0, 0, 0, 0) 100%)",
+                                    "radial-gradient(circle, rgba(16, 185, 129, 0) 0%, rgba(99, 102, 241, 0) 100%)"
+                                  ],
+                                  opacity: [0, 1, 0.6, 0]
+                                }}
+                                transition={{
+                                  duration: 1.2,
+                                  ease: "easeInOut"
+                                }}
+                              />
 
                               {/* Controls row container */}
                               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-wrap z-10">
@@ -7000,34 +7978,49 @@ export default function App() {
                               {/* Dropdown Kategori Klien (Perusahaan, Pemerintah, Pendidikan, UMKM, Retail) */}
                               <div className="flex items-center gap-1.5 z-10 shrink-0">
                                 <div className="relative">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setIsAdminRfqCategoryDropdownOpen(!isAdminRfqCategoryDropdownOpen);
-                                      setIsAdminRfqSubCategoryDropdownOpen(false);
-                                      setIsAdminRfqSortDropdownOpen(false);
-                                      setIsStatusFilterOpen(false);
-                                    }}
-                                    className="flex items-center gap-1.5 bg-slate-950 border border-white/10 hover:border-indigo-500/40 rounded-xl px-3 py-1.5 text-xs text-slate-200 font-semibold cursor-pointer transition-all hover:bg-slate-900"
-                                    id="rfq_category_filter_button"
-                                  >
-                                    <Icons.Tags className="h-3.5 w-3.5 text-indigo-400" />
-                                    <span>
-                                      {adminRfqCategoryFilter === "" && "Kategori: Semua"}
-                                      {adminRfqCategoryFilter === "perusahaan" && "🏢 Perusahaan"}
-                                      {adminRfqCategoryFilter === "pemerintah" && "🏛️ Pemerintah"}
-                                      {adminRfqCategoryFilter === "pendidikan" && "🎓 Pendidikan"}
-                                      {adminRfqCategoryFilter === "umkm" && "🏪 UMKM"}
-                                      {adminRfqCategoryFilter === "retail" && "👤 Retail"}
-                                    </span>
-                                    <ChevronDown className={`h-3 w-3 text-slate-400 transition-transform duration-200 ${isAdminRfqCategoryDropdownOpen ? "rotate-180 text-indigo-400" : ""}`} />
-                                  </button>
+                                  {(() => {
+                                    const urgentCount = filteredRfqsForAdmin.filter((rfq) => (rfq.priority || "medium") === "urgent").length;
+                                    const highCount = filteredRfqsForAdmin.filter((rfq) => (rfq.priority || "medium") === "high").length;
+                                    
+                                    const borderClasses = urgentCount > 0
+                                      ? "border-rose-500 hover:border-rose-400 ring-1 ring-rose-500/20 shadow-[0_0_10px_rgba(244,63,94,0.15)]"
+                                      : highCount > 0
+                                      ? "border-amber-500 hover:border-amber-400 ring-1 ring-amber-500/20 shadow-[0_0_10px_rgba(245,158,11,0.15)]"
+                                      : "border-indigo-500/40 hover:border-indigo-400/80 shadow-[0_0_10px_rgba(99,102,241,0.05)]";
+
+                                    return (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setIsAdminRfqCategoryDropdownOpen(!isAdminRfqCategoryDropdownOpen);
+                                          setIsAdminRfqSubCategoryDropdownOpen(false);
+                                          setIsAdminRfqSortDropdownOpen(false);
+                                          setIsStatusFilterOpen(false);
+                                        }}
+                                        className={`flex items-center gap-1.5 bg-slate-950 border rounded-xl px-3 py-1.5 text-xs text-slate-200 font-semibold cursor-pointer transition-all hover:bg-slate-900 ${borderClasses}`}
+                                        id="rfq_category_filter_button"
+                                      >
+                                        <Icons.Tags className="h-3.5 w-3.5 text-indigo-400" />
+                                        <span>
+                                          {adminRfqCategoryFilter === "" && "Kategori: Semua"}
+                                          {adminRfqCategoryFilter === "perusahaan" && "🏢 Perusahaan"}
+                                          {adminRfqCategoryFilter === "pemerintah" && "🏛️ Pemerintah"}
+                                          {adminRfqCategoryFilter === "pendidikan" && "🎓 Pendidikan"}
+                                          {adminRfqCategoryFilter === "umkm" && "🏪 UMKM"}
+                                          {adminRfqCategoryFilter === "retail" && "👤 Retail"}
+                                          {adminRfqSortBy === "priority-desc" && " (⚡ Prioritas)"}
+                                        </span>
+                                        <ChevronDown className={`h-3 w-3 text-slate-400 transition-transform duration-200 ${isAdminRfqCategoryDropdownOpen ? "rotate-180 text-indigo-400" : ""}`} />
+                                      </button>
+                                    );
+                                  })()}
 
                                   {isAdminRfqCategoryDropdownOpen && (
                                     <div 
-                                      className="absolute top-full left-0 mt-1.5 w-[200px] bg-slate-950 border border-white/10 rounded-xl shadow-2xl z-50 p-1 backdrop-blur-md"
+                                      className="absolute top-full left-0 mt-1.5 w-[220px] bg-slate-950 border border-white/10 rounded-xl shadow-2xl z-50 p-1 backdrop-blur-md"
                                       onClick={(e) => e.stopPropagation()}
                                     >
+                                      <div className="text-[9px] font-bold text-slate-500 px-2 py-1 uppercase tracking-wider">Filter Kategori</div>
                                       {[
                                         { value: "", label: "Semua Kategori" },
                                         { value: "perusahaan", label: "🏢 Perusahaan / Corp" },
@@ -7056,6 +8049,85 @@ export default function App() {
                                           </button>
                                         );
                                       })}
+                                      
+                                      <div className="my-1 border-t border-white/5" />
+                                      <div className="text-[9px] font-bold text-slate-500 px-2 py-1 uppercase tracking-wider">Tindakan Cepat</div>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setAdminRfqSortBy("priority-desc");
+                                          setIsAdminRfqCategoryDropdownOpen(false);
+                                          try {
+                                            playClickSound();
+                                          } catch {}
+                                        }}
+                                        className={`flex items-center justify-between w-full px-2.5 py-1.5 text-[11px] font-semibold rounded-lg text-left transition-all ${
+                                          adminRfqSortBy === "priority-desc"
+                                            ? "bg-amber-500/10 text-amber-300 border border-amber-500/20"
+                                            : "text-amber-400/80 hover:text-amber-300 hover:bg-slate-900 border border-transparent"
+                                        }`}
+                                      >
+                                        <span className="flex items-center gap-1.5">
+                                          <Icons.AlertTriangle className="h-3 w-3 text-amber-500 shrink-0" />
+                                          Sortir Berdasarkan Prioritas
+                                        </span>
+                                        {adminRfqSortBy === "priority-desc" && <Icons.Check className="h-3 w-3 text-amber-400" />}
+                                      </button>
+
+                                      <div className="my-1 border-t border-white/5" />
+                                      <div className="text-[9px] font-bold text-slate-500 px-2 py-1 uppercase tracking-wider">Urgensi (Filter)</div>
+                                      {[
+                                        { value: "low", label: "Prioritas: Low", color: "text-slate-400", icon: <Icons.Circle className="h-3 w-3 text-slate-500 fill-slate-500/20 shrink-0" />, activeBg: "bg-slate-500/10 text-slate-300 border border-slate-500/20", dotClass: "bg-slate-400 border border-slate-300/20" },
+                                        { value: "medium", label: "Prioritas: Medium", color: "text-indigo-400", icon: <Icons.AlertCircle className="h-3 w-3 text-indigo-400 shrink-0" />, activeBg: "bg-indigo-500/10 text-indigo-300 border border-indigo-500/20", dotClass: "bg-indigo-500 border border-indigo-400/30" },
+                                        { value: "high", label: "Prioritas: High", color: "text-amber-400", icon: <Icons.AlertTriangle className="h-3 w-3 text-amber-400 shrink-0" />, activeBg: "bg-amber-500/10 text-amber-300 border border-amber-500/20", dotClass: "bg-amber-500 border border-amber-400/30" },
+                                        { value: "urgent", label: "Prioritas: Urgent", color: "text-rose-400", icon: <Icons.Flame className="h-3 w-3 text-rose-400 fill-rose-400/10 animate-pulse shrink-0" />, activeBg: "bg-rose-500/10 text-rose-300 border border-rose-500/20 animate-pulse", dotClass: "bg-rose-500 border border-rose-400/30 animate-pulse ring-2 ring-rose-500/20" }
+                                      ].map((prio) => {
+                                        const isSelected = adminRfqPriorityFilter === prio.value;
+                                        return (
+                                          <button
+                                            key={prio.value}
+                                            type="button"
+                                            onClick={() => {
+                                              setAdminRfqPriorityFilter(isSelected ? "" : prio.value);
+                                              setIsAdminRfqCategoryDropdownOpen(false);
+                                              try {
+                                                playClickSound();
+                                              } catch {}
+                                            }}
+                                            className={`flex items-center justify-between w-full px-2.5 py-1.5 text-[11px] font-semibold rounded-lg text-left transition-all cursor-pointer ${
+                                              isSelected
+                                                ? prio.activeBg
+                                                : "text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-transparent"
+                                            }`}
+                                          >
+                                            <span className="flex items-center gap-2">
+                                              {prio.icon}
+                                              <span className={isSelected ? "" : prio.color}>{prio.label}</span>
+                                              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${prio.dotClass}`} />
+                                            </span>
+                                            {isSelected && <Icons.Check className="h-3 w-3 text-indigo-400" />}
+                                          </button>
+                                        );
+                                      })}
+
+                                      <div className="my-1 border-t border-white/5" />
+                                      <div className="text-[9px] font-bold text-slate-500 px-2 py-1 uppercase tracking-wider">Tracking Fisik</div>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setIsAdminRfqCategoryDropdownOpen(false);
+                                          setShowBulkQrModal(true);
+                                          try {
+                                            playClickSound();
+                                          } catch {}
+                                        }}
+                                        className="flex items-center justify-between w-full px-2.5 py-1.5 text-[11px] font-semibold rounded-lg text-left transition-all text-indigo-400 hover:text-indigo-300 hover:bg-slate-900 border border-transparent cursor-pointer"
+                                      >
+                                        <span className="flex items-center gap-1.5">
+                                          <Icons.QrCode className="h-3 w-3 text-indigo-400 shrink-0" />
+                                          Lembar QR Masal ({filteredRfqsForAdmin.length})
+                                        </span>
+                                      </button>
                                     </div>
                                   )}
                                 </div>
@@ -7067,6 +8139,23 @@ export default function App() {
                                     title="Hapus Filter Kategori"
                                   >
                                     <X className="h-3 w-3" />
+                                  </button>
+                                )}
+                                {filteredRfqsForAdmin.length > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setShowBulkQrModal(true);
+                                      try {
+                                        playClickSound();
+                                      } catch {}
+                                    }}
+                                    className="px-2.5 py-1.5 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 hover:text-indigo-300 border border-indigo-500/20 rounded-xl font-bold transition-all text-xs flex items-center gap-1.5 cursor-pointer ml-1"
+                                    title="Cetak Lembar QR Code Masal"
+                                    id="rfq_bulk_qr_button"
+                                  >
+                                    <Icons.QrCode className="h-3.5 w-3.5" />
+                                    <span>QR Masal ({filteredRfqsForAdmin.length})</span>
                                   </button>
                                 )}
                               </div>
@@ -7159,12 +8248,12 @@ export default function App() {
                                     id="rfq_priority_filter_button"
                                   >
                                     <Icons.Activity className="h-3.5 w-3.5 text-rose-400" />
-                                    <span>
+                                    <span className="flex items-center gap-1">
                                       {adminRfqPriorityFilter === "" && "Prioritas: Semua"}
-                                      {adminRfqPriorityFilter === "low" && "⚡ Low"}
-                                      {adminRfqPriorityFilter === "medium" && "⚡ Medium"}
-                                      {adminRfqPriorityFilter === "high" && "⚡ High"}
-                                      {adminRfqPriorityFilter === "urgent" && "🚨 Urgent"}
+                                      {adminRfqPriorityFilter === "low" && <span className="flex items-center gap-1 text-slate-400"><Icons.Circle className="h-2.5 w-2.5 text-slate-500 fill-slate-500/20" /> Low</span>}
+                                      {adminRfqPriorityFilter === "medium" && <span className="flex items-center gap-1 text-indigo-400"><Icons.AlertCircle className="h-2.5 w-2.5 text-indigo-400" /> Medium</span>}
+                                      {adminRfqPriorityFilter === "high" && <span className="flex items-center gap-1 text-amber-400"><Icons.AlertTriangle className="h-2.5 w-2.5 text-amber-400" /> High</span>}
+                                      {adminRfqPriorityFilter === "urgent" && <span className="flex items-center gap-1 text-rose-400 animate-pulse"><Icons.Flame className="h-2.5 w-2.5 text-rose-500 fill-rose-500/10 animate-pulse" /> Urgent</span>}
                                     </span>
                                     <ChevronDown className={`h-3 w-3 text-slate-400 transition-transform duration-200 ${isAdminRfqPriorityDropdownOpen ? "rotate-180 text-rose-400" : ""}`} />
                                   </button>
@@ -7175,11 +8264,11 @@ export default function App() {
                                       onClick={(e) => e.stopPropagation()}
                                     >
                                       {[
-                                        { value: "", label: "Semua Prioritas" },
-                                        { value: "low", label: "⚡ Low" },
-                                        { value: "medium", label: "⚡ Medium" },
-                                        { value: "high", label: "⚡ High" },
-                                        { value: "urgent", label: "🚨 Urgent" }
+                                        { value: "", label: "Semua Prioritas", icon: <Icons.Activity className="h-3 w-3 text-slate-400 shrink-0" />, color: "text-slate-400", activeBg: "bg-indigo-600/25 text-indigo-300 border border-indigo-500/20", dotClass: "bg-transparent border border-transparent" },
+                                        { value: "low", label: "Prioritas: Low", icon: <Icons.Circle className="h-3 w-3 text-slate-500 fill-slate-500/20 shrink-0" />, color: "text-slate-400", activeBg: "bg-slate-500/10 text-slate-300 border border-slate-500/20", dotClass: "bg-slate-400 border border-slate-300/20" },
+                                        { value: "medium", label: "Prioritas: Medium", icon: <Icons.AlertCircle className="h-3 w-3 text-indigo-400 shrink-0" />, color: "text-indigo-400", activeBg: "bg-indigo-500/10 text-indigo-300 border border-indigo-500/20", dotClass: "bg-indigo-500 border border-indigo-400/30" },
+                                        { value: "high", label: "Prioritas: High", icon: <Icons.AlertTriangle className="h-3 w-3 text-amber-400 shrink-0" />, color: "text-amber-400", activeBg: "bg-amber-500/10 text-amber-300 border border-amber-500/20", dotClass: "bg-amber-500 border border-amber-400/30" },
+                                        { value: "urgent", label: "Prioritas: Urgent", icon: <Icons.Flame className="h-3 w-3 text-rose-400 fill-rose-400/10 animate-pulse shrink-0" />, color: "text-rose-400", activeBg: "bg-rose-500/10 text-rose-300 border border-rose-500/20 animate-pulse", dotClass: "bg-rose-500 border border-rose-400/30 animate-pulse ring-2 ring-rose-500/20" }
                                       ].map((opt) => {
                                         const isSelected = adminRfqPriorityFilter === opt.value;
                                         return (
@@ -7190,13 +8279,17 @@ export default function App() {
                                               setAdminRfqPriorityFilter(opt.value);
                                               setIsAdminRfqPriorityDropdownOpen(false);
                                             }}
-                                            className={`flex items-center justify-between w-full px-2.5 py-1.5 text-[11px] font-semibold rounded-lg text-left transition-all ${
+                                            className={`flex items-center justify-between w-full px-2.5 py-1.5 text-[11px] font-semibold rounded-lg text-left transition-all cursor-pointer ${
                                               isSelected 
-                                                ? "bg-indigo-600/25 text-indigo-300 border border-indigo-500/20"
+                                                ? opt.activeBg
                                                 : "text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-transparent"
                                             }`}
                                           >
-                                            <span>{opt.label}</span>
+                                            <span className="flex items-center gap-2">
+                                              {opt.icon}
+                                              <span className={isSelected ? "" : opt.color}>{opt.label}</span>
+                                              {opt.value && <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${opt.dotClass}`} />}
+                                            </span>
                                             {isSelected && <Icons.Check className="h-3 w-3 text-indigo-400" />}
                                           </button>
                                         );
@@ -8512,14 +9605,69 @@ export default function App() {
                                     return (
                                       <div
                                         key={`summary-${item.value}`}
-                                        className={`flex items-center justify-between gap-2 px-2 py-1 rounded-lg text-[10px] font-bold transition-all ${bgBorderClass}`}
+                                        draggable="true"
+                                        onDragStart={(e) => {
+                                          setDraggingStatus(item.value);
+                                          e.dataTransfer.setData("text/plain", item.value);
+                                          e.dataTransfer.effectAllowed = "move";
+                                        }}
+                                        onDragEnd={() => {
+                                          setDraggingStatus(null);
+                                        }}
+                                        onDragOver={(e) => {
+                                          e.preventDefault();
+                                        }}
+                                        onDragEnter={(e) => {
+                                          e.preventDefault();
+                                          e.currentTarget.classList.add("bg-indigo-950/45", "border-indigo-500/60", "scale-105");
+                                        }}
+                                        onDragLeave={(e) => {
+                                          e.currentTarget.classList.remove("bg-indigo-950/45", "border-indigo-500/60", "scale-105");
+                                        }}
+                                        onDrop={(e) => {
+                                          e.preventDefault();
+                                          e.currentTarget.classList.remove("bg-indigo-950/45", "border-indigo-500/60", "scale-105");
+                                          const draggedValue = e.dataTransfer.getData("text/plain");
+                                          const targetValue = item.value;
+                                          if (draggedValue && draggedValue !== targetValue) {
+                                            const isDraggedPinned = pinnedStatuses.includes(draggedValue);
+                                            const isTargetPinned = pinnedStatuses.includes(targetValue);
+                                            if (isDraggedPinned && isTargetPinned) {
+                                              const newPinned = [...pinnedStatuses];
+                                              const draggedIdx = newPinned.indexOf(draggedValue);
+                                              const targetIdx = newPinned.indexOf(targetValue);
+                                              if (draggedIdx !== -1 && targetIdx !== -1) {
+                                                newPinned.splice(draggedIdx, 1);
+                                                newPinned.splice(targetIdx, 0, draggedValue);
+                                                setPinnedStatuses(newPinned);
+                                              }
+                                            } else {
+                                              const currentOrder = orderedLegendStatuses.map(s => s.value);
+                                              const draggedIdx = currentOrder.indexOf(draggedValue);
+                                              const targetIdx = currentOrder.indexOf(targetValue);
+                                              if (draggedIdx !== -1 && targetIdx !== -1) {
+                                                const newOrder = [...currentOrder];
+                                                newOrder.splice(draggedIdx, 1);
+                                                newOrder.splice(targetIdx, 0, draggedValue);
+                                                setLegendStatusOrder(newOrder);
+                                                localStorage.setItem("bbs_rfq_status_priority", JSON.stringify(newOrder));
+                                              }
+                                            }
+                                          }
+                                        }}
+                                        className={`group flex items-center justify-between gap-1.5 px-2 py-1 rounded-lg text-[10px] font-bold transition-all cursor-grab active:cursor-grabbing select-none ${bgBorderClass} ${
+                                          draggingStatus === item.value 
+                                            ? "opacity-50 scale-95 border-dashed border-indigo-500/50 bg-slate-900/40" 
+                                            : ""
+                                        }`}
                                         style={itemStyle}
                                       >
-                                        <div className="flex items-center gap-1.5 min-w-0">
+                                        <div className="flex items-center gap-1 min-w-0">
+                                          <Icons.GripVertical className="h-3 w-3 text-slate-500 group-hover:text-indigo-400 transition-colors shrink-0 cursor-grab" />
                                           <span className={dotClass} style={dotStyle} />
                                           <span className="truncate text-slate-300">{displayLabel}</span>
                                         </div>
-                                        <span className="font-mono text-[10px] font-black bg-slate-950/40 px-1 py-0.5 rounded border border-white/5 min-w-[16px] text-center">
+                                        <span className="font-mono text-[10px] font-black bg-slate-950/40 px-1 py-0.5 rounded border border-white/5 min-w-[16px] text-center shrink-0">
                                           {count}
                                         </span>
                                       </div>
@@ -8911,7 +10059,486 @@ export default function App() {
                                   );
                                 })}
                               </div>
+
+                              {/* Interactive Mini Bar Chart for Bottleneck Visualization */}
+                            <div className="mt-2 px-3 py-2 bg-slate-950/60 border border-white/5 rounded-xl z-10 w-full" id="rfq_status_bottleneck_chart">
+                              <div className="flex items-center justify-between gap-2 mb-2">
+                                <div className="flex items-center gap-1.5">
+                                  <Icons.BarChart3 className="h-3.5 w-3.5 text-indigo-400" />
+                                  <span className="text-[10px] uppercase tracking-wider text-slate-300 font-extrabold">Status Bottleneck Visualizer:</span>
+                                </div>
+                                {bottleneckStatus && (
+                                  <motion.div 
+                                    initial={{ opacity: 0, x: -5 }}
+                                    animate={{ opacity: 1, x: 0 }}
+                                    className="flex items-center gap-1 bg-rose-500/10 border border-rose-500/20 text-rose-400 px-1.5 py-0.5 rounded text-[9px] font-bold animate-pulse"
+                                    title="Status dengan penumpukan pekerjaan tertinggi (belum selesai)"
+                                  >
+                                    <Icons.Flame className="h-3 w-3 text-rose-500" />
+                                    <span>Bottleneck: {
+                                      orderedLegendStatuses.find(s => s.value === bottleneckStatus)?.label || bottleneckStatus
+                                    }</span>
+                                  </motion.div>
+                                )}
+                              </div>
+
+                              {/* Dynamic Pending vs Completed Comparison Bar */}
+                              {(() => {
+                                const totalPending = orderedLegendStatuses
+                                  .filter(s => s.value !== "completed" && s.value !== "cancelled")
+                                  .reduce((sum, s) => sum + (adminRfqStatusCounts[s.value] || 0), 0);
+                                const totalCompleted = adminRfqStatusCounts["completed"] || 0;
+                                const totalC = totalPending + totalCompleted;
+                                const totalCountSafe = totalC || 1;
+                                const pendingPct = Math.round((totalPending / totalCountSafe) * 100);
+                                const completedPct = Math.round((totalCompleted / totalCountSafe) * 100);
+                                
+                                return (
+                                  <div className="mb-2.5 bg-slate-950/85 rounded-xl p-2.5 border border-white/5">
+                                    <div className="flex items-center justify-between text-[10px] font-bold text-slate-300 mb-1.5 gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setAdminRfqStatuses(["pending", "processing"]);
+                                          showToast("Memfilter RFQ yang belum selesai (Pending/Processing)!", "info");
+                                          try { playClickSound(); } catch {}
+                                        }}
+                                        className="flex items-center gap-1 hover:text-amber-400 transition-colors cursor-pointer text-left"
+                                        title="Klik untuk memfilter RFQ yang belum selesai"
+                                      >
+                                        <span className="h-2 w-2 rounded-full bg-amber-400 shadow-[0_0_6px_#f59e0b] shrink-0" />
+                                        <span className="truncate">Pending/Incomplete: <strong className="text-amber-400 font-extrabold">{totalPending}</strong></span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setAdminRfqStatuses(["completed"]);
+                                          showToast("Memfilter RFQ yang sudah selesai (Completed)!", "info");
+                                          try { playClickSound(); } catch {}
+                                        }}
+                                        className="flex items-center gap-1 hover:text-emerald-400 transition-colors cursor-pointer text-right"
+                                        title="Klik untuk memfilter RFQ yang sudah selesai"
+                                      >
+                                        <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_6px_#10b981] shrink-0" />
+                                        <span className="truncate">Completed: <strong className="text-emerald-400 font-extrabold">{totalCompleted}</strong></span>
+                                      </button>
+                                    </div>
+                                    <div className="relative h-2.5 w-full bg-slate-900 rounded-full overflow-hidden flex border border-white/5 shadow-inner">
+                                      {totalPending > 0 && (
+                                        <button
+                                          type="button"
+                                          className="h-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 transition-all cursor-pointer flex-1"
+                                          style={{ width: `${pendingPct}%`, flexGrow: totalPending, flexShrink: 0 }}
+                                          onClick={() => {
+                                            setAdminRfqStatuses(["pending", "processing"]);
+                                            showToast("Memfilter RFQ yang belum selesai (Pending/Processing)!", "info");
+                                            try { playClickSound(); } catch {}
+                                          }}
+                                          title={`Pending/Incomplete: ${totalPending} RFQs (${pendingPct}%) - Klik untuk memfilter`}
+                                        />
+                                      )}
+                                      {totalCompleted > 0 && (
+                                        <button
+                                          type="button"
+                                          className="h-full bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 transition-all cursor-pointer flex-1"
+                                          style={{ width: `${completedPct}%`, flexGrow: totalCompleted, flexShrink: 0 }}
+                                          onClick={() => {
+                                            setAdminRfqStatuses(["completed"]);
+                                            showToast("Memfilter RFQ yang sudah selesai (Completed)!", "info");
+                                            try { playClickSound(); } catch {}
+                                          }}
+                                          title={`Completed: ${totalCompleted} RFQs (${completedPct}%) - Klik untuk memfilter`}
+                                        />
+                                      )}
+                                    </div>
+                                    <div className="flex items-center justify-between text-[9px] font-mono text-slate-500 mt-1">
+                                      <span>Ratio: {pendingPct}% Pending</span>
+                                      <span>{completedPct}% Completed</span>
+                                    </div>
+                                  </div>
+                                );
+                              })()}
+
+                              <div className="flex items-end justify-between h-[55px] gap-1 px-1.5 pt-4 bg-slate-950/40 rounded-lg border border-white/5 relative">
+                                {orderedLegendStatuses.map((item) => {
+                                  const count = adminRfqStatusCounts[item.value] || 0;
+                                  const isSelected = adminRfqStatuses.includes(item.value);
+                                  const isAnyFilterActive = adminRfqStatuses.length > 0;
+                                  
+                                  const tailwindHexColors: Record<string, string> = {
+                                    amber: "#f59e0b",
+                                    blue: "#3b82f6",
+                                    indigo: "#6366f1",
+                                    emerald: "#10b981",
+                                    rose: "#f43f5e",
+                                    purple: "#a855f7",
+                                    violet: "#8b5cf6",
+                                    pink: "#ec4899",
+                                    cyan: "#06b6d4",
+                                    slate: "#64748b"
+                                  };
+                                  const defaultColorMap: Record<string, string> = {
+                                    pending: "#f59e0b",
+                                    processing: "#3b82f6",
+                                    quoted: "#6366f1",
+                                    completed: "#10b981",
+                                    cancelled: "#f43f5e"
+                                  };
+
+                                  const isHexColor = (item.color || "").startsWith("#");
+                                  const colorHex = isHexColor ? item.color : (tailwindHexColors[item.color || "slate"] || defaultColorMap[item.value] || "#64748b");
+                                  const maxCount = Math.max(...orderedLegendStatuses.map(s => adminRfqStatusCounts[s.value] || 0), 1);
+                                  
+                                  const shortLabel = item.value === "pending" ? "Pend" :
+                                                     item.value === "processing" ? "Proc" :
+                                                     item.value === "quoted" ? "Quot" :
+                                                     item.value === "completed" ? "Done" :
+                                                     item.value === "cancelled" ? "Cncl" : 
+                                                     (item.label.length > 4 ? item.label.slice(0, 4) + "." : item.label);
+
+                                  const isBottleneck = item.value === bottleneckStatus;
+                                  const barHeight = count === 0 ? 3 : (count / maxCount) * 32;
+                                  
+                                  return (
+                                    <div 
+                                      key={`bar-${item.value}`}
+                                      className="group flex-1 flex flex-col items-center h-full justify-end cursor-pointer relative z-10 select-none"
+                                      onClick={() => {
+                                        if (adminRfqStatuses.includes(item.value)) {
+                                          setAdminRfqStatuses(adminRfqStatuses.filter(s => s !== item.value));
+                                        } else {
+                                          setAdminRfqStatuses([...adminRfqStatuses, item.value]);
+                                        }
+                                        try { playClickSound(); } catch {}
+                                      }}
+                                      title={`Klik untuk memfilter status: ${item.label} (${count} RFQs)`}
+                                    >
+                                      <span className={`text-[8.5px] font-black font-mono transition-all duration-200 mb-0.5 ${
+                                        isSelected ? "text-indigo-300 font-extrabold" : count > 0 ? "text-slate-300" : "text-slate-600 group-hover:text-slate-400"
+                                      }`}>
+                                        {count}
+                                      </span>
+
+                                      <motion.div 
+                                        className="w-full max-w-[20px] rounded-t-md transition-all duration-300 relative"
+                                        animate={{ 
+                                          height: `${barHeight}px`,
+                                        }}
+                                        style={{
+                                          backgroundColor: colorHex,
+                                          boxShadow: isSelected 
+                                            ? `0 0 8px ${colorHex}`
+                                            : isBottleneck 
+                                            ? `0 0 10px ${colorHex}80` 
+                                            : `0 0 2px ${colorHex}20`,
+                                          opacity: isSelected ? 1 : isAnyFilterActive ? 0.35 : 0.75,
+                                        }}
+                                        whileHover={{ 
+                                          scaleY: 1.15,
+                                          opacity: 1,
+                                          boxShadow: `0 0 12px ${colorHex}`
+                                        }}
+                                        transition={{ type: "spring", stiffness: 350, damping: 15 }}
+                                      >
+                                        {isBottleneck && count > 0 && (
+                                          <span className="absolute -top-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-rose-500 rounded-full animate-ping" />
+                                        )}
+                                      </motion.div>
+
+                                      <span className={`text-[8px] font-bold mt-1 transition-colors duration-200 uppercase tracking-tight text-center ${
+                                        isSelected ? "text-white font-extrabold scale-105" : "text-slate-500 group-hover:text-slate-300"
+                                      }`}>
+                                        {shortLabel}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
                             </div>
+
+                            {/* Named Filter Presets Block */}
+                            <div className="mt-2.5 px-3 py-2 bg-slate-950/50 border border-white/5 rounded-xl z-10 w-full flex flex-col gap-2" id="rfq_filter_presets_panel">
+                              <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-white/5 pb-2">
+                                <div className="flex items-center gap-1.5">
+                                  <Icons.Bookmark className="h-3.5 w-3.5 text-indigo-400" />
+                                  <span className="text-[10px] uppercase tracking-wider text-slate-300 font-extrabold">Named Filter Presets</span>
+                                  <span className="text-[9px] text-slate-500 italic">(Admin Only)</span>
+                                </div>
+                                
+                                {(() => {
+                                  const isAnyFilterActive = (
+                                    adminRfqStatuses.length > 0 ||
+                                    !!adminRfqSearch ||
+                                    !!adminRfqStartDate ||
+                                    !!adminRfqEndDate ||
+                                    !!adminRfqClientFilter ||
+                                    !!statusKeywordSearch ||
+                                    !!adminRfqCategoryFilter ||
+                                    !!adminRfqSubCategoryFilter ||
+                                    !!adminRfqPriorityFilter ||
+                                    showOnlyMyClients
+                                  );
+
+                                  if (!isAnyFilterActive) return null;
+
+                                  return (
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                      {isSavingPreset ? (
+                                        <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                                          <input
+                                            type="text"
+                                            placeholder="Nama preset (misal: Pending Prioritas)..."
+                                            value={newPresetName}
+                                            onChange={(e) => setNewPresetName(e.target.value)}
+                                            onKeyDown={(e) => {
+                                              if (e.key === "Enter") {
+                                                e.preventDefault();
+                                                const btn = document.getElementById("save_preset_confirm_btn");
+                                                if (btn) btn.click();
+                                              }
+                                            }}
+                                            className="px-2 py-0.5 bg-slate-900 border border-indigo-500/30 rounded-lg text-[10px] text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 w-[180px] font-medium"
+                                            autoFocus
+                                          />
+                                          <button
+                                            type="button"
+                                            id="save_preset_confirm_btn"
+                                            onClick={() => {
+                                              if (!newPresetName.trim()) {
+                                                showToast("Nama preset tidak boleh kosong!", "error");
+                                                return;
+                                              }
+                                              const newPreset: AdminRfqFilterPreset = {
+                                                id: `preset-${Date.now()}`,
+                                                name: newPresetName.trim(),
+                                                statuses: [...adminRfqStatuses],
+                                                priority: adminRfqPriorityFilter || undefined,
+                                                category: adminRfqCategoryFilter || undefined,
+                                                subCategory: adminRfqSubCategoryFilter || undefined,
+                                                search: adminRfqSearch || undefined,
+                                                keyword: statusKeywordSearch || undefined,
+                                                showOnlyMyClients: showOnlyMyClients || undefined,
+                                                startDate: adminRfqStartDate || undefined,
+                                                endDate: adminRfqEndDate || undefined
+                                              };
+                                              setAdminRfqFilterPresets([...adminRfqFilterPresets, newPreset]);
+                                              setNewPresetName("");
+                                              setIsSavingPreset(false);
+                                              try { playClickSound(); } catch {}
+                                              showToast(`Preset "${newPreset.name}" berhasil disimpan!`, "success");
+                                            }}
+                                            className="px-2.5 py-0.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[9px] font-bold cursor-pointer transition-colors"
+                                          >
+                                            Simpan
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setIsSavingPreset(false);
+                                              setNewPresetName("");
+                                            }}
+                                            className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[9px] font-bold cursor-pointer transition-colors"
+                                          >
+                                            Batal
+                                          </button>
+                                        </div>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setIsSavingPreset(true);
+                                            try { playClickSound(); } catch {}
+                                          }}
+                                          className="flex items-center gap-1 px-2 py-0.5 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 hover:text-indigo-300 border border-indigo-500/20 rounded-lg text-[9px] font-bold transition-all cursor-pointer"
+                                          title="Simpan kombinasi filter aktif saat ini sebagai preset baru"
+                                        >
+                                          <Icons.Plus className="h-2.5 w-2.5" />
+                                          <span>Save Current Filters</span>
+                                        </button>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+
+                              <div className="flex flex-wrap gap-1.5 items-center">
+                                {adminRfqFilterPresets.length === 0 ? (
+                                  <span className="text-slate-500 italic text-[10px]">Belum ada preset filter yang disimpan.</span>
+                                ) : (
+                                  adminRfqFilterPresets.map((preset) => {
+                                    // Check if active filters match this preset
+                                    const isCurrent = 
+                                      JSON.stringify(adminRfqStatuses.sort()) === JSON.stringify((preset.statuses || []).sort()) &&
+                                      (preset.priority || "") === (adminRfqPriorityFilter || "") &&
+                                      (preset.category || "") === (adminRfqCategoryFilter || "") &&
+                                      (preset.subCategory || "") === (adminRfqSubCategoryFilter || "") &&
+                                      (preset.search || "") === (adminRfqSearch || "") &&
+                                      (preset.keyword || "") === (statusKeywordSearch || "") &&
+                                      (preset.showOnlyMyClients || false) === (showOnlyMyClients || false) &&
+                                      (preset.startDate || "") === (adminRfqStartDate || "") &&
+                                      (preset.endDate || "") === (adminRfqEndDate || "");
+
+                                    return (
+                                      <div
+                                        key={preset.id}
+                                        className={`group relative inline-flex items-center gap-1.5 pl-2.5 pr-2 py-1 rounded-lg text-[10px] font-bold transition-all border ${
+                                          isCurrent
+                                            ? "bg-indigo-500/25 border-indigo-500/50 text-indigo-200 shadow-sm shadow-indigo-500/5"
+                                            : "bg-slate-900/60 border-white/5 hover:border-white/15 text-slate-400 hover:text-slate-200 hover:bg-slate-900"
+                                        }`}
+                                      >
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            // Apply preset filters
+                                            setAdminRfqStatuses(preset.statuses || []);
+                                            setAdminRfqPriorityFilter(preset.priority || "");
+                                            setAdminRfqCategoryFilter(preset.category || "");
+                                            setAdminRfqSubCategoryFilter(preset.subCategory || "");
+                                            setAdminRfqSearch(preset.search || "");
+                                            setStatusKeywordSearch(preset.keyword || "");
+                                            setShowOnlyMyClients(preset.showOnlyMyClients || false);
+                                            setAdminRfqStartDate(preset.startDate || "");
+                                            setAdminRfqEndDate(preset.endDate || "");
+                                            
+                                            try { playClickSound(); } catch {}
+                                            showToast(`Preset "${preset.name}" diterapkan!`, "success");
+                                          }}
+                                          className="text-left cursor-pointer flex items-center gap-1.5"
+                                          title={`Terapkan filter: ${[
+                                            preset.statuses?.length ? `Status (${preset.statuses.join(", ")})` : "",
+                                            preset.priority ? `Prioritas (${preset.priority})` : "",
+                                            preset.category ? `Kategori (${preset.category})` : "",
+                                            preset.subCategory ? `Sub-Kategori (${preset.subCategory})` : "",
+                                            preset.search ? `Cari ("${preset.search}")` : "",
+                                            preset.keyword ? `Status Cari ("${preset.keyword}")` : "",
+                                            preset.showOnlyMyClients ? "Klien Saya" : "",
+                                            preset.startDate || preset.endDate ? "Tanggal aktif" : ""
+                                          ].filter(Boolean).join(", ") || "Semua RFQ"}`}
+                                        >
+                                          {preset.isSystem ? (
+                                            <Icons.Sparkles className={`h-3 w-3 ${isCurrent ? "text-indigo-400 animate-pulse" : "text-slate-500"}`} />
+                                          ) : (
+                                            <Icons.Bookmark className={`h-3 w-3 ${isCurrent ? "text-indigo-400" : "text-slate-500"}`} />
+                                          )}
+                                          <span>{preset.name}</span>
+                                        </button>
+
+                                        {!preset.isSystem && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setAdminRfqFilterPresets(adminRfqFilterPresets.filter(p => p.id !== preset.id));
+                                              try { playClickSound(); } catch {}
+                                              showToast(`Preset "${preset.name}" dihapus!`, "info");
+                                            }}
+                                            className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-rose-500/20 text-slate-500 hover:text-rose-400 transition-all cursor-pointer ml-1"
+                                            title="Hapus preset ini"
+                                          >
+                                            <Icons.X className="h-2.5 w-2.5" />
+                                          </button>
+                                        )}
+                                      </div>
+                                    );
+                                  })
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Persistent 'Active Filters' Summary Block */}
+                            <motion.div 
+                              layout
+                              transition={{ type: "spring", stiffness: 300, damping: 26 }}
+                              className="mt-2.5 px-3 py-2 bg-slate-950/50 border border-white/5 rounded-xl z-10 w-full flex flex-col md:flex-row md:items-center justify-between gap-3" 
+                              id="rfq_active_filters_summary"
+                            >
+                              <div className="flex flex-wrap items-center gap-2 text-xs">
+                                <span className="flex items-center gap-1.5 font-bold text-slate-300">
+                                  <Icons.SlidersHorizontal className="h-3.5 w-3.5 text-indigo-400" />
+                                  <span>Active Filters:</span>
+                                </span>
+                                {activeFiltersList.length === 0 ? (
+                                  <motion.span 
+                                    layout
+                                    key="no-filters-label"
+                                    className="text-slate-500 italic text-[11px]"
+                                  >
+                                    None (Showing all RFQs)
+                                  </motion.span>
+                                ) : (
+                                  <motion.div layout className="flex flex-wrap gap-1.5">
+                                    <AnimatePresence mode="popLayout">
+                                      {activeFiltersList.map((filter, index) => (
+                                        <motion.span 
+                                          key={`${filter.label}-${filter.value}`}
+                                          layout
+                                          initial={{ opacity: 0, scale: 0.8, y: 5 }}
+                                          animate={{ opacity: 1, scale: 1, y: 0 }}
+                                          exit={{ opacity: 0, scale: 0.8, y: -5 }}
+                                          transition={{ type: "spring", stiffness: 350, damping: 25 }}
+                                          className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 rounded-lg text-[10px] font-bold"
+                                        >
+                                          {filter.icon}
+                                          <span className="opacity-85">{filter.label}:</span>
+                                          <span className="text-white font-extrabold">{filter.value}</span>
+                                          {filter.onClear && (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                filter.onClear();
+                                                try { playClickSound(); } catch {}
+                                              }}
+                                              className="p-0.5 rounded-full hover:bg-rose-500/20 text-indigo-400 hover:text-rose-400 transition-colors cursor-pointer"
+                                              title={`Hapus filter ${filter.label}`}
+                                            >
+                                              <Icons.X className="h-2.5 w-2.5" />
+                                            </button>
+                                          )}
+                                        </motion.span>
+                                      ))}
+                                    </AnimatePresence>
+                                  </motion.div>
+                                )}
+                              </div>
+
+                              <AnimatePresence>
+                                {(adminRfqStatuses.length > 0 || !!adminRfqSearch || !!adminRfqStartDate || !!adminRfqEndDate || !!adminRfqClientFilter || !!statusKeywordSearch || !!adminRfqCategoryFilter || !!adminRfqSubCategoryFilter || !!adminRfqPriorityFilter || showOnlyMyClients) && (
+                                  <motion.button
+                                    type="button"
+                                    initial={{ opacity: 0, scale: 0.8, x: 10 }}
+                                    animate={{ opacity: 1, scale: 1, x: 0 }}
+                                    exit={{ opacity: 0, scale: 0.8, x: 10 }}
+                                    whileHover={{ scale: 1.05 }}
+                                    whileTap={{ scale: 0.95 }}
+                                    onClick={() => {
+                                      setAdminRfqStatuses([]);
+                                      setStatusKeywordSearch("");
+                                      setAdminRfqSearch("");
+                                      setAdminRfqStartDate("");
+                                      setAdminRfqEndDate("");
+                                      setAdminRfqCategoryFilter("");
+                                      setAdminRfqSubCategoryFilter("");
+                                      setAdminRfqPriorityFilter("");
+                                      setAdminRfqClientFilter("");
+                                      setShowOnlyMyClients(false);
+                                      try {
+                                        playClickSound();
+                                      } catch {}
+                                      showToast("Semua filter RFQ berhasil dibersihkan!", "info");
+                                    }}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/20 hover:border-rose-500/40 rounded-xl text-xs font-bold transition-all shadow-sm shadow-slate-950/20 shrink-0 cursor-pointer"
+                                    title="Bersihkan semua filter pencarian, tanggal, kategori, prioritas, dan status RFQ sekaligus"
+                                    id="rfq_clear_all_filters_btn"
+                                  >
+                                    <Icons.FilterX className="h-3.5 w-3.5 text-rose-400 animate-pulse" />
+                                    <span>Clear All Filters</span>
+                                  </motion.button>
+                                )}
+                              </AnimatePresence>
+                            </motion.div>
+                          </motion.div>
                           </div>
 
                           {/* Summary count displaying how many RFQs are visible in the table */}
@@ -9208,6 +10835,54 @@ export default function App() {
                               </div>
                             </div>
                           )}
+
+                          {/* Permanent Status Color Legend Panel */}
+                          <div className="bg-slate-950/40 border-b border-white/5 px-5 py-3 flex flex-wrap items-center justify-between gap-3 text-[11px] text-slate-300">
+                            <div className="flex items-center gap-2">
+                              <Icons.Info className="h-4 w-4 text-indigo-400 shrink-0" />
+                              <span className="font-extrabold text-white uppercase tracking-wider text-[10px]">Legenda Status RFQ:</span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-3">
+                              {/* Default Statuses */}
+                              <div className="flex items-center gap-1.5 bg-slate-900/60 px-2.5 py-1 rounded-lg border border-white/5">
+                                <span className="h-2 w-2 rounded-full bg-amber-400 shadow-[0_0_6px_rgba(245,158,11,0.6)] animate-pulse" />
+                                <span className="font-semibold text-slate-300">Menunggu Proposal</span>
+                              </div>
+                              <div className="flex items-center gap-1.5 bg-slate-900/60 px-2.5 py-1 rounded-lg border border-white/5">
+                                <span className="h-2 w-2 rounded-full bg-blue-400 shadow-[0_0_6px_rgba(59,130,246,0.6)] animate-pulse" />
+                                <span className="font-semibold text-slate-300">Sedang Diproses</span>
+                              </div>
+                              <div className="flex items-center gap-1.5 bg-slate-900/60 px-2.5 py-1 rounded-lg border border-white/5">
+                                <span className="h-2 w-2 rounded-full bg-indigo-400 shadow-[0_0_6px_rgba(99,102,241,0.6)]" />
+                                <span className="font-semibold text-slate-300">Sudah Di-Quoted</span>
+                              </div>
+                              <div className="flex items-center gap-1.5 bg-slate-900/60 px-2.5 py-1 rounded-lg border border-white/5">
+                                <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(16,185,129,0.6)]" />
+                                <span className="font-semibold text-slate-300">Selesai</span>
+                              </div>
+                              <div className="flex items-center gap-1.5 bg-slate-900/60 px-2.5 py-1 rounded-lg border border-white/5">
+                                <span className="h-2 w-2 rounded-full bg-rose-400 shadow-[0_0_6px_rgba(239,68,68,0.6)]" />
+                                <span className="font-semibold text-slate-300">Dibatalkan</span>
+                              </div>
+
+                              {/* Custom Statuses if defined */}
+                              {(settings.customRfqStatuses || []).map((cs: any) => {
+                                const customCol = cs.color || "#a855f7";
+                                const isHex = customCol.startsWith("#");
+                                const dotBg = isHex ? customCol : undefined;
+                                const dotShadow = isHex ? `0 0 6px ${customCol}` : undefined;
+                                return (
+                                  <div key={cs.value} className="flex items-center gap-1.5 bg-slate-900/60 px-2.5 py-1 rounded-lg border border-white/5">
+                                    <span 
+                                      className={`h-2 w-2 rounded-full shrink-0 ${!isHex ? `bg-${customCol}-400 shadow-[0_0_6px_rgba(168,85,247,0.6)]` : ""}`}
+                                      style={isHex ? { backgroundColor: dotBg, boxShadow: dotShadow } : undefined}
+                                    />
+                                    <span className="font-semibold text-slate-300">{cs.label}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
 
                           <table className="w-full text-left border-collapse text-xs">
                             <thead>
@@ -11091,6 +12766,19 @@ export default function App() {
                         
                         <button
                           onClick={() => {
+                            setCatalogPrintSelectedIds(catalogProducts.map(p => p.id));
+                            setShowCatalogPrintModal(true);
+                            try { playClickSound(); } catch {}
+                          }}
+                          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold rounded-xl transition-all flex items-center gap-1.5 shadow-lg shadow-emerald-600/10 cursor-pointer"
+                          title="Pratinjau cetak dan kustomisasi dokumen katalog A4"
+                        >
+                          <Icons.Printer className="h-4 w-4" />
+                          <span>Pratinjau Cetak A4</span>
+                        </button>
+                        
+                        <button
+                          onClick={() => {
                             setCatalogForm({
                               id: "",
                               name: "",
@@ -11350,6 +13038,19 @@ export default function App() {
                             <option value="Sistem Integrasi">Sistem Integrasi</option>
                             <option value="Periferal & Aksesoris">Periferal & Aksesoris</option>
                           </select>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowCatalogBulkQrModal(true);
+                              try { playClickSound(); } catch {}
+                            }}
+                            className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
+                            title="Cetak QR Code massal untuk semua produk hasil filter saat ini"
+                          >
+                            <Icons.QrCode className="h-3.5 w-3.5" />
+                            <span>Cetak QR Massal</span>
+                          </button>
                         </div>
                       </div>
 
@@ -13102,6 +14803,681 @@ export default function App() {
         </div>
       )}
 
+      {/* ==================================================== */}
+      {/* MODAL VIEW: DEDICATED CATALOG A4 PRINT PREVIEW MODAL */}
+      {/* ==================================================== */}
+      {showCatalogPrintModal && (
+        <div className="fixed inset-0 z-[150] bg-slate-950/95 backdrop-blur-md flex flex-col h-screen no-print" id="catalog-a4-print-modal">
+          {/* Custom style to override main screen during window.print() */}
+          <style>{`
+            @media print {
+              /* Hide everything on the page */
+              body * {
+                visibility: hidden !important;
+              }
+              /* Show ONLY our printed sheet */
+              #catalog-print-a4-sheet-container,
+              #catalog-print-a4-sheet-container * {
+                visibility: visible !important;
+              }
+              /* Position the print content precisely at the top-left */
+              #catalog-print-a4-sheet-container {
+                position: absolute !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 210mm !important;
+                min-height: 297mm !important;
+                margin: 0 !important;
+                padding: 15mm !important;
+                background: white !important;
+                color: black !important;
+                box-shadow: none !important;
+                border: none !important;
+              }
+              /* Ensure backgrounds are printed */
+              * {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+              }
+              /* Avoid orphan page breaks inside elements */
+              .print-avoid-break {
+                break-inside: avoid !important;
+                page-break-inside: avoid !important;
+              }
+            }
+          `}</style>
+
+          {/* Modal Header */}
+          <div className="bg-slate-900 border-b border-white/10 px-5 py-3.5 flex flex-col sm:flex-row items-center justify-between gap-3 text-white shrink-0 shadow-lg">
+            <div className="flex items-center space-x-3">
+              <div className="p-2.5 bg-emerald-500/15 border border-emerald-500/30 rounded-xl text-emerald-400">
+                <Icons.Printer className="h-5 w-5 animate-pulse" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-wider text-white">Pratinjau Cetak Katalog A4</h3>
+                <p className="text-[10px] text-slate-400 font-medium">Kop resmi PT Berkah Bintang Solusindo, tata letak profesional & optimasi halaman cetak</p>
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-2.5">
+              <button
+                onClick={() => {
+                  try { playClickSound(); } catch {}
+                  window.print();
+                }}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 cursor-pointer shadow-lg shadow-emerald-600/20 active:scale-95"
+              >
+                <Icons.Printer className="h-4 w-4" />
+                <span>Cetak / Simpan PDF</span>
+              </button>
+              <button
+                onClick={() => {
+                  setShowCatalogPrintModal(false);
+                  try { playClickSound(); } catch {}
+                }}
+                className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-xl transition-all cursor-pointer border border-white/5 active:scale-95"
+                title="Tutup Modal"
+              >
+                <Icons.X className="h-4.5 w-4.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Main Modal Body (Left Sidebar & Right Live Preview Panel) */}
+          <div className="flex-1 flex flex-col lg:flex-row overflow-hidden bg-slate-950">
+            
+            {/* Sidebar Controls */}
+            <div className="w-full lg:w-[360px] bg-slate-900 border-r border-white/10 p-5 overflow-y-auto shrink-0 flex flex-col justify-between gap-6">
+              
+              <div className="space-y-5">
+                {/* Section 1: Document Metadata */}
+                <div className="space-y-3">
+                  <span className="block text-[10px] uppercase font-black tracking-widest text-indigo-400">1. Atribut Dokumen</span>
+                  
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-slate-400 font-bold">Judul Katalog Dokumen</label>
+                    <input
+                      type="text"
+                      value={catalogPrintTitle}
+                      onChange={(e) => setCatalogPrintTitle(e.target.value)}
+                      className="w-full px-3 py-1.5 bg-slate-950 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:border-indigo-500 font-medium"
+                      placeholder="Masukkan judul katalog..."
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-slate-400 font-bold">Nomor Dokumen Acuan</label>
+                    <input
+                      type="text"
+                      value={catalogPrintDocNo}
+                      onChange={(e) => setCatalogPrintDocNo(e.target.value)}
+                      className="w-full px-3 py-1.5 bg-slate-950 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:border-indigo-500 font-mono font-medium"
+                      placeholder="BBS/CAT/2026/PRO-04"
+                    />
+                  </div>
+                </div>
+
+                {/* Section 2: Filter & Layout */}
+                <div className="space-y-3 border-t border-white/5 pt-4">
+                  <span className="block text-[10px] uppercase font-black tracking-widest text-indigo-400">2. Penyaringan & Desain</span>
+                  
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-slate-400 font-bold">Filter Kategori Produk</label>
+                    <select
+                      value={catalogPrintFilterCategory}
+                      onChange={(e) => {
+                        setCatalogPrintFilterCategory(e.target.value);
+                        // Filter the checklist
+                        const filtered = catalogProducts
+                          .filter(p => e.target.value === "Semua" || p.category === e.target.value)
+                          .map(p => p.id);
+                        setCatalogPrintSelectedIds(filtered);
+                      }}
+                      className="w-full px-3 py-1.5 bg-slate-950 border border-white/10 rounded-xl text-xs text-slate-200 focus:outline-none focus:border-indigo-500 font-medium"
+                    >
+                      <option value="Semua">Semua Kategori ({catalogProducts.length})</option>
+                      {Array.from(new Set(catalogProducts.map(p => p.category))).map(cat => (
+                        <option key={cat} value={cat}>
+                          {cat} ({catalogProducts.filter(p => p.category === cat).length})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-slate-400 font-bold">Model Layout Halaman</label>
+                    <div className="grid grid-cols-3 gap-1.5 bg-slate-950 p-1 border border-white/10 rounded-xl text-[10px] font-bold">
+                      {(["table", "list", "grid"] as const).map((l) => (
+                        <button
+                          key={l}
+                          type="button"
+                          onClick={() => setCatalogPrintLayout(l)}
+                          className={`py-1.5 rounded-lg transition-all capitalize cursor-pointer text-center ${
+                            catalogPrintLayout === l
+                              ? "bg-indigo-600 text-white shadow"
+                              : "text-slate-400 hover:text-white"
+                          }`}
+                        >
+                          {l === "table" ? "Tabel" : l === "list" ? "Daftar" : "Bento Grid"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Section 3: Element Visibility */}
+                <div className="space-y-2 border-t border-white/5 pt-4">
+                  <span className="block text-[10px] uppercase font-black tracking-widest text-indigo-400">3. Visibilitas Elemen</span>
+                  
+                  <div className="grid grid-cols-2 gap-2 text-[11px] font-semibold bg-slate-950/40 p-3 rounded-xl border border-white/5">
+                    <label className="flex items-center space-x-2 text-slate-300 hover:text-white cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={catalogPrintShowImages}
+                        onChange={(e) => setCatalogPrintShowImages(e.target.checked)}
+                        className="rounded bg-slate-950 border-white/10 text-indigo-600 focus:ring-0"
+                      />
+                      <span>Gambar Produk</span>
+                    </label>
+
+                    <label className="flex items-center space-x-2 text-slate-300 hover:text-white cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={catalogPrintShowSpecs}
+                        onChange={(e) => setCatalogPrintShowSpecs(e.target.checked)}
+                        className="rounded bg-slate-950 border-white/10 text-indigo-600 focus:ring-0"
+                      />
+                      <span>Spesifikasi</span>
+                    </label>
+
+                    <label className="flex items-center space-x-2 text-slate-300 hover:text-white cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={catalogPrintShowPrices}
+                        onChange={(e) => setCatalogPrintShowPrices(e.target.checked)}
+                        className="rounded bg-slate-950 border-white/10 text-indigo-600 focus:ring-0"
+                      />
+                      <span>Harga Acuan</span>
+                    </label>
+
+                    <label className="flex items-center space-x-2 text-slate-300 hover:text-white cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={catalogPrintShowQr}
+                        onChange={(e) => setCatalogPrintShowQr(e.target.checked)}
+                        className="rounded bg-slate-950 border-white/10 text-indigo-600 focus:ring-0"
+                      />
+                      <span>QR Code Akses</span>
+                    </label>
+
+                    <label className="flex items-center space-x-2 text-slate-300 hover:text-white cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={catalogPrintShowSignature}
+                        onChange={(e) => setCatalogPrintShowSignature(e.target.checked)}
+                        className="rounded bg-slate-950 border-white/10 text-indigo-600 focus:ring-0"
+                      />
+                      <span>Tanda Tangan</span>
+                    </label>
+
+                    <label className="flex items-center space-x-2 text-slate-300 hover:text-white cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={catalogPrintWatermark}
+                        onChange={(e) => setCatalogPrintWatermark(e.target.checked)}
+                        className="rounded bg-slate-950 border-white/10 text-indigo-600 focus:ring-0"
+                      />
+                      <span>Watermark BBS</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Section 4: Item Checklist Selection */}
+                <div className="space-y-2 border-t border-white/5 pt-4">
+                  <div className="flex items-center justify-between">
+                    <span className="block text-[10px] uppercase font-black tracking-widest text-indigo-400">4. Pilih Item ({catalogPrintSelectedIds.length})</span>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const currentFiltered = catalogProducts
+                            .filter(p => catalogPrintFilterCategory === "Semua" || p.category === catalogPrintFilterCategory)
+                            .map(p => p.id);
+                          setCatalogPrintSelectedIds(currentFiltered);
+                        }}
+                        className="text-[9px] text-indigo-400 hover:text-indigo-300 font-bold hover:underline cursor-pointer"
+                      >
+                        Semua
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCatalogPrintSelectedIds([])}
+                        className="text-[9px] text-rose-400 hover:text-rose-300 font-bold hover:underline cursor-pointer"
+                      >
+                        Kosongkan
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* List of items checkboxes */}
+                  <div className="max-h-[160px] overflow-y-auto bg-slate-950/60 p-2 rounded-xl border border-white/5 space-y-1">
+                    {catalogProducts
+                      .filter(p => catalogPrintFilterCategory === "Semua" || p.category === catalogPrintFilterCategory)
+                      .map((prod) => {
+                        const isChecked = catalogPrintSelectedIds.includes(prod.id);
+                        return (
+                          <label key={prod.id} className="flex items-center space-x-2.5 p-1.5 rounded-lg hover:bg-white/5 text-[11px] text-slate-300 hover:text-white cursor-pointer select-none transition-all">
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => {
+                                if (isChecked) {
+                                  setCatalogPrintSelectedIds(prev => prev.filter(id => id !== prod.id));
+                                } else {
+                                  setCatalogPrintSelectedIds(prev => [...prev, prod.id]);
+                                }
+                              }}
+                              className="rounded bg-slate-900 border-white/15 text-indigo-600 focus:ring-0"
+                            />
+                            <span className="truncate flex-1 font-medium">{prod.name}</span>
+                          </label>
+                        );
+                      })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Bottom Interactive Scale control */}
+              <div className="border-t border-white/5 pt-4 space-y-2">
+                <div className="flex justify-between items-center text-[10px] text-slate-400 font-bold">
+                  <span>ZOOM PREVIEW</span>
+                  <span>{catalogPrintScale}%</span>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <button
+                    type="button"
+                    disabled={catalogPrintScale <= 50}
+                    onClick={() => setCatalogPrintScale(prev => Math.max(50, prev - 10))}
+                    className="p-1 px-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-bold disabled:opacity-30 cursor-pointer"
+                  >
+                    -
+                  </button>
+                  <input
+                    type="range"
+                    min="50"
+                    max="150"
+                    value={catalogPrintScale}
+                    onChange={(e) => setCatalogPrintScale(Number(e.target.value))}
+                    className="flex-1 accent-indigo-500 h-1 bg-slate-950 rounded-lg cursor-pointer"
+                  />
+                  <button
+                    type="button"
+                    disabled={catalogPrintScale >= 150}
+                    onClick={() => setCatalogPrintScale(prev => Math.min(150, prev + 10))}
+                    className="p-1 px-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-bold disabled:opacity-30 cursor-pointer"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Live Preview Pane */}
+            <div className="flex-1 bg-slate-950 overflow-auto p-8 flex flex-col items-center">
+              
+              {/* Info banner */}
+              <div className="mb-4 text-slate-400 text-[11px] flex items-center justify-center gap-1.5 bg-slate-900/80 px-4 py-2 rounded-xl border border-white/5 w-full max-w-[210mm]">
+                <Icons.Info className="h-4 w-4 text-emerald-400 shrink-0 animate-bounce" />
+                <span>
+                  <strong>Format Lembar Kerja A4 Standar</strong>. Dokumen ini disinkronkan secara optimal untuk lembar kertas portrait standar A4 (210mm x 297mm) saat di-print.
+                </span>
+              </div>
+
+              {/* Scrollable container with scaling */}
+              <div 
+                className="transition-all duration-300 origin-top flex justify-center"
+                style={{ transform: `scale(${catalogPrintScale / 100})`, transformOrigin: "top center" }}
+              >
+                
+                {/* Visual Paper Sheet */}
+                <div 
+                  id="catalog-print-a4-sheet-container"
+                  className="bg-white text-slate-900 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.8)] p-[15mm] w-[210mm] min-h-[297mm] relative font-sans text-left transition-all text-xs sm:text-sm select-text flex flex-col justify-between overflow-hidden"
+                >
+                  
+                  {/* Subtle watermarks behind the sheet */}
+                  {catalogPrintWatermark && (
+                    <div className="absolute inset-0 flex items-center justify-center overflow-hidden pointer-events-none select-none z-0">
+                      <div className="text-slate-100 font-extrabold uppercase text-[36px] tracking-widest text-center transform -rotate-[35deg] opacity-[0.8] leading-none select-none">
+                        PT BERKAH BINTANG SOLUSINDO <br />
+                        <span className="text-[22px] text-slate-100/60 font-medium mt-2 block">ORIGINAL SYSTEM CATALOGUE</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Content Wrapper */}
+                  <div className="space-y-6 relative z-10 flex-1">
+                    
+                    {/* BBS Letterhead Corporate Header */}
+                    <div className="flex justify-between items-start border-b-4 border-double border-slate-900 pb-5">
+                      <div className="space-y-1">
+                        <div className="flex items-center space-x-3.5">
+                          {/* Corporate Icon logo */}
+                          <div className="w-12 h-12 bg-slate-900 text-white rounded-xl flex items-center justify-center font-black text-xl shadow-lg border border-slate-800">
+                            BBS
+                          </div>
+                          <div>
+                            <h1 className="text-xl font-black tracking-tight text-slate-900 leading-none">
+                              {settings.companyName || "PT Berkah Bintang Solusindo"}
+                            </h1>
+                            <p className="text-[9px] uppercase tracking-widest text-indigo-700 font-extrabold mt-1">
+                              {settings.tagline || "Solusi Infrastruktur & Integrasi Sistem IT Terpercaya"}
+                            </p>
+                            <p className="text-[8px] italic text-slate-500 font-semibold mt-0.5">
+                              "{settings.motto || "Inovasi Tanpa Batas, Solusi Terintegrasi Berkelanjutan"}"
+                            </p>
+                          </div>
+                        </div>
+                        <p className="text-[9px] text-slate-500 font-semibold max-w-lg pt-2 leading-relaxed">
+                          {settings.address || "Komplek Ruko Grand Galaxy, Blok RGA No. 12, Bekasi Selatan, Jawa Barat"} <br />
+                          WhatsApp: <span className="text-slate-800 font-bold">{settings.whatsapp || "0812-3456-7890"}</span> | Email: <span className="text-slate-800 font-bold">{settings.email || "info@berkahbintangsolusindo.com"}</span> | Web: <span className="text-slate-800 font-bold">{settings.website || "www.berkahbintangsolusindo.com"}</span>
+                        </p>
+                      </div>
+
+                      {/* Right Logo side or verification code */}
+                      <div className="text-right space-y-1 shrink-0">
+                        <div className="bg-slate-100 border border-slate-200/60 p-2 rounded-xl text-[8px] font-mono font-bold text-slate-700 uppercase tracking-wider inline-block">
+                          DOKUMEN INTEGRITAS BBS
+                        </div>
+                        <p className="text-[8px] text-slate-400 font-bold">KODE: BBS-CAT-A4-{new Date().getFullYear()}</p>
+                      </div>
+                    </div>
+
+                    {/* Document title and Metadata bar */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50 border border-slate-200/80 p-4 rounded-2xl">
+                      <div className="space-y-0.5">
+                        <h2 className="text-xs font-black uppercase tracking-wider text-slate-900">
+                          {catalogPrintTitle}
+                        </h2>
+                        <p className="text-[9px] text-slate-500">
+                          Filter Kategori: <span className="font-bold text-slate-800 uppercase">{catalogPrintFilterCategory}</span>
+                        </p>
+                      </div>
+
+                      <div className="text-left sm:text-right font-mono text-[9px] text-slate-600 space-y-0.5">
+                        <div>No. Dokumen: <span className="font-bold text-slate-900">{catalogPrintDocNo}</span></div>
+                        <div>Tanggal Terbit: <span className="font-bold text-slate-900">{new Date().toLocaleDateString("id-ID", { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span></div>
+                        <div>Total Produk: <span className="font-bold text-slate-900">{catalogPrintSelectedIds.length} Perangkat</span></div>
+                      </div>
+                    </div>
+
+                    {/* Rendering Items */}
+                    {catalogPrintSelectedIds.length === 0 ? (
+                      <div className="py-20 text-center border-2 border-dashed border-slate-200 rounded-3xl bg-slate-50/50">
+                        <Icons.Inbox className="h-10 w-10 text-slate-300 mx-auto mb-2" />
+                        <p className="text-slate-400 font-bold text-xs">Tidak ada item yang dipilih untuk dicetak.</p>
+                        <p className="text-[10px] text-slate-500 mt-1">Silakan centang item di panel kiri untuk memuat isi katalog.</p>
+                      </div>
+                    ) : (
+                      (() => {
+                        const itemsToPrint = catalogProducts.filter(p => catalogPrintSelectedIds.includes(p.id));
+
+                        {/* TABLE LAYOUT */}
+                        if (catalogPrintLayout === "table") {
+                          return (
+                            <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm print-avoid-break">
+                              <table className="w-full text-left border-collapse">
+                                <thead>
+                                  <tr className="bg-slate-50 text-slate-700 uppercase font-black text-[9px] tracking-wider border-b border-slate-200">
+                                    <th className="p-3 w-12 text-center">No</th>
+                                    {catalogPrintShowImages && <th className="p-3 w-20 text-center">Visual</th>}
+                                    <th className="p-3">Detail Perangkat IT</th>
+                                    {catalogPrintShowSpecs && <th className="p-3">Spesifikasi Teknis Utama</th>}
+                                    {catalogPrintShowPrices && <th className="p-3 text-right w-40 font-black">Estimasi Harga Acuan</th>}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {itemsToPrint.map((prod, index) => (
+                                    <tr key={prod.id} className="border-b border-slate-100 last:border-b-0 text-xs hover:bg-slate-50/40 transition-colors print-avoid-break">
+                                      <td className="p-3 text-center text-slate-500 font-mono font-bold">
+                                        {index + 1}
+                                      </td>
+                                      {catalogPrintShowImages && (
+                                        <td className="p-3 text-center">
+                                          {prod.image ? (
+                                            <div className="w-14 h-14 rounded-xl overflow-hidden border border-slate-200/70 mx-auto bg-slate-50 shadow-sm shrink-0">
+                                              <img src={prod.image} alt={prod.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                            </div>
+                                          ) : (
+                                            <div className="w-14 h-14 rounded-xl border border-dashed border-slate-200 bg-slate-50 flex items-center justify-center text-slate-400 mx-auto text-[9px] font-bold">
+                                              No Img
+                                            </div>
+                                          )}
+                                        </td>
+                                      )}
+                                      <td className="p-3">
+                                        <h4 className="font-extrabold text-slate-900 text-xs sm:text-sm leading-snug">{prod.name}</h4>
+                                        <span className="inline-block mt-1 text-[8px] uppercase tracking-wider bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-bold border border-slate-200">
+                                          {prod.category}
+                                        </span>
+                                        <p className="text-[10px] text-slate-500 mt-1 leading-normal max-w-[280px]">
+                                          {prod.description}
+                                        </p>
+                                      </td>
+                                      {catalogPrintShowSpecs && (
+                                        <td className="p-3">
+                                          <ul className="list-disc pl-4 text-[10px] text-slate-600 space-y-1">
+                                            {prod.specifications.map((spec, sIdx) => (
+                                              <li key={sIdx} className="leading-tight font-medium">{spec}</li>
+                                            ))}
+                                          </ul>
+                                        </td>
+                                      )}
+                                      {catalogPrintShowPrices && (
+                                        <td className="p-3 text-right font-mono font-black text-slate-900 text-xs">
+                                          <span className="text-indigo-800 bg-indigo-50 border border-indigo-100/80 px-2.5 py-1.5 rounded-xl inline-block shadow-sm whitespace-nowrap">
+                                            {prod.estimatedPriceRange}
+                                          </span>
+                                        </td>
+                                      )}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          );
+                        }
+
+                        {/* DETAILED LIST LAYOUT */}
+                        if (catalogPrintLayout === "list") {
+                          return (
+                            <div className="space-y-4">
+                              {itemsToPrint.map((prod, index) => (
+                                <div key={prod.id} className="border border-slate-200 rounded-2xl p-4 bg-white hover:shadow-md transition-all flex flex-col md:flex-row gap-4 print-avoid-break">
+                                  {catalogPrintShowImages && prod.image && (
+                                    <div className="w-full md:w-32 h-32 md:h-auto rounded-xl overflow-hidden border border-slate-200 bg-slate-50 shrink-0 shadow-sm">
+                                      <img src={prod.image} alt={prod.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                    </div>
+                                  )}
+                                  <div className="flex-1 space-y-2">
+                                    <div className="flex justify-between items-start gap-4">
+                                      <div>
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-xs font-mono font-bold bg-slate-900 text-white w-5 h-5 rounded-full flex items-center justify-center shrink-0 shadow">
+                                            {index + 1}
+                                          </span>
+                                          <h4 className="font-extrabold text-slate-900 text-sm sm:text-base">{prod.name}</h4>
+                                        </div>
+                                        <span className="inline-block mt-1.5 text-[8px] uppercase tracking-wider bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full font-black border border-indigo-100">
+                                          {prod.category}
+                                        </span>
+                                      </div>
+
+                                      {catalogPrintShowPrices && (
+                                        <div className="text-right shrink-0">
+                                          <span className="block text-[8px] text-slate-400 font-extrabold uppercase tracking-widest">Estimasi Harga</span>
+                                          <span className="font-mono font-black text-xs text-indigo-800 bg-indigo-50/50 border border-indigo-100 px-2.5 py-1 rounded-xl block mt-0.5">
+                                            {prod.estimatedPriceRange}
+                                          </span>
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    <p className="text-[10px] text-slate-500 leading-normal border-t border-slate-100 pt-1.5">
+                                      {prod.description}
+                                    </p>
+
+                                    {catalogPrintShowSpecs && (
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-100 mt-2">
+                                        <div className="col-span-full text-[9px] uppercase font-black text-slate-400 tracking-wider">Spesifikasi Utama:</div>
+                                        {prod.specifications.map((spec, sIdx) => (
+                                          <div key={sIdx} className="text-[10px] text-slate-700 font-medium flex items-start space-x-1.5">
+                                            <span className="text-indigo-500 shrink-0 select-none">•</span>
+                                            <span className="leading-tight">{spec}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        }
+
+                        {/* MODERN BENTO/GRID LAYOUT */}
+                        return (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            {itemsToPrint.map((prod, index) => (
+                              <div key={prod.id} className="border border-slate-200 rounded-3xl p-4 bg-white hover:shadow-md transition-all flex flex-col justify-between space-y-4 print-avoid-break">
+                                <div className="space-y-3">
+                                  <div className="flex justify-between items-start gap-3">
+                                    <div className="space-y-1">
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="text-[9px] font-mono font-bold bg-slate-900 text-white w-4 h-4 rounded-full flex items-center justify-center shadow shrink-0">
+                                          {index + 1}
+                                        </span>
+                                        <h4 className="font-extrabold text-slate-900 text-xs sm:text-sm line-clamp-2 leading-snug">{prod.name}</h4>
+                                      </div>
+                                      <span className="inline-block text-[8px] uppercase tracking-wider bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-bold border border-slate-200">
+                                        {prod.category}
+                                      </span>
+                                    </div>
+
+                                    {catalogPrintShowQr && (
+                                      <div className="bg-white border border-slate-200 p-0.5 rounded-lg shrink-0 shadow-sm">
+                                        <img
+                                          src={`https://api.qrserver.com/v1/create-qr-code/?size=60x60&color=0f172a&data=${encodeURIComponent(typeof window !== "undefined" ? window.location.origin + "/product/" + prod.id : "https://ais-pre-berlxqagrxrt5v55xbqzsl-42487289899.asia-east1.run.app")}`}
+                                          alt="QR"
+                                          className="w-10 h-10"
+                                          referrerPolicy="no-referrer"
+                                        />
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  {catalogPrintShowImages && prod.image && (
+                                    <div className="w-full h-28 rounded-2xl overflow-hidden border border-slate-100 bg-slate-50 shadow-sm relative">
+                                      <img src={prod.image} alt={prod.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                    </div>
+                                  )}
+
+                                  <p className="text-[9px] text-slate-500 leading-normal line-clamp-3">
+                                    {prod.description}
+                                  </p>
+
+                                  {catalogPrintShowSpecs && (
+                                    <div className="bg-slate-50 p-2 rounded-xl border border-slate-100 space-y-1">
+                                      {prod.specifications.slice(0, 3).map((spec, sIdx) => (
+                                        <div key={sIdx} className="text-[9px] text-slate-600 truncate font-semibold flex items-center space-x-1">
+                                          <span className="text-indigo-400 shrink-0">•</span>
+                                          <span>{spec}</span>
+                                        </div>
+                                      ))}
+                                      {prod.specifications.length > 3 && (
+                                        <div className="text-[8px] text-slate-400 font-bold tracking-wider italic text-right">
+                                          +{prod.specifications.length - 3} spesifikasi lainnya
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+
+                                {catalogPrintShowPrices && (
+                                  <div className="bg-gradient-to-r from-slate-50 to-indigo-50/20 border border-slate-150/70 p-2.5 rounded-2xl flex items-center justify-between mt-auto">
+                                    <span className="text-[8px] uppercase font-black text-slate-400 tracking-wider">Estimasi Harga</span>
+                                    <span className="font-mono font-black text-[11px] text-indigo-800">
+                                      {prod.estimatedPriceRange}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()
+                    )}
+
+                    {/* Disclaimer Terms & Conditions */}
+                    <div className="border-t border-slate-200 pt-4 space-y-1.5 print-avoid-break">
+                      <h4 className="text-[9px] uppercase tracking-widest text-slate-400 font-bold">Catatan Penting Pengadaan (Disclaimer):</h4>
+                      <ol className="list-decimal pl-4 text-[9px] text-slate-500 space-y-0.5 leading-relaxed font-semibold">
+                        <li>Estimasi harga acuan di atas bersifat referensi awal (indikatif) dan tidak mengikat secara hukum sebelum terbit SPH resmi dari PT BBS.</li>
+                        <li>Harga riil dapat bervariasi bergantung pada jumlah volume unit (grosir/project discount), fluktuasi valuta asing, serta durasi garansi kustom on-site.</li>
+                        <li>Setiap unit dilindungi garansi resmi distributor utama nasional yang didukung penuh oleh tim insinyur PT Berkah Bintang Solusindo.</li>
+                      </ol>
+                    </div>
+
+                  </div>
+
+                  {/* Sign-Off / Signature and Verification stamp blocks */}
+                  {catalogPrintShowSignature && (
+                    <div className="grid grid-cols-2 gap-6 pt-6 border-t border-slate-200 items-end print-avoid-break z-10">
+                      <div className="text-slate-400 text-[8px] leading-relaxed">
+                        <p className="font-black text-slate-700 uppercase tracking-widest text-[9px]">Verifikasi Digital Dokumen:</p>
+                        <p className="font-semibold text-slate-500 mt-1">ID Dokumen: BBS-CAT-SPEC-{catalogPrintFilterCategory.substring(0,3).toUpperCase()}-{new Date().getFullYear()}</p>
+                        <p className="font-semibold text-slate-500">Status Integritas: <span className="text-emerald-600 font-extrabold uppercase">AKTIF & TERVALIDASI SISTEM</span></p>
+                        <p className="mt-1">Dicetak secara real-time dari sistem e-procurement resmi PT Berkah Bintang Solusindo.</p>
+                      </div>
+
+                      <div className="text-center space-y-1 w-52 ml-auto relative">
+                        {/* Styled Stamp seal */}
+                        <div className="absolute -top-12 left-2 border-4 border-double border-indigo-600/30 text-indigo-600/30 font-mono text-[9px] font-black uppercase tracking-widest rounded-2xl px-3.5 py-1.5 transform -rotate-12 select-none pointer-events-none">
+                          PT BBS VALIDATED <br />
+                          <span className="text-[7px] font-bold">OFFICIAL PROCUREMENT</span>
+                        </div>
+                        
+                        <p className="text-slate-500 text-[9px] pb-10 font-bold">
+                          Hormat Kami,<br />
+                          <strong className="text-slate-800 text-[10px]">PT Berkah Bintang Solusindo</strong>
+                        </p>
+                        
+                        <p className="font-black text-slate-800 border-t border-slate-300 pt-1 text-[10px] uppercase tracking-wide">
+                          Departemen Estimasi Procurement
+                        </p>
+                        <p className="text-[8px] text-slate-400 font-bold uppercase tracking-wider">
+                          PT Berkah Bintang Solusindo
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Page Footer */}
+                  <div className="mt-8 pt-2 border-t border-slate-100 flex justify-between items-center text-[8px] font-mono text-slate-400 relative z-10">
+                    <span>© {new Date().getFullYear()} PT Berkah Bintang Solusindo</span>
+                    <span>Halaman 1 dari 1</span>
+                    <span>Dokumen Resmi Sistem E-Procurement</span>
+                  </div>
+
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ==================================== */}
       {/* MODAL VIEW: PRODUCT QR CODE MODAL     */}
       {/* ==================================== */}
@@ -13241,6 +15617,398 @@ export default function App() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ======================================================= */}
+      {/* MODAL VIEW: CUSTOM FILTER SELECTION CATALOG QR CODE     */}
+      {/* ======================================================= */}
+      {(() => {
+        const buildCatalogFilterUrl = () => {
+          const origin = typeof window !== "undefined" ? window.location.origin + window.location.pathname : "";
+          const params = new URLSearchParams();
+          
+          if (customQrIncludeCategory && catalogCategory && catalogCategory !== "Semua") {
+            params.set("category", catalogCategory);
+          }
+          if (customQrIncludeSearch && catalogSearch) {
+            params.set("search", catalogSearch);
+          }
+          if (customQrIncludeSort && catalogSort && catalogSort !== "none") {
+            params.set("sort", catalogSort);
+          }
+          const queryString = params.toString();
+          return queryString ? `${origin}?${queryString}` : origin;
+        };
+
+        return showCustomCatalogQrModal && (
+          <div className="fixed inset-0 z-[120] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-fadeIn no-print" id="custom-catalog-qr-modal">
+            <style>{`
+              @media print {
+                body > * {
+                  display: none !important;
+                }
+                #custom-filter-qr-card-for-printing {
+                  display: flex !important;
+                  position: absolute !important;
+                  left: 50% !important;
+                  top: 50% !important;
+                  transform: translate(-50%, -50%) !important;
+                  width: auto !important;
+                  height: auto !important;
+                  background: white !important;
+                  color: black !important;
+                  z-index: 99999999 !important;
+                }
+              }
+            `}</style>
+
+            <div className="bg-slate-900 border border-white/10 rounded-3xl w-full max-w-4xl overflow-hidden shadow-2xl flex flex-col md:flex-row h-auto md:h-[620px] animate-scaleUp">
+              
+              {/* Left Sidebar Config Panel */}
+              <div className="w-full md:w-96 bg-slate-950 border-r border-white/5 p-6 flex flex-col justify-between shrink-0 overflow-y-auto">
+                <div className="space-y-6">
+                  {/* Header */}
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2.5 bg-indigo-500/15 border border-indigo-500/35 rounded-xl text-indigo-400">
+                      <Icons.QrCode className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-black text-white uppercase tracking-wider">QR Code Filter</h3>
+                      <p className="text-[10px] text-slate-400">Buat Tautan Akses Spesifik Kategori</p>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-white/5 pt-5 space-y-5">
+                    {/* Active Filters Toggle Section */}
+                    <div className="space-y-3">
+                      <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Konfigurasi Parameter</label>
+                      <div className="space-y-2 bg-slate-900/60 p-3.5 border border-white/5 rounded-xl">
+                        
+                        {/* Category Switch */}
+                        <label className="flex items-start space-x-3 cursor-pointer select-none group">
+                          <input
+                            type="checkbox"
+                            checked={customQrIncludeCategory && catalogCategory !== "Semua"}
+                            disabled={catalogCategory === "Semua"}
+                            onChange={(e) => setCustomQrIncludeCategory(e.target.checked)}
+                            className="mt-0.5 rounded bg-slate-950 border-white/10 text-indigo-600 focus:ring-0 h-4 w-4 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                          />
+                          <div className="text-left">
+                            <span className={`text-xs font-bold transition-colors block ${catalogCategory === "Semua" ? "text-slate-500" : "text-slate-200 group-hover:text-white"}`}>Kategori Produk</span>
+                            <span className="text-[10px] text-slate-400 block truncate max-w-[200px]">
+                              {catalogCategory === "Semua" ? "Tidak ada filter aktif" : `Filter aktif: "${catalogCategory}"`}
+                            </span>
+                          </div>
+                        </label>
+
+                        {/* Search Term Switch */}
+                        <label className="flex items-start space-x-3 cursor-pointer select-none group border-t border-white/5 pt-2.5 mt-2.5">
+                          <input
+                            type="checkbox"
+                            checked={customQrIncludeSearch && catalogSearch !== ""}
+                            disabled={catalogSearch === ""}
+                            onChange={(e) => setCustomQrIncludeSearch(e.target.checked)}
+                            className="mt-0.5 rounded bg-slate-950 border-white/10 text-indigo-600 focus:ring-0 h-4 w-4 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                          />
+                          <div className="text-left">
+                            <span className={`text-xs font-bold transition-colors block ${catalogSearch === "" ? "text-slate-500" : "text-slate-200 group-hover:text-white"}`}>Kata Kunci Pencarian</span>
+                            <span className="text-[10px] text-slate-400 block truncate max-w-[200px]">
+                              {catalogSearch === "" ? "Tidak ada filter aktif" : `Cari: "${catalogSearch}"`}
+                            </span>
+                          </div>
+                        </label>
+
+                        {/* Sort Switch */}
+                        <label className="flex items-start space-x-3 cursor-pointer select-none group border-t border-white/5 pt-2.5 mt-2.5">
+                          <input
+                            type="checkbox"
+                            checked={customQrIncludeSort && catalogSort !== "none"}
+                            disabled={catalogSort === "none"}
+                            onChange={(e) => setCustomQrIncludeSort(e.target.checked)}
+                            className="mt-0.5 rounded bg-slate-950 border-white/10 text-indigo-600 focus:ring-0 h-4 w-4 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                          />
+                          <div className="text-left">
+                            <span className={`text-xs font-bold transition-colors block ${catalogSort === "none" ? "text-slate-500" : "text-slate-200 group-hover:text-white"}`}>Urutan Tampilan</span>
+                            <span className="text-[10px] text-slate-400 block truncate max-w-[200px]">
+                              {catalogSort === "none" ? "Tidak ada filter aktif" : `Urutan: "${catalogSort}"`}
+                            </span>
+                          </div>
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* QR Card Theme */}
+                    <div className="space-y-1.5">
+                      <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Tema Kartu QR</label>
+                      <div className="grid grid-cols-3 gap-1 bg-slate-900/50 p-1 border border-white/5 rounded-xl text-[10px] font-bold">
+                        {(["print", "dark", "indigo"] as const).map((theme) => (
+                          <button
+                            key={theme}
+                            onClick={() => setCustomQrTheme(theme)}
+                            className={`py-1.5 rounded-lg transition-all capitalize cursor-pointer ${
+                              customQrTheme === theme
+                                ? "bg-indigo-600 text-white shadow-md"
+                                : "text-slate-400 hover:text-white"
+                            }`}
+                          >
+                            {theme === "print" ? "Printer" : theme === "dark" ? "Slate" : "Indigo"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* QR Card Size */}
+                    <div className="space-y-1.5">
+                      <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Ukuran Kartu</label>
+                      <div className="grid grid-cols-3 gap-1 bg-slate-900/50 p-1 border border-white/5 rounded-xl text-[10px] font-bold">
+                        {(["small", "medium", "large"] as const).map((sz) => (
+                          <button
+                            key={sz}
+                            onClick={() => setCustomQrSize(sz)}
+                            className={`py-1.5 rounded-lg transition-all capitalize cursor-pointer ${
+                              customQrSize === sz
+                                ? "bg-indigo-600 text-white shadow-md"
+                                : "text-slate-400 hover:text-white"
+                            }`}
+                          >
+                            {sz === "small" ? "Kecil" : sz === "medium" ? "Sedang" : "Besar"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="pt-6 border-t border-white/5 space-y-2 mt-4 md:mt-0">
+                  <button
+                    onClick={() => {
+                      window.print();
+                    }}
+                    className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs rounded-xl shadow-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Icons.Printer className="h-4 w-4" />
+                    <span>Cetak Kartu QR</span>
+                  </button>
+                  <button
+                    onClick={() => setShowCustomCatalogQrModal(false)}
+                    className="w-full py-2.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white font-bold text-xs rounded-xl border border-white/5 transition-all flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    Tutup
+                  </button>
+                </div>
+              </div>
+
+              {/* Right Live Preview Area */}
+              <div className="flex-1 bg-slate-950 p-6 flex flex-col justify-between overflow-y-auto">
+                {/* Preview Header */}
+                <div className="mb-4 flex items-center justify-between border-b border-white/5 pb-3">
+                  <div className="text-left">
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                      <Icons.Eye className="h-4 w-4 text-indigo-400" />
+                      Preview Kartu QR Filter
+                    </h4>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Desain tampilan stiker atau tag fisik kartu akses</p>
+                  </div>
+                  <span className="text-[9px] bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 px-2 py-0.5 rounded-full font-mono font-bold uppercase">
+                    Custom QR
+                  </span>
+                </div>
+
+                {/* Dynamic Sticker Preview */}
+                <div className="flex-1 flex items-center justify-center p-4">
+                  {(() => {
+                    const filterUrl = buildCatalogFilterUrl();
+                    const encodedUrl = encodeURIComponent(filterUrl);
+                    
+                    // Public API to generate high quality QR
+                    const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&color=${
+                      customQrTheme === "print" ? "000000" : customQrTheme === "indigo" ? "6366f1" : "ffffff"
+                    }&bgcolor=${
+                      customQrTheme === "print" ? "ffffff" : "0f172a"
+                    }&data=${encodedUrl}`;
+
+                    return (
+                      <div
+                        className={`rounded-2xl p-5 border flex flex-col justify-between transition-all duration-300 ${
+                          customQrTheme === "print"
+                            ? "bg-white text-slate-900 border-slate-200 shadow-xl"
+                            : customQrTheme === "indigo"
+                            ? "bg-gradient-to-br from-indigo-950 via-slate-900 to-indigo-900 text-white border-indigo-500/30 shadow-[0_0_25px_rgba(99,102,241,0.25)]"
+                            : "bg-slate-900 text-white border-white/10 shadow-2xl"
+                        } ${
+                          customQrSize === "small" ? "w-64 h-80" : customQrSize === "medium" ? "w-72 h-96" : "w-80 h-[430px]"
+                        }`}
+                      >
+                        {/* Sticker Header */}
+                        <div className={`border-b pb-2 flex items-center justify-between ${
+                          customQrTheme === "print" ? "border-slate-200" : "border-white/10"
+                        }`}>
+                          <div className="text-left">
+                            <span className={`text-[9px] font-black tracking-widest uppercase block ${
+                              customQrTheme === "print" ? "text-indigo-600" : "text-indigo-400"
+                            }`}>BBS CATALOG</span>
+                            <span className="text-[7px] text-slate-400 uppercase tracking-wider">E-Procurement Access</span>
+                          </div>
+                          <Icons.QrCode className={`h-4 w-4 ${
+                            customQrTheme === "print" ? "text-slate-400" : "text-indigo-400"
+                          }`} />
+                        </div>
+
+                        {/* QR Code and Title */}
+                        <div className="flex flex-col items-center justify-center my-4 flex-1 space-y-3">
+                          <div className={`p-2.5 rounded-xl border ${
+                            customQrTheme === "print" ? "bg-slate-50 border-slate-100" : "bg-slate-950 border-white/5"
+                          }`}>
+                            <img
+                              src={qrCodeUrl}
+                              alt="Custom Filter QR Code"
+                              className={`mx-auto rounded ${
+                                customQrSize === "small" ? "w-28 h-28" : customQrSize === "medium" ? "w-36 h-36" : "w-44 h-44"
+                              }`}
+                              referrerPolicy="no-referrer"
+                            />
+                          </div>
+                          <div className="text-center space-y-1 w-full px-2">
+                            <span className={`font-black tracking-wider uppercase block truncate ${
+                              customQrTheme === "print" ? "text-slate-900" : "text-white"
+                            } ${
+                              customQrSize === "small" ? "text-[11px]" : customQrSize === "medium" ? "text-xs" : "text-sm"
+                            }`}>
+                              {customQrIncludeCategory && catalogCategory !== "Semua" ? catalogCategory : "Katalog BBS"}
+                            </span>
+                            <span className="text-[8px] font-mono text-slate-400 block truncate">
+                              BBS-CAT-{new Date().getFullYear()}-{catalogCategory.substring(0,3).toUpperCase()}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Metadata Summary footer */}
+                        <div className={`text-[10px] space-y-1 border-t pt-2.5 text-left ${
+                          customQrTheme === "print" ? "border-slate-200 text-slate-600" : "border-white/10 text-slate-400"
+                        }`}>
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="font-bold">Kategori:</span>
+                            <span className="truncate max-w-[150px]">{customQrIncludeCategory && catalogCategory !== "Semua" ? catalogCategory : "Semua Kategori"}</span>
+                          </div>
+                          {customQrIncludeSearch && catalogSearch && (
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="font-bold">Kata Kunci:</span>
+                              <span className="truncate max-w-[150px]">"{catalogSearch}"</span>
+                            </div>
+                          )}
+                          {customQrIncludeSort && catalogSort !== "none" && (
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="font-bold">Urutan:</span>
+                              <span className="capitalize">{catalogSort.replace(/-/g, " ")}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* Dynamic URL Copy Area */}
+                <div className="bg-slate-900/80 border border-white/5 rounded-xl p-3.5 mt-4 text-left">
+                  <span className="text-[10px] uppercase font-black tracking-wider text-slate-500 block mb-1.5">Tautan Filtered Catalog:</span>
+                  <div className="flex items-center justify-between gap-2.5">
+                    <p className="text-xs font-mono text-indigo-300 truncate select-all flex-1">{buildCatalogFilterUrl()}</p>
+                    <button
+                      onClick={() => {
+                        if (typeof window !== "undefined") {
+                          navigator.clipboard.writeText(buildCatalogFilterUrl());
+                          showToast("Link filtered catalog berhasil disalin!", "success");
+                        }
+                      }}
+                      className="px-3 py-1 bg-white/5 hover:bg-white/10 border border-white/5 text-[10px] font-bold text-indigo-300 hover:text-indigo-200 rounded-lg transition-all cursor-pointer whitespace-nowrap active:scale-95"
+                    >
+                      Salin Link
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* PRINT-ONLY EMBEDDED SINGLE STICKER PREVIEW CONTAINER */}
+      {showCustomCatalogQrModal && (
+        <div id="custom-filter-qr-card-for-printing" className="hidden print:block bg-white text-black p-6 rounded-2xl border border-slate-300 max-w-sm mx-auto text-center">
+          {(() => {
+            const buildCatalogFilterUrl = () => {
+              const origin = typeof window !== "undefined" ? window.location.origin + window.location.pathname : "";
+              const params = new URLSearchParams();
+              
+              if (customQrIncludeCategory && catalogCategory && catalogCategory !== "Semua") {
+                params.set("category", catalogCategory);
+              }
+              if (customQrIncludeSearch && catalogSearch) {
+                params.set("search", catalogSearch);
+              }
+              if (customQrIncludeSort && catalogSort && catalogSort !== "none") {
+                params.set("sort", catalogSort);
+              }
+              const queryString = params.toString();
+              return queryString ? `${origin}?${queryString}` : origin;
+            };
+
+            const filterUrl = buildCatalogFilterUrl();
+            const encodedUrl = encodeURIComponent(filterUrl);
+            const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&color=000000&bgcolor=ffffff&data=${encodedUrl}`;
+
+            return (
+              <div className="w-72 h-[400px] flex flex-col justify-between p-4 bg-white text-black">
+                <div className="border-b border-slate-200 pb-2 mb-4 flex items-center justify-between">
+                  <div className="text-left">
+                    <span className="text-[10px] font-black tracking-widest uppercase block text-slate-900">BBS CATALOG</span>
+                    <span className="text-[7px] text-slate-500 uppercase tracking-wider">E-Procurement Access</span>
+                  </div>
+                  <Icons.QrCode className="h-4 w-4 text-slate-800" />
+                </div>
+
+                <div className="flex flex-col items-center justify-center flex-1 space-y-4">
+                  <div className="p-2 bg-white border border-slate-200 rounded-lg">
+                    <img
+                      src={qrCodeUrl}
+                      alt="Filter QR Code"
+                      className="w-40 h-40"
+                      referrerPolicy="no-referrer"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="font-black text-xs text-slate-900 tracking-wider uppercase">
+                      {customQrIncludeCategory && catalogCategory !== "Semua" ? catalogCategory : "Katalog BBS"}
+                    </h3>
+                    <p className="text-[8px] font-mono text-slate-500">
+                      BBS-CAT-{new Date().getFullYear()}-{catalogCategory.substring(0,3).toUpperCase()}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="text-[10px] space-y-1 border-t border-slate-200 pt-3 text-left text-slate-600 mt-4">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold">Kategori:</span>
+                    <span className="truncate max-w-[150px]">{customQrIncludeCategory && catalogCategory !== "Semua" ? catalogCategory : "Semua Kategori"}</span>
+                  </div>
+                  {customQrIncludeSearch && catalogSearch && (
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold">Kata Kunci:</span>
+                      <span className="truncate max-w-[150px]">"{catalogSearch}"</span>
+                    </div>
+                  )}
+                  {customQrIncludeSort && catalogSort !== "none" && (
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold">Urutan:</span>
+                      <span className="capitalize">{catalogSort.replace(/-/g, " ")}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -14537,6 +17305,7 @@ export default function App() {
             addToCart(product);
             incrementSessionScannedCount();
             incrementTotalScannedCount();
+            setScannedSuccessToast({ visible: true, productName: product.name });
             if (isCatalogScanTriggered) {
               setShowSuccessFlash(true);
               setTimeout(() => setShowSuccessFlash(false), 1000);
@@ -15020,6 +17789,2166 @@ export default function App() {
                         {barCodeValue}
                       </span>
                     )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* DEDICATED CATALOG PRINT PREVIEW MODAL */}
+      {showCatalogPrintModal && (
+        <div className="fixed inset-0 z-[130] bg-slate-950/95 backdrop-blur-md flex flex-col h-screen no-print" id="catalog-print-preview-modal">
+          <style>{`
+            @media print {
+              body > * {
+                display: none !important;
+              }
+              #catalog-print-wrapper-for-printing {
+                display: block !important;
+                position: absolute !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 100% !important;
+                height: auto !important;
+                background: white !important;
+                color: #0f172a !important;
+                z-index: 99999999 !important;
+                font-family: ui-sans-serif, system-ui, sans-serif !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+              }
+              .print-a4-page {
+                width: 210mm !important;
+                height: 297mm !important;
+                padding: 20mm !important;
+                margin: 0 auto !important;
+                page-break-after: always !important;
+                break-after: page !important;
+                box-shadow: none !important;
+                border: none !important;
+                display: flex !important;
+                flex-direction: column !important;
+                justify-content: space-between !important;
+                background: white !important;
+                color: #0f172a !important;
+                position: relative !important;
+                box-sizing: border-box !important;
+              }
+              .page-break-inside-avoid {
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+              }
+            }
+          `}</style>
+
+          {/* Modal Header */}
+          <div className="bg-slate-900 border-b border-white/10 px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-4 text-white shrink-0 shadow-lg">
+            <div className="flex items-center space-x-3">
+              <div className="p-2.5 bg-indigo-500/15 border border-indigo-500/30 rounded-xl text-indigo-400">
+                <Icons.Printer className="h-5 w-5" />
+              </div>
+              <div>
+                <h4 className="text-sm font-black leading-none uppercase tracking-wider">A4 Catalog Print Engine</h4>
+                <span className="text-[10px] text-slate-400 font-medium">Kop Surat Resmi BBS, Penataan Layout Halaman Otomatis, & SKU Search Terintegrasi</span>
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-3">
+              <button
+                type="button"
+                onClick={() => {
+                  try { playClickSound(); } catch {}
+                  window.print();
+                }}
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 hover:scale-[1.02] active:scale-95 text-white text-xs font-black uppercase tracking-wider rounded-xl transition-all flex items-center space-x-2 cursor-pointer shadow-lg shadow-emerald-600/10 border border-emerald-500/30"
+              >
+                <Icons.Printer className="h-4 w-4" />
+                <span>Cetak Katalog (A4)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCatalogPrintModal(false);
+                  try { playClickSound(); } catch {}
+                }}
+                className="p-2.5 bg-slate-800 hover:bg-slate-700 hover:text-white text-slate-400 rounded-xl transition-colors cursor-pointer border border-white/10"
+                title="Tutup Pratinjau"
+              >
+                <Icons.X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Main Dashboard Layout */}
+          <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+            
+            {/* Left Control Column */}
+            <div className="w-full lg:w-[360px] bg-slate-950 border-r border-white/5 p-6 flex flex-col justify-between shrink-0 overflow-y-auto space-y-6">
+              <div className="space-y-5">
+                
+                {/* Section title */}
+                <div>
+                  <h5 className="text-[10px] uppercase font-bold text-indigo-400 tracking-wider mb-1">Setelan Dokumen A4</h5>
+                  <p className="text-[11px] text-slate-500 leading-normal">Sesuaikan kop, konten, layout, dan unit catalog sebelum dicetak.</p>
+                </div>
+
+                {/* Form Fields */}
+                <div className="space-y-4 border-t border-white/5 pt-4">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Judul Katalog</label>
+                    <input
+                      type="text"
+                      value={catalogPrintTitle}
+                      onChange={(e) => setCatalogPrintTitle(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                      placeholder="Masukkan judul dokumen..."
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">No. Dokumen Acuan</label>
+                    <input
+                      type="text"
+                      value={catalogPrintDocNo}
+                      onChange={(e) => setCatalogPrintDocNo(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono"
+                      placeholder="No. dokumen..."
+                    />
+                  </div>
+
+                  {/* Layout Selector */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Layout Cetak Perangkat</label>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {(["table", "list", "grid"] as const).map((mode) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => setCatalogPrintLayout(mode)}
+                          className={`py-2 text-[10px] font-extrabold uppercase rounded-lg border text-center transition-all cursor-pointer ${
+                            catalogPrintLayout === mode
+                              ? "bg-indigo-600 border-indigo-500 text-white shadow-md shadow-indigo-600/15"
+                              : "bg-slate-900/50 border-white/5 text-slate-400 hover:text-slate-200"
+                          }`}
+                        >
+                          {mode === "table" ? "Tabel" : mode === "list" ? "List Spek" : "Grid"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Filter Category */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Kategori Katalog</label>
+                    <select
+                      value={catalogPrintFilterCategory}
+                      onChange={(e) => setCatalogPrintFilterCategory(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-900 border border-white/10 rounded-xl text-xs text-slate-200 focus:outline-none focus:border-indigo-500 cursor-pointer"
+                    >
+                      <option value="Semua">Semua Kategori ({catalogProducts.length} Items)</option>
+                      {Array.from(new Set(catalogProducts.map(p => p.category))).map(cat => (
+                        <option key={cat} value={cat}>
+                          {cat} ({catalogProducts.filter(p => p.category === cat).length})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Content Toggles */}
+                  <div className="space-y-2 border-t border-white/5 pt-4">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Elemen Dokumen</span>
+                    
+                    <label className="flex items-center space-x-2.5 text-xs text-slate-300 hover:text-white cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={catalogPrintShowCover}
+                        onChange={(e) => setCatalogPrintShowCover(e.target.checked)}
+                        className="rounded bg-slate-900 border-white/10 text-indigo-600 focus:ring-0 h-4 w-4 cursor-pointer"
+                      />
+                      <span>Sertakan Cover Page Resmi</span>
+                    </label>
+
+                    <label className="flex items-center space-x-2.5 text-xs text-slate-300 hover:text-white cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={catalogPrintShowImages}
+                        onChange={(e) => setCatalogPrintShowImages(e.target.checked)}
+                        className="rounded bg-slate-900 border-white/10 text-indigo-600 focus:ring-0 h-4 w-4 cursor-pointer"
+                      />
+                      <span>Tampilkan Gambar Produk</span>
+                    </label>
+
+                    <label className="flex items-center space-x-2.5 text-xs text-slate-300 hover:text-white cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={catalogPrintShowSpecs}
+                        onChange={(e) => setCatalogPrintShowSpecs(e.target.checked)}
+                        className="rounded bg-slate-900 border-white/10 text-indigo-600 focus:ring-0 h-4 w-4 cursor-pointer"
+                      />
+                      <span>Tampilkan Spesifikasi Detail</span>
+                    </label>
+
+                    <label className="flex items-center space-x-2.5 text-xs text-slate-300 hover:text-white cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={catalogPrintShowPrices}
+                        onChange={(e) => setCatalogPrintShowPrices(e.target.checked)}
+                        className="rounded bg-slate-900 border-white/10 text-indigo-600 focus:ring-0 h-4 w-4 cursor-pointer"
+                      />
+                      <span>Tampilkan Rentang Harga</span>
+                    </label>
+
+                    <label className="flex items-center space-x-2.5 text-xs text-slate-300 hover:text-white cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={catalogPrintShowQr}
+                        onChange={(e) => setCatalogPrintShowQr(e.target.checked)}
+                        className="rounded bg-slate-900 border-white/10 text-indigo-600 focus:ring-0 h-4 w-4 cursor-pointer"
+                      />
+                      <span>Tampilkan QR Code Verifikasi</span>
+                    </label>
+
+                    <label className="flex items-center space-x-2.5 text-xs text-slate-300 hover:text-white cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={catalogPrintShowSignature}
+                        onChange={(e) => setCatalogPrintShowSignature(e.target.checked)}
+                        className="rounded bg-slate-900 border-white/10 text-indigo-600 focus:ring-0 h-4 w-4 cursor-pointer"
+                      />
+                      <span>Tampilkan Kolom Tanda Tangan</span>
+                    </label>
+
+                    <label className="flex items-center space-x-2.5 text-xs text-slate-300 hover:text-white cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={catalogPrintWatermark}
+                        onChange={(e) => setCatalogPrintWatermark(e.target.checked)}
+                        className="rounded bg-slate-900 border-white/10 text-indigo-600 focus:ring-0 h-4 w-4 cursor-pointer"
+                      />
+                      <span>Watermark Keaslian Dokumen</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Selected items count & Checklist block */}
+                <div className="border-t border-white/5 pt-4 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Item Yang Dicetak ({catalogPrintSelectedIds.length})</span>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setCatalogPrintSelectedIds(catalogProducts.map(p => p.id))}
+                        className="text-[9px] font-bold text-indigo-400 hover:text-white cursor-pointer"
+                      >
+                        Pilih Semua
+                      </button>
+                      <span className="text-slate-600 text-[9px]">|</span>
+                      <button
+                        type="button"
+                        onClick={() => setCatalogPrintSelectedIds([])}
+                        className="text-[9px] font-bold text-rose-400 hover:text-white cursor-pointer"
+                      >
+                        Kosongkan
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="max-h-40 overflow-y-auto border border-white/5 bg-slate-950/60 rounded-xl p-2 divide-y divide-white/5">
+                    {catalogProducts.map(prod => {
+                      const isChecked = catalogPrintSelectedIds.includes(prod.id);
+                      return (
+                        <label key={prod.id} className="flex items-center justify-between py-1.5 px-1 hover:bg-white/5 rounded transition-colors text-xs text-slate-300 hover:text-white cursor-pointer select-none">
+                          <div className="flex items-center space-x-2 min-w-0 pr-2">
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => {
+                                if (isChecked) {
+                                  setCatalogPrintSelectedIds(catalogPrintSelectedIds.filter(id => id !== prod.id));
+                                } else {
+                                  setCatalogPrintSelectedIds([...catalogPrintSelectedIds, prod.id]);
+                                }
+                              }}
+                              className="rounded bg-slate-900 border-white/10 text-indigo-600 h-3.5 w-3.5 cursor-pointer"
+                            />
+                            <span className="truncate font-medium">{prod.name}</span>
+                          </div>
+                          <span className="text-[9px] font-mono text-slate-500 shrink-0 uppercase">{prod.sku || "N/A"}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Bottom footer note */}
+              <div className="border-t border-white/5 pt-4 text-center">
+                <span className="text-[10px] text-slate-500 italic">PT Berkah Bintang Solusindo</span>
+              </div>
+            </div>
+
+            {/* Right Interactive Page Canvas */}
+            <div className="flex-1 overflow-auto bg-slate-950 p-8 flex flex-col items-center space-y-8">
+              
+              {/* Alert if no products chosen */}
+              {catalogProducts.filter(p => {
+                const matchesCategory = catalogPrintFilterCategory === "Semua" || p.category === catalogPrintFilterCategory;
+                const matchesSelected = catalogPrintSelectedIds.length === 0 || catalogPrintSelectedIds.includes(p.id);
+                return matchesCategory && matchesSelected;
+              }).length === 0 ? (
+                <div className="my-auto text-center p-8 bg-slate-900/30 border border-dashed border-white/10 rounded-2xl max-w-sm">
+                  <Icons.PackageX className="h-12 w-12 text-slate-600 mx-auto mb-3" />
+                  <h4 className="text-sm font-bold text-slate-300">Tidak Ada Item Terpilih</h4>
+                  <p className="text-xs text-slate-500 mt-1">Gunakan filter kategori atau centang daftar produk di panel kiri untuk memuat item.</p>
+                </div>
+              ) : (
+                (() => {
+                  const printableProductsLocal = catalogProducts.filter(p => {
+                    const matchesCategory = catalogPrintFilterCategory === "Semua" || p.category === catalogPrintFilterCategory;
+                    const matchesSelected = catalogPrintSelectedIds.length === 0 || catalogPrintSelectedIds.includes(p.id);
+                    return matchesCategory && matchesSelected;
+                  });
+
+                  // Dynamic Multi-page split simulation
+                  const itemsPerPage = catalogPrintLayout === "table" ? 8 : catalogPrintLayout === "grid" ? 4 : 3;
+                  const chunks: ProductItem[][] = [];
+                  for (let i = 0; i < printableProductsLocal.length; i += itemsPerPage) {
+                    chunks.push(printableProductsLocal.slice(i, i + itemsPerPage));
+                  }
+
+                  const totalPagesCount = chunks.length + (catalogPrintShowCover ? 1 : 0);
+
+                  return (
+                    <div className="space-y-8 w-full max-w-[210mm] animate-fadeIn" style={{ transform: `scale(${catalogPrintScale / 100})`, transformOrigin: "top center" }}>
+                      
+                      {/* 1. COVER PAGE SHEET (on screen preview) */}
+                      {catalogPrintShowCover && (
+                        <div className="bg-white text-slate-900 shadow-2xl p-12 relative flex flex-col justify-between aspect-[1/1.414] w-full border border-slate-200 select-none" style={{ boxSizing: "border-box" }}>
+                          
+                          {/* Top bar border */}
+                          <div className="h-3.5 bg-gradient-to-r from-indigo-600 via-indigo-900 to-emerald-600 rounded-full" />
+
+                          {/* Cover Body */}
+                          <div className="my-auto space-y-8 text-center py-10">
+                            <div className="inline-flex items-center space-x-2 px-4 py-1.5 bg-indigo-50 border border-indigo-100 rounded-full text-indigo-700 text-[10px] uppercase font-black tracking-widest">
+                              <Icons.Award className="h-4 w-4" />
+                              <span>E-Catalog Resmi Procurement IT</span>
+                            </div>
+
+                            <div className="space-y-4">
+                              <h1 className="text-4xl font-black tracking-tight text-slate-900 uppercase leading-none font-sans">
+                                PT BERKAH BINTANG SOLUSINDO
+                              </h1>
+                              <p className="text-sm font-bold text-indigo-600 tracking-widest uppercase font-mono">
+                                {catalogPrintTitle}
+                              </p>
+                            </div>
+
+                            <div className="w-20 h-1 bg-indigo-600 mx-auto rounded-full" />
+
+                            <p className="text-slate-500 text-xs max-w-md mx-auto leading-relaxed">
+                              Infrastruktur Jaringan Handal, Server Enterprise, Terminal Klien Berkinerja Tinggi, & Integrasi Sistem Teruji Standar TKDN.
+                            </p>
+
+                            {/* Verification Block */}
+                            <div className="max-w-sm mx-auto p-4 bg-slate-50 border border-slate-200 rounded-2xl text-center space-y-2">
+                              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">Verifikasi Validitas</span>
+                              <div className="flex items-center justify-center space-x-3.5">
+                                {catalogPrintShowQr && (
+                                  <div className="w-14 h-14 bg-white border border-slate-200 rounded-lg p-1 shrink-0 flex items-center justify-center">
+                                    <Icons.QrCode className="h-10 w-10 text-indigo-900" />
+                                  </div>
+                                )}
+                                <div className="text-left font-mono">
+                                  <p className="text-[10px] font-bold text-slate-800 uppercase">BBS Secure Archive</p>
+                                  <p className="text-[9px] text-slate-400">HASH-ID: {catalogPrintDocNo}-VALID</p>
+                                  <span className="inline-flex items-center text-[8px] px-1.5 py-0.5 bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold rounded mt-1">
+                                    ● RESMI & AKTIF
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Footer details */}
+                          <div className="border-t border-slate-100 pt-6 flex justify-between items-center text-[10px] text-slate-400">
+                            <div>
+                              <p className="font-extrabold text-slate-800 uppercase tracking-wider">Diterbitkan Oleh:</p>
+                              <p className="font-bold text-indigo-600">PT Berkah Bintang Solusindo</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="font-mono text-slate-500">Ref: {catalogPrintDocNo}</p>
+                              <p>Halaman 1 dari {totalPagesCount}</p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 2. CATALOG CONTENT PAGES */}
+                      {chunks.map((itemChunk, pageIdx) => {
+                        const currentPageNum = (catalogPrintShowCover ? 2 : 1) + pageIdx;
+                        return (
+                          <div key={pageIdx} className="bg-white text-slate-900 shadow-2xl p-12 relative flex flex-col justify-between aspect-[1/1.414] w-full border border-slate-200" style={{ boxSizing: "border-box" }}>
+                            
+                            {/* Standard BBS Corporate Header (Kop Surat) */}
+                            <div className="flex items-start justify-between border-b border-slate-200 pb-4 mb-4">
+                              <div className="space-y-1">
+                                <h2 className="text-sm font-black text-slate-900 tracking-tight uppercase leading-none">
+                                  PT BERKAH BINTANG SOLUSINDO
+                                </h2>
+                                <p className="text-[9px] text-indigo-600 font-extrabold uppercase tracking-widest">IT System Integrator & Enterprise Procurement</p>
+                                <p className="text-[8px] text-slate-500 leading-normal max-w-md">
+                                  Sudirman Central Business District, Lantai 18, Jakarta Selatan • info@berkahbintangsolusindo.com
+                                </p>
+                              </div>
+                              <div className="text-right shrink-0 font-sans">
+                                <span className="inline-block px-2 py-0.5 bg-indigo-50 border border-indigo-100 text-indigo-700 font-mono text-[8px] font-black rounded-md">
+                                  DOC-ID: {catalogPrintDocNo}
+                                </span>
+                                <p className="text-[8px] text-slate-400 mt-1">Dicetak: {new Date().toLocaleDateString("id-ID")}</p>
+                              </div>
+                            </div>
+
+                            {/* Watermark element */}
+                            {catalogPrintWatermark && (
+                              <div className="absolute inset-0 flex items-center justify-center select-none pointer-events-none opacity-[0.03] z-0 overflow-hidden">
+                                <div className="border-8 border-indigo-900 rounded-full w-[400px] h-[400px] flex flex-col items-center justify-center transform -rotate-12">
+                                  <span className="text-4xl font-black text-indigo-950 uppercase tracking-widest">BBS INDONESIA</span>
+                                  <span className="text-2xl font-bold text-indigo-950 uppercase tracking-wider mt-2">SECURE ORIGINAL</span>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Page Content Area */}
+                            <div className="flex-1 z-10 flex flex-col justify-start space-y-4">
+                              <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+                                <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">{catalogPrintTitle}</span>
+                                <span className="text-[9px] text-slate-500 font-bold">Kategori: {catalogPrintFilterCategory}</span>
+                              </div>
+
+                              {/* Layout 1: TABLE */}
+                              {catalogPrintLayout === "table" && (
+                                <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+                                  <table className="w-full text-left border-collapse text-[10px]">
+                                    <thead>
+                                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-800 font-extrabold uppercase tracking-wider">
+                                        <th className="p-2.5 text-center w-8">No</th>
+                                        {catalogPrintShowImages && <th className="p-2.5 w-12 text-center">Gambar</th>}
+                                        <th className="p-2.5 w-16 text-center">SKU</th>
+                                        <th className="p-2.5">Nama Perangkat & Spesifikasi</th>
+                                        {catalogPrintShowPrices && <th className="p-2.5 text-right w-24">Estimasi Harga</th>}
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100 text-slate-600">
+                                      {itemChunk.map((prod, idx) => {
+                                        const globalIdx = pageIdx * itemsPerPage + idx + 1;
+                                        return (
+                                          <tr key={prod.id} className="hover:bg-slate-50/40">
+                                            <td className="p-2.5 font-bold text-slate-800 text-center">{globalIdx}</td>
+                                            {catalogPrintShowImages && (
+                                              <td className="p-1 text-center">
+                                                {prod.image ? (
+                                                  <img src={prod.image} className="w-8 h-8 object-contain bg-slate-50 rounded mx-auto p-0.5" />
+                                                ) : (
+                                                  <div className="w-8 h-8 bg-slate-100 text-slate-400 rounded flex items-center justify-center font-bold text-[8px] mx-auto">N/A</div>
+                                                )}
+                                              </td>
+                                            )}
+                                            <td className="p-2.5 font-mono font-bold text-indigo-700 text-center uppercase">{prod.sku || "N/A"}</td>
+                                            <td className="p-2.5">
+                                              <div className="font-bold text-slate-900 leading-snug">{prod.name}</div>
+                                              <p className="text-[9px] text-slate-400 mt-0.5 line-clamp-1">{prod.description}</p>
+                                              {catalogPrintShowSpecs && prod.specifications && (
+                                                <div className="text-[8px] text-slate-500 font-mono mt-1 flex flex-wrap gap-1">
+                                                  {prod.specifications.slice(0, 3).map((spec, sIdx) => (
+                                                    <span key={sIdx} className="bg-slate-50 border border-slate-100 px-1 py-0.5 rounded">{spec}</span>
+                                                  ))}
+                                                </div>
+                                              )}
+                                            </td>
+                                            {catalogPrintShowPrices && (
+                                              <td className="p-2.5 text-right font-mono font-extrabold text-emerald-600">
+                                                {prod.estimatedPriceRange || "Kontak Admin"}
+                                              </td>
+                                            )}
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+
+                              {/* Layout 2: LIST */}
+                              {catalogPrintLayout === "list" && (
+                                <div className="space-y-4">
+                                  {itemChunk.map((prod, idx) => {
+                                    const globalIdx = pageIdx * itemsPerPage + idx + 1;
+                                    return (
+                                      <div key={prod.id} className="p-3 bg-slate-50/50 border border-slate-200 rounded-xl flex gap-4 items-start page-break-inside-avoid shadow-sm">
+                                        <div className="font-bold text-xs bg-indigo-50 border border-indigo-100 text-indigo-700 rounded-full w-6 h-6 flex items-center justify-center shrink-0">
+                                          {globalIdx}
+                                        </div>
+                                        
+                                        {catalogPrintShowImages && prod.image && (
+                                          <img src={prod.image} className="w-16 h-16 object-contain bg-white rounded-lg p-1 border border-slate-100 shrink-0" />
+                                        )}
+
+                                        <div className="min-w-0 flex-1 space-y-1.5">
+                                          <div className="flex items-center justify-between gap-2">
+                                            <h4 className="font-bold text-slate-900 text-xs truncate">{prod.name}</h4>
+                                            <span className="px-1.5 py-0.5 bg-slate-100 font-mono text-[8px] text-indigo-600 border border-slate-200 rounded font-bold uppercase shrink-0">
+                                              SKU: {prod.sku || "N/A"}
+                                            </span>
+                                          </div>
+                                          
+                                          <p className="text-[10px] text-slate-500 leading-normal">{prod.description}</p>
+                                          
+                                          {catalogPrintShowSpecs && prod.specifications && (
+                                            <div className="bg-white border border-slate-100 rounded-lg p-2.5 space-y-1">
+                                              <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block">Spesifikasi Teknis:</span>
+                                              <ul className="grid grid-cols-2 gap-x-4 gap-y-1 list-disc pl-3 text-[9px] text-slate-600 font-mono">
+                                                {prod.specifications.slice(0, 4).map((spec, sIdx) => (
+                                                  <li key={sIdx} className="truncate">{spec}</li>
+                                                ))}
+                                              </ul>
+                                            </div>
+                                          )}
+
+                                          {catalogPrintShowPrices && (
+                                            <div className="text-right">
+                                              <span className="text-[8px] uppercase tracking-wider text-slate-400 font-bold">Referensi Harga: </span>
+                                              <span className="text-[11px] font-mono font-black text-emerald-600">{prod.estimatedPriceRange}</span>
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+
+                              {/* Layout 3: GRID */}
+                              {catalogPrintLayout === "grid" && (
+                                <div className="grid grid-cols-2 gap-4">
+                                  {itemChunk.map((prod, idx) => {
+                                    const globalIdx = pageIdx * itemsPerPage + idx + 1;
+                                    return (
+                                      <div key={prod.id} className="border border-slate-200 rounded-xl p-3 space-y-3 bg-slate-50/50 flex flex-col justify-between page-break-inside-avoid shadow-sm relative">
+                                        <div className="absolute top-2 left-2 font-bold text-[8px] bg-indigo-50 border border-indigo-100 text-indigo-700 rounded-full w-5 h-5 flex items-center justify-center">
+                                          {globalIdx}
+                                        </div>
+
+                                        <div className="space-y-2.5">
+                                          {catalogPrintShowImages && (
+                                            <div className="h-28 bg-white rounded-lg flex items-center justify-center p-2 border border-slate-100">
+                                              {prod.image ? (
+                                                <img src={prod.image} className="max-h-full max-w-full object-contain" />
+                                              ) : (
+                                                <Icons.Package className="h-8 w-8 text-slate-300" />
+                                              )}
+                                            </div>
+                                          )}
+
+                                          <div className="space-y-1">
+                                            <div className="flex justify-between items-center gap-2">
+                                              <span className="text-[8px] font-black uppercase text-indigo-600 tracking-wider font-mono">
+                                                {prod.sku || "N/A"}
+                                              </span>
+                                              <span className="text-[8px] text-slate-400 capitalize">{prod.category}</span>
+                                            </div>
+                                            <h4 className="text-[10px] font-extrabold text-slate-950 line-clamp-1">{prod.name}</h4>
+                                          </div>
+
+                                          {catalogPrintShowSpecs && prod.specifications && (
+                                            <ul className="text-[8px] text-slate-500 space-y-0.5 list-disc pl-3 leading-snug">
+                                              {prod.specifications.slice(0, 3).map((spec, sIdx) => (
+                                                <li key={sIdx} className="truncate">{spec}</li>
+                                              ))}
+                                            </ul>
+                                          )}
+                                        </div>
+
+                                        {catalogPrintShowPrices && (
+                                          <div className="pt-2 border-t border-slate-200/60 flex items-center justify-between">
+                                            <span className="text-[8px] uppercase tracking-wider text-slate-400 font-bold">Harga:</span>
+                                            <span className="text-[10px] font-mono font-black text-emerald-600">{prod.estimatedPriceRange}</span>
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+
+                              {/* Stamp / Signature Section on Last Page */}
+                              {catalogPrintShowSignature && pageIdx === chunks.length - 1 && (
+                                <div className="grid grid-cols-2 gap-4 pt-6 border-t border-slate-200 items-end mt-auto page-break-inside-avoid">
+                                  <div className="text-[8px] text-slate-400 space-y-1">
+                                    <p className="font-bold text-slate-700">Verifikasi Keaslian Dokumen:</p>
+                                    <p>Sertifikasi No: BBS/CERT/{catalogPrintDocNo}</p>
+                                    <p>Tipe Dokumen: Katalog Pengadaan IT Resmi</p>
+                                    <p className="font-semibold text-emerald-600">STATUS VERIFIKASI: SAH & AKTIF</p>
+                                  </div>
+
+                                  <div className="text-center space-y-0.5 relative w-full max-w-[180px] ml-auto">
+                                    {/* Real stamp representation */}
+                                    <div className="absolute top-1 left-2 border-2 border-indigo-500/25 text-indigo-500/25 font-mono text-[8px] font-extrabold uppercase tracking-widest rounded-lg px-2 py-0.5 transform -rotate-12 select-none pointer-events-none">
+                                      BBS ORIGINAL
+                                    </div>
+                                    
+                                    <p className="text-slate-600 text-[9px] pb-8">Hormat Kami,<br /><strong>PT Berkah Bintang Solusindo</strong></p>
+                                    <p className="font-bold text-slate-800 border-t border-slate-300 pt-0.5 text-[10px]">Departemen Procurement</p>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* A4 Footer standard */}
+                            <div className="border-t border-slate-100 pt-3 mt-4 flex justify-between items-center text-[8px] text-slate-400 font-sans z-10 shrink-0">
+                              <span>© {new Date().getFullYear()} PT Berkah Bintang Solusindo • Procurement Platform</span>
+                              <span>Halaman {currentPageNum} dari {totalPagesCount}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PRINT-ONLY CATALOG WRAPPER */}
+      {showCatalogPrintModal && (
+        <div id="catalog-print-wrapper-for-printing" className="hidden print:block text-black bg-white font-sans w-full">
+          {(() => {
+            const printableProductsLocal = catalogProducts.filter(p => {
+              const matchesCategory = catalogPrintFilterCategory === "Semua" || p.category === catalogPrintFilterCategory;
+              const matchesSelected = catalogPrintSelectedIds.length === 0 || catalogPrintSelectedIds.includes(p.id);
+              return matchesCategory && matchesSelected;
+            });
+
+            const itemsPerPage = catalogPrintLayout === "table" ? 8 : catalogPrintLayout === "grid" ? 4 : 3;
+            const chunks: ProductItem[][] = [];
+            for (let i = 0; i < printableProductsLocal.length; i += itemsPerPage) {
+              chunks.push(printableProductsLocal.slice(i, i + itemsPerPage));
+            }
+
+            const totalPagesCount = chunks.length + (catalogPrintShowCover ? 1 : 0);
+
+            return (
+              <div className="w-full">
+                
+                {/* 1. COVER PAGE PRINT */}
+                {catalogPrintShowCover && (
+                  <div className="print-a4-page">
+                    {/* Top bar border */}
+                    <div className="h-3 bg-indigo-700 rounded-full w-full" />
+
+                    {/* Cover Body */}
+                    <div className="my-auto space-y-8 text-center py-10 w-full flex flex-col items-center">
+                      <div className="inline-flex items-center space-x-2 px-4 py-1.5 bg-slate-100 border border-slate-200 rounded-full text-indigo-700 text-[10px] uppercase font-bold tracking-wider">
+                        <span>E-Catalog Resmi Procurement IT</span>
+                      </div>
+
+                      <div className="space-y-4 w-full">
+                        <h1 className="text-3xl font-black tracking-tight text-slate-900 uppercase leading-none">
+                          PT BERKAH BINTANG SOLUSINDO
+                        </h1>
+                        <p className="text-sm font-bold text-indigo-600 tracking-widest uppercase font-mono mt-2">
+                          {catalogPrintTitle}
+                        </p>
+                      </div>
+
+                      <div className="w-16 h-1 bg-indigo-600 my-4 rounded-full" />
+
+                      <p className="text-slate-500 text-xs max-w-md mx-auto leading-relaxed">
+                        Infrastruktur Jaringan Handal, Server Enterprise, Terminal Klien Berkinerja Tinggi, & Integrasi Sistem Teruji Standar TKDN.
+                      </p>
+
+                      {/* Verification Block */}
+                      <div className="max-w-sm mx-auto p-4 bg-slate-50 border border-slate-200 rounded-2xl text-center space-y-2 mt-6">
+                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">Verifikasi Validitas</span>
+                        <div className="flex items-center justify-center space-x-3.5">
+                          {catalogPrintShowQr && (
+                            <div className="w-12 h-12 bg-white border border-slate-200 rounded-lg p-1 shrink-0 flex items-center justify-center">
+                              <Icons.QrCode className="h-8 w-8 text-indigo-900" />
+                            </div>
+                          )}
+                          <div className="text-left font-mono">
+                            <p className="text-[10px] font-bold text-slate-800 uppercase">BBS Secure Archive</p>
+                            <p className="text-[9px] text-slate-400">HASH-ID: {catalogPrintDocNo}-VALID</p>
+                            <span className="inline-flex items-center text-[8px] px-1.5 py-0.5 bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold rounded mt-1">
+                              ● RESMI & AKTIF
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Footer details */}
+                    <div className="border-t border-slate-100 pt-6 flex justify-between items-center text-[10px] text-slate-400 w-full">
+                      <div>
+                        <p className="font-extrabold text-slate-800 uppercase tracking-wider">Diterbitkan Oleh:</p>
+                        <p className="font-bold text-indigo-600">PT Berkah Bintang Solusindo</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-mono text-slate-500">Ref: {catalogPrintDocNo}</p>
+                        <p>Halaman 1 dari {totalPagesCount}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 2. CONTENT PAGES PRINT */}
+                {chunks.map((itemChunk, pageIdx) => {
+                  const currentPageNum = (catalogPrintShowCover ? 2 : 1) + pageIdx;
+                  return (
+                    <div key={pageIdx} className="print-a4-page">
+                      
+                      {/* Standard BBS Corporate Header (Kop Surat) */}
+                      <div className="flex items-start justify-between border-b border-slate-200 pb-4 mb-4 w-full">
+                        <div className="space-y-1">
+                          <h2 className="text-sm font-black text-slate-900 tracking-tight uppercase leading-none">
+                            PT BERKAH BINTANG SOLUSINDO
+                          </h2>
+                          <p className="text-[9px] text-indigo-600 font-extrabold uppercase tracking-widest">IT System Integrator & Enterprise Procurement</p>
+                          <p className="text-[8px] text-slate-500 leading-normal max-w-md">
+                            Sudirman Central Business District, Lantai 18, Jakarta Selatan • info@berkahbintangsolusindo.com
+                          </p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <span className="inline-block px-2 py-0.5 bg-indigo-50 border border-indigo-100 text-indigo-700 font-mono text-[8px] font-black rounded-md">
+                            DOC-ID: {catalogPrintDocNo}
+                          </span>
+                          <p className="text-[8px] text-slate-400 mt-1">Dicetak: {new Date().toLocaleDateString("id-ID")}</p>
+                        </div>
+                      </div>
+
+                      {/* Watermark element */}
+                      {catalogPrintWatermark && (
+                        <div className="absolute inset-0 flex items-center justify-center select-none pointer-events-none opacity-[0.03] z-0 overflow-hidden">
+                          <div className="border-8 border-indigo-900 rounded-full w-[400px] h-[400px] flex flex-col items-center justify-center transform -rotate-12">
+                            <span className="text-4xl font-black text-indigo-950 uppercase tracking-widest">BBS INDONESIA</span>
+                            <span className="text-2xl font-bold text-indigo-950 uppercase tracking-wider mt-2">SECURE ORIGINAL</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Page Content Area */}
+                      <div className="flex-1 z-10 flex flex-col justify-start space-y-4 w-full">
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-1.5 w-full">
+                          <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">{catalogPrintTitle}</span>
+                          <span className="text-[9px] text-slate-500 font-bold">Kategori: {catalogPrintFilterCategory}</span>
+                        </div>
+
+                        {/* Layout 1: TABLE */}
+                        {catalogPrintLayout === "table" && (
+                          <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm w-full">
+                            <table className="w-full text-left border-collapse text-[10px]">
+                              <thead>
+                                <tr className="bg-slate-50 border-b border-slate-200 text-slate-800 font-extrabold uppercase tracking-wider">
+                                  <th className="p-2.5 text-center w-8">No</th>
+                                  {catalogPrintShowImages && <th className="p-2.5 w-12 text-center">Gambar</th>}
+                                  <th className="p-2.5 w-16 text-center">SKU</th>
+                                  <th className="p-2.5">Nama Perangkat & Spesifikasi</th>
+                                  {catalogPrintShowPrices && <th className="p-2.5 text-right w-24">Estimasi Harga</th>}
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100 text-slate-600">
+                                {itemChunk.map((prod, idx) => {
+                                  const globalIdx = pageIdx * itemsPerPage + idx + 1;
+                                  return (
+                                    <tr key={prod.id} className="hover:bg-slate-50/40">
+                                      <td className="p-2.5 font-bold text-slate-800 text-center">{globalIdx}</td>
+                                      {catalogPrintShowImages && (
+                                        <td className="p-1 text-center">
+                                          {prod.image ? (
+                                            <img src={prod.image} className="w-8 h-8 object-contain bg-slate-50 rounded mx-auto p-0.5" />
+                                          ) : (
+                                            <div className="w-8 h-8 bg-slate-100 text-slate-400 rounded flex items-center justify-center font-bold text-[8px] mx-auto">N/A</div>
+                                          )}
+                                        </td>
+                                      )}
+                                      <td className="p-2.5 font-mono font-bold text-indigo-700 text-center uppercase">{prod.sku || "N/A"}</td>
+                                      <td className="p-2.5">
+                                        <div className="font-bold text-slate-900 leading-snug">{prod.name}</div>
+                                        <p className="text-[9px] text-slate-400 mt-0.5 line-clamp-1">{prod.description}</p>
+                                        {catalogPrintShowSpecs && prod.specifications && (
+                                          <div className="text-[8px] text-slate-500 font-mono mt-1 flex flex-wrap gap-1">
+                                            {prod.specifications.slice(0, 3).map((spec, sIdx) => (
+                                              <span key={sIdx} className="bg-slate-50 border border-slate-100 px-1 py-0.5 rounded">{spec}</span>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </td>
+                                      {catalogPrintShowPrices && (
+                                        <td className="p-2.5 text-right font-mono font-extrabold text-emerald-600">
+                                          {prod.estimatedPriceRange || "Kontak Admin"}
+                                        </td>
+                                      )}
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+
+                        {/* Layout 2: LIST */}
+                        {catalogPrintLayout === "list" && (
+                          <div className="space-y-4 w-full">
+                            {itemChunk.map((prod, idx) => {
+                              const globalIdx = pageIdx * itemsPerPage + idx + 1;
+                              return (
+                                <div key={prod.id} className="p-3 bg-slate-50/50 border border-slate-200 rounded-xl flex gap-4 items-start page-break-inside-avoid shadow-sm w-full">
+                                  <div className="font-bold text-xs bg-indigo-50 border border-indigo-100 text-indigo-700 rounded-full w-6 h-6 flex items-center justify-center shrink-0">
+                                    {globalIdx}
+                                  </div>
+                                  
+                                  {catalogPrintShowImages && prod.image && (
+                                    <img src={prod.image} className="w-16 h-16 object-contain bg-white rounded-lg p-1 border border-slate-100 shrink-0" />
+                                  )}
+
+                                  <div className="min-w-0 flex-1 space-y-1.5">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <h4 className="font-bold text-slate-900 text-xs truncate">{prod.name}</h4>
+                                      <span className="px-1.5 py-0.5 bg-slate-100 font-mono text-[8px] text-indigo-600 border border-slate-200 rounded font-bold uppercase shrink-0">
+                                        SKU: {prod.sku || "N/A"}
+                                      </span>
+                                    </div>
+                                    
+                                    <p className="text-[10px] text-slate-500 leading-normal">{prod.description}</p>
+                                    
+                                    {catalogPrintShowSpecs && prod.specifications && (
+                                      <div className="bg-white border border-slate-100 rounded-lg p-2.5 space-y-1">
+                                        <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block">Spesifikasi Teknis:</span>
+                                        <ul className="grid grid-cols-2 gap-x-4 gap-y-1 list-disc pl-3 text-[9px] text-slate-600 font-mono">
+                                          {prod.specifications.slice(0, 4).map((spec, sIdx) => (
+                                            <li key={sIdx} className="truncate">{spec}</li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    )}
+
+                                    {catalogPrintShowPrices && (
+                                      <div className="text-right">
+                                        <span className="text-[8px] uppercase tracking-wider text-slate-400 font-bold">Referensi Harga: </span>
+                                        <span className="text-[11px] font-mono font-black text-emerald-600">{prod.estimatedPriceRange}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Layout 3: GRID */}
+                        {catalogPrintLayout === "grid" && (
+                          <div className="grid grid-cols-2 gap-4 w-full">
+                            {itemChunk.map((prod, idx) => {
+                              const globalIdx = pageIdx * itemsPerPage + idx + 1;
+                              return (
+                                <div key={prod.id} className="border border-slate-200 rounded-xl p-3 space-y-3 bg-slate-50/50 flex flex-col justify-between page-break-inside-avoid shadow-sm relative w-full">
+                                  <div className="absolute top-2 left-2 font-bold text-[8px] bg-indigo-50 border border-indigo-100 text-indigo-700 rounded-full w-5 h-5 flex items-center justify-center">
+                                    {globalIdx}
+                                  </div>
+
+                                  <div className="space-y-2.5 w-full">
+                                    {catalogPrintShowImages && (
+                                      <div className="h-28 bg-white rounded-lg flex items-center justify-center p-2 border border-slate-100 w-full">
+                                        {prod.image ? (
+                                          <img src={prod.image} className="max-h-full max-w-full object-contain" />
+                                        ) : (
+                                          <Icons.Package className="h-8 w-8 text-slate-300" />
+                                        )}
+                                      </div>
+                                    )}
+
+                                    <div className="space-y-1">
+                                      <div className="flex justify-between items-center gap-2">
+                                        <span className="text-[8px] font-black uppercase text-indigo-600 tracking-wider font-mono">
+                                          {prod.sku || "N/A"}
+                                        </span>
+                                        <span className="text-[8px] text-slate-400 capitalize">{prod.category}</span>
+                                      </div>
+                                      <h4 className="text-[10px] font-extrabold text-slate-950 line-clamp-1">{prod.name}</h4>
+                                    </div>
+
+                                    {catalogPrintShowSpecs && prod.specifications && (
+                                      <ul className="text-[8px] text-slate-500 space-y-0.5 list-disc pl-3 leading-snug">
+                                        {prod.specifications.slice(0, 3).map((spec, sIdx) => (
+                                          <li key={sIdx} className="truncate">{spec}</li>
+                                        ))}
+                                      </ul>
+                                    )}
+                                  </div>
+
+                                  {catalogPrintShowPrices && (
+                                    <div className="pt-2 border-t border-slate-200/60 flex items-center justify-between w-full">
+                                      <span className="text-[8px] uppercase tracking-wider text-slate-400 font-bold">Harga:</span>
+                                      <span className="text-[10px] font-mono font-black text-emerald-600">{prod.estimatedPriceRange}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Stamp / Signature Section on Last Page */}
+                        {catalogPrintShowSignature && pageIdx === chunks.length - 1 && (
+                          <div className="grid grid-cols-2 gap-4 pt-6 border-t border-slate-200 items-end mt-auto page-break-inside-avoid w-full">
+                            <div className="text-[8px] text-slate-400 space-y-1">
+                              <p className="font-bold text-slate-700">Verifikasi Keaslian Dokumen:</p>
+                              <p>Sertifikasi No: BBS/CERT/{catalogPrintDocNo}</p>
+                              <p>Tipe Dokumen: Katalog Pengadaan IT Resmi</p>
+                              <p className="font-semibold text-emerald-600">STATUS VERIFIKASI: SAH & AKTIF</p>
+                            </div>
+
+                            <div className="text-center space-y-0.5 relative w-full max-w-[180px] ml-auto">
+                              {/* Real stamp representation */}
+                              <div className="absolute top-1 left-2 border-2 border-indigo-500/25 text-indigo-500/25 font-mono text-[8px] font-extrabold uppercase tracking-widest rounded-lg px-2 py-0.5 transform -rotate-12 select-none pointer-events-none">
+                                BBS ORIGINAL
+                              </div>
+                              
+                              <p className="text-slate-600 text-[9px] pb-8">Hormat Kami,<br /><strong>PT Berkah Bintang Solusindo</strong></p>
+                              <p className="font-bold text-slate-800 border-t border-slate-300 pt-0.5 text-[10px]">Departemen Procurement</p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* A4 Footer standard */}
+                      <div className="border-t border-slate-100 pt-3 mt-4 flex justify-between items-center text-[8px] text-slate-400 font-sans w-full">
+                        <span>© {new Date().getFullYear()} PT Berkah Bintang Solusindo • Procurement Platform</span>
+                        <span>Halaman {currentPageNum} dari {totalPagesCount}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* BULK QR CODE SHEET GENERATION MODAL */}
+      {showBulkQrModal && (
+        <div className="fixed inset-0 z-[120] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-fadeIn no-print" id="bulk-qr-modal">
+          <style>{`
+            @media print {
+              body > * {
+                display: none !important;
+              }
+              #bulk-qr-sheet-for-printing {
+                display: block !important;
+                position: absolute !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 100% !important;
+                height: auto !important;
+                background: white !important;
+                color: black !important;
+                z-index: 99999999 !important;
+              }
+              .page-break-inside-avoid {
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+              }
+            }
+          `}</style>
+          
+          <div className="bg-slate-900 border border-white/10 rounded-2xl w-full max-w-6xl overflow-hidden shadow-2xl flex flex-col md:flex-row h-[85vh]">
+            
+            {/* Left Sidebar Control Panel */}
+            <div className="w-full md:w-80 bg-slate-950 border-r border-white/5 p-5 flex flex-col justify-between shrink-0 overflow-y-auto">
+              <div className="space-y-5">
+                {/* Header */}
+                <div className="flex items-center space-x-2.5">
+                  <div className="p-2 bg-indigo-500/15 border border-indigo-500/30 rounded-xl text-indigo-400">
+                    <Icons.QrCode className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-white uppercase tracking-wider">Cetak QR Code Masal</h3>
+                    <p className="text-[10px] text-slate-400">Papan Cetak & Pelacakan Dokumen Fisik</p>
+                  </div>
+                </div>
+
+                <div className="border-t border-white/5 pt-4 space-y-4">
+                  {/* Info Box */}
+                  <div className="p-3 bg-indigo-500/5 border border-indigo-500/20 rounded-xl text-[11px] text-indigo-300/90 leading-relaxed">
+                    <p className="font-semibold flex items-center gap-1.5 text-indigo-400 mb-1">
+                      <Icons.Info className="h-3.5 w-3.5" />
+                      Filter Aktif Terbawa
+                    </p>
+                    Saat ini menampilkan <strong className="text-white font-black">{filteredRfqsForAdmin.length} RFQ</strong> hasil penyaringan aktif Anda di panel admin.
+                  </div>
+
+                  {/* QR Theme Style */}
+                  <div className="space-y-1.5">
+                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Tema & Tampilan Kartu</label>
+                    <div className="grid grid-cols-2 gap-1 bg-slate-900/50 p-1 border border-white/5 rounded-xl text-[10px] font-bold">
+                      <button
+                        onClick={() => setBulkQrTheme("print")}
+                        className={`py-1.5 rounded-lg transition-all cursor-pointer ${
+                          bulkQrTheme === "print"
+                            ? "bg-indigo-600 text-white shadow-md"
+                            : "text-slate-400 hover:text-white"
+                        }`}
+                      >
+                        🖨️ Cetak Putih
+                      </button>
+                      <button
+                        onClick={() => setBulkQrTheme("dark")}
+                        className={`py-1.5 rounded-lg transition-all cursor-pointer ${
+                          bulkQrTheme === "dark"
+                            ? "bg-indigo-600 text-white shadow-md"
+                            : "text-slate-400 hover:text-white"
+                        }`}
+                      >
+                        🌌 Slate Gelap
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* QR Card Size */}
+                  <div className="space-y-1.5">
+                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Ukuran Kartu</label>
+                    <div className="grid grid-cols-3 gap-1 bg-slate-900/50 p-1 border border-white/5 rounded-xl text-[10px] font-bold">
+                      {(["small", "medium", "large"] as const).map((sz) => (
+                        <button
+                          key={sz}
+                          onClick={() => setBulkQrSize(sz)}
+                          className={`py-1.5 rounded-lg transition-all capitalize cursor-pointer ${
+                            bulkQrSize === sz
+                              ? "bg-indigo-600 text-white shadow-md"
+                              : "text-slate-400 hover:text-white"
+                          }`}
+                        >
+                          {sz === "small" ? "Kecil" : sz === "medium" ? "Sedang" : "Besar"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Columns */}
+                  <div className="space-y-1.5">
+                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Kolom Grid</label>
+                    <div className="grid grid-cols-3 gap-1 bg-slate-900/50 p-1 border border-white/5 rounded-xl text-[10px] font-bold">
+                      {([2, 3, 4] as const).map((col) => (
+                        <button
+                          key={col}
+                          onClick={() => setBulkQrCols(col)}
+                          className={`py-1.5 rounded-lg transition-all cursor-pointer ${
+                            bulkQrCols === col
+                              ? "bg-indigo-600 text-white shadow-md"
+                              : "text-slate-400 hover:text-white"
+                          }`}
+                        >
+                          {col} Kolom
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* QR Content Encoding */}
+                  <div className="space-y-1.5">
+                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Isi QR Code</label>
+                    <div className="grid grid-cols-2 gap-1 bg-slate-900/50 p-1 border border-white/5 rounded-xl text-[10px] font-bold">
+                      <button
+                        onClick={() => setBulkQrEncoding("url")}
+                        className={`py-1.5 rounded-lg transition-all cursor-pointer text-center ${
+                          bulkQrEncoding === "url"
+                            ? "bg-indigo-600 text-white shadow-md"
+                            : "text-slate-400 hover:text-white"
+                        }`}
+                        title="Isi QR dengan link langsung ke tracker RFQ"
+                      >
+                        Tautan Tracker
+                      </button>
+                      <button
+                        onClick={() => setBulkQrEncoding("number")}
+                        className={`py-1.5 rounded-lg transition-all cursor-pointer text-center ${
+                          bulkQrEncoding === "number"
+                            ? "bg-indigo-600 text-white shadow-md"
+                            : "text-slate-400 hover:text-white"
+                        }`}
+                        title="Isi QR dengan nomor RFQ mentah"
+                      >
+                        No RFQ Saja
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="pt-4 border-t border-white/5 space-y-2 mt-4 md:mt-0">
+                <button
+                  onClick={() => {
+                    window.print();
+                  }}
+                  disabled={filteredRfqsForAdmin.length === 0}
+                  className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl shadow-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Icons.Printer className="h-4 w-4" />
+                  <span>Cetak Lembar QR</span>
+                </button>
+                <button
+                  onClick={() => setShowBulkQrModal(false)}
+                  className="w-full py-2.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white font-bold text-xs rounded-xl border border-white/5 transition-all flex items-center justify-center gap-1 cursor-pointer"
+                >
+                  Tutup
+                </button>
+              </div>
+            </div>
+
+            {/* Right Preview Grid Area */}
+            <div className="flex-1 bg-slate-950 p-6 overflow-y-auto flex flex-col justify-between">
+              <div className="mb-4 flex items-center justify-between border-b border-white/5 pb-2.5">
+                <div>
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                    <Icons.Eye className="h-4 w-4 text-indigo-400" />
+                    Preview Lembar Cetak
+                  </h4>
+                  <p className="text-[10px] text-slate-400 mt-0.5">Penampilan stiker pada cetakan dokumen Anda</p>
+                </div>
+                <div className="text-[10px] bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2 py-1 rounded-lg font-mono">
+                  Target: {filteredRfqsForAdmin.length} Items
+                </div>
+              </div>
+
+              {filteredRfqsForAdmin.length === 0 ? (
+                <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+                  <div className="h-12 w-12 rounded-full bg-slate-900 border border-white/10 flex items-center justify-center text-slate-500 mb-3">
+                    <Icons.QrCode className="h-6 w-6" />
+                  </div>
+                  <h5 className="text-sm font-bold text-white">Tidak Ada RFQ untuk Dicetak</h5>
+                  <p className="text-xs text-slate-400 max-w-sm mt-1">Saring atau pilih RFQ di halaman admin terlebih dahulu menggunakan filter yang tersedia.</p>
+                </div>
+              ) : (
+                <div className="flex-1 overflow-y-auto rounded-xl border border-white/5 bg-slate-900/25 p-4">
+                  <div 
+                    className={`grid ${
+                      bulkQrCols === 2 ? "grid-cols-2 gap-4" : bulkQrCols === 4 ? "grid-cols-4 gap-2" : "grid-cols-3 gap-3"
+                    }`}
+                  >
+                    {filteredRfqsForAdmin.map((rfq) => {
+                      const origin = typeof window !== "undefined" ? window.location.origin : "";
+                      const qrData = bulkQrEncoding === "url" ? `${origin}/?rfq=${rfq.rfqNumber}` : rfq.rfqNumber;
+                      const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=140x140&color=${bulkQrTheme === "print" ? "000000" : "ffffff"}&bgcolor=${bulkQrTheme === "print" ? "ffffff" : "0f172a"}&data=${encodeURIComponent(qrData)}`;
+                      
+                      // Low: Slate, Medium: Indigo, High: Amber, Urgent: Rose
+                      const priority = rfq.priority || "medium";
+                      const priorityColor = priority === "low" ? "text-slate-400 border-slate-500/20 bg-slate-500/5" :
+                                            priority === "medium" ? "text-indigo-400 border-indigo-500/20 bg-indigo-500/5" :
+                                            priority === "high" ? "text-amber-400 border-amber-500/20 bg-amber-500/5" :
+                                            "text-rose-400 border-rose-500/20 bg-rose-500/5 animate-pulse";
+                      
+                      const priorityDotClass = priority === "low" ? "bg-slate-400" :
+                                               priority === "medium" ? "bg-indigo-500" :
+                                               priority === "high" ? "bg-amber-500" :
+                                               "bg-rose-500 animate-pulse";
+
+                      return (
+                        <div 
+                          key={rfq.id}
+                          className={`rounded-xl p-3.5 flex flex-col justify-between transition-all border ${
+                            bulkQrTheme === "print"
+                              ? "bg-white text-slate-900 border-slate-200 shadow-sm"
+                              : "bg-slate-950 text-white border-white/10 shadow-lg"
+                          } ${
+                            bulkQrSize === "small" ? "min-h-[160px]" : bulkQrSize === "medium" ? "min-h-[220px]" : "min-h-[280px]"
+                          }`}
+                        >
+                          <div className={`flex items-center justify-between border-b pb-1.5 ${
+                            bulkQrTheme === "print" ? "border-slate-100" : "border-white/5"
+                          }`}>
+                            <span className={`text-[8px] font-black tracking-widest uppercase ${
+                              bulkQrTheme === "print" ? "text-indigo-600" : "text-indigo-400"
+                            }`}>BBS E-PROCUREMENT</span>
+                            <span className={`text-[7px] font-mono font-bold uppercase px-1 rounded ${
+                              bulkQrTheme === "print" ? "bg-slate-100 text-slate-600" : "bg-white/5 text-slate-400"
+                            }`}>{rfq.clientCategory || "Retail"}</span>
+                          </div>
+
+                          <div className="flex flex-col items-center justify-center my-2 flex-1">
+                            <img 
+                              src={qrCodeUrl} 
+                              alt={`QR ${rfq.rfqNumber}`} 
+                              className={`border p-1 rounded ${
+                                bulkQrTheme === "print" ? "border-slate-200 bg-white" : "border-white/10 bg-slate-900"
+                              } ${
+                                bulkQrSize === "small" ? "w-16 h-16" : bulkQrSize === "medium" ? "w-24 h-24" : "w-32 h-32"
+                              }`}
+                              referrerPolicy="no-referrer"
+                            />
+                            <span className={`font-black font-mono tracking-wider mt-1.5 uppercase ${
+                              bulkQrTheme === "print" ? "text-slate-900" : "text-white"
+                            } ${
+                              bulkQrSize === "small" ? "text-[8px]" : bulkQrSize === "medium" ? "text-[11px]" : "text-[13px]"
+                            }`}>
+                              {rfq.rfqNumber}
+                            </span>
+                          </div>
+
+                          <div className={`text-[9px] space-y-0.5 border-t pt-1.5 ${
+                            bulkQrTheme === "print" ? "border-slate-100 text-slate-600" : "border-white/5 text-slate-400"
+                          }`}>
+                            <div className="truncate"><strong className={bulkQrTheme === "print" ? "text-slate-800" : "text-slate-200"}>Klien:</strong> {rfq.clientName}</div>
+                            {rfq.companyName && <div className="truncate"><strong className={bulkQrTheme === "print" ? "text-slate-800" : "text-slate-200"}>Instansi:</strong> {rfq.companyName}</div>}
+                            <div className="flex items-center gap-1.5 mt-1">
+                              <span className={`w-1.5 h-1.5 rounded-full ${priorityDotClass}`} />
+                              <span className={`px-1 py-0.5 rounded text-[7px] font-extrabold uppercase border ${priorityColor}`}>
+                                {priority}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BULK QR CODE PRINT ONLY CONTAINER */}
+      {showBulkQrModal && (
+        <div id="bulk-qr-sheet-for-printing" className="hidden print:block bg-white text-black min-h-screen p-6">
+          <div className="mb-4 border-b-2 border-black pb-2 text-center">
+            <h1 className="text-xl font-extrabold tracking-wider uppercase">LEMBAR TRACKING QR CODE MASAL</h1>
+            <p className="text-xs font-semibold uppercase tracking-widest text-slate-700">Berkah Bintang Solusindo &bull; E-Procurement System</p>
+            <p className="text-[10px] text-slate-500 mt-1 font-mono">
+              Dicetak pada: {new Date().toLocaleString("id-ID")} | Total: {filteredRfqsForAdmin.length} RFQ
+            </p>
+          </div>
+          <div 
+            className={`grid gap-4 ${
+              bulkQrCols === 2 ? "grid-cols-2" : bulkQrCols === 4 ? "grid-cols-4" : "grid-cols-3"
+            }`}
+          >
+            {filteredRfqsForAdmin.map((rfq) => {
+              const origin = typeof window !== "undefined" ? window.location.origin : "";
+              const qrData = bulkQrEncoding === "url" ? `${origin}/?rfq=${rfq.rfqNumber}` : rfq.rfqNumber;
+              const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=140x140&color=000000&data=${encodeURIComponent(qrData)}`;
+              
+              // Low: Slate, Medium: Indigo, High: Amber, Urgent: Rose
+              const priority = rfq.priority || "medium";
+              const priorityColor = priority === "low" ? "text-slate-500 border-slate-300" :
+                                    priority === "medium" ? "text-indigo-600 border-indigo-200" :
+                                    priority === "high" ? "text-amber-600 border-amber-200" :
+                                    "text-rose-600 border-rose-200";
+
+              return (
+                <div 
+                  key={rfq.id}
+                  className={`bg-white text-black border border-slate-300 rounded-lg p-3.5 flex flex-col justify-between page-break-inside-avoid ${
+                    bulkQrSize === "small" ? "min-h-[140px]" : bulkQrSize === "medium" ? "min-h-[190px]" : "min-h-[240px]"
+                  }`}
+                  style={{
+                    pageBreakInside: "avoid",
+                    breakInside: "avoid"
+                  }}
+                >
+                  <div className="border-b border-slate-200 pb-1.5 mb-2 flex items-center justify-between">
+                    <span className="text-[8px] font-black tracking-widest uppercase text-slate-600">BBS E-PROCUREMENT</span>
+                    <span className="text-[7px] font-bold text-slate-500 uppercase">{rfq.clientCategory || "Retail"}</span>
+                  </div>
+
+                  <div className="flex flex-col items-center justify-center my-1 flex-1">
+                    <img 
+                      src={qrCodeUrl} 
+                      alt={`QR ${rfq.rfqNumber}`} 
+                      className={`border border-slate-200 p-1 bg-white rounded ${
+                        bulkQrSize === "small" ? "w-16 h-16" : bulkQrSize === "medium" ? "w-24 h-24" : "w-32 h-32"
+                      }`}
+                      referrerPolicy="no-referrer"
+                    />
+                    <span className={`font-black font-mono tracking-wider mt-1.5 text-black uppercase ${
+                      bulkQrSize === "small" ? "text-[8px]" : bulkQrSize === "medium" ? "text-[11px]" : "text-[13px]"
+                    }`}>{rfq.rfqNumber}</span>
+                  </div>
+
+                  <div className="mt-2 text-[9px] space-y-0.5 border-t border-slate-100 pt-1.5 text-slate-600">
+                    <div className="truncate"><strong className="text-slate-800">Klien:</strong> {rfq.clientName}</div>
+                    {rfq.companyName && <div className="truncate"><strong className="text-slate-800">Instansi:</strong> {rfq.companyName}</div>}
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <strong className="text-slate-800">Urgensi:</strong> 
+                      <span className={`px-1 py-0.5 rounded text-[7px] font-extrabold uppercase border ${priorityColor}`}>
+                        {priority}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* BULK CATALOG QR CODE SHEET GENERATION MODAL */}
+      {showCatalogBulkQrModal && (
+        <div className="fixed inset-0 z-[120] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-fadeIn no-print" id="catalog-bulk-qr-modal">
+          <style>{`
+            @media print {
+              body > * {
+                display: none !important;
+              }
+              #catalog-bulk-qr-sheet-for-printing {
+                display: block !important;
+                position: absolute !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 100% !important;
+                height: auto !important;
+                z-index: 99999999 !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+              }
+              .page-break-inside-avoid {
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+              }
+            }
+          `}</style>
+          
+          <div className="bg-slate-900 border border-white/10 rounded-2xl w-full max-w-6xl overflow-hidden shadow-2xl flex flex-col md:flex-row h-[85vh]">
+            
+            {/* Left Sidebar Control Panel */}
+            <div className="w-full md:w-80 bg-slate-950 border-r border-white/5 p-5 flex flex-col justify-between shrink-0 overflow-y-auto">
+              <div className="space-y-5">
+                {/* Header */}
+                <div className="flex items-center space-x-2.5">
+                  <div className="p-2 bg-emerald-500/15 border border-emerald-500/30 rounded-xl text-emerald-400">
+                    <Icons.QrCode className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-white uppercase tracking-wider">Cetak QR Katalog</h3>
+                    <p className="text-[10px] text-slate-400 font-medium">PT Berkah Bintang Solusindo</p>
+                  </div>
+                </div>
+
+                <div className="border-t border-white/5 pt-4 space-y-4">
+                  {/* Info Box */}
+                  <div className="p-3 bg-emerald-500/5 border border-emerald-500/20 rounded-xl text-[11px] text-emerald-300/90 leading-relaxed">
+                    <p className="font-semibold flex items-center gap-1.5 text-emerald-400 mb-1">
+                      <Icons.Info className="h-3.5 w-3.5" />
+                      Filter Aktif Terbawa
+                    </p>
+                    Saat ini menampilkan <strong className="text-white font-black">{filteredAdminCatalog.length} produk</strong> hasil pencarian/kategori di Katalog Admin.
+                  </div>
+
+                  {/* QR Theme Style */}
+                  <div className="space-y-1.5">
+                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Tema Warna Cetak</label>
+                    <div className="grid grid-cols-3 gap-1 bg-slate-900/50 p-1 border border-white/5 rounded-xl text-[10px] font-bold">
+                      <button
+                        onClick={() => setCatalogBulkQrTheme("print")}
+                        className={`py-1.5 rounded-lg transition-all cursor-pointer ${
+                          catalogBulkQrTheme === "print"
+                            ? "bg-emerald-600 text-white shadow-md"
+                            : "text-slate-400 hover:text-white"
+                        }`}
+                        title="Eco friendly: latar belakang putih, teks hitam, hemat tinta"
+                      >
+                        🖨️ Print
+                      </button>
+                      <button
+                        onClick={() => setCatalogBulkQrTheme("dark")}
+                        className={`py-1.5 rounded-lg transition-all cursor-pointer ${
+                          catalogBulkQrTheme === "dark"
+                            ? "bg-emerald-600 text-white shadow-md"
+                            : "text-slate-400 hover:text-white"
+                        }`}
+                        title="Latar belakang abu-abu gelap slate, teks putih"
+                      >
+                        🌌 Dark
+                      </button>
+                      <button
+                        onClick={() => setCatalogBulkQrTheme("indigo")}
+                        className={`py-1.5 rounded-lg transition-all cursor-pointer ${
+                          catalogBulkQrTheme === "indigo"
+                            ? "bg-emerald-600 text-white shadow-md"
+                            : "text-slate-400 hover:text-white"
+                        }`}
+                        title="Corporate: warna biru indigo tua, aksen modern"
+                      >
+                        🔮 Indigo
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* QR Card Size */}
+                  <div className="space-y-1.5">
+                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Ukuran Label</label>
+                    <div className="grid grid-cols-3 gap-1 bg-slate-900/50 p-1 border border-white/5 rounded-xl text-[10px] font-bold">
+                      {(["small", "medium", "large"] as const).map((sz) => (
+                        <button
+                          key={sz}
+                          onClick={() => setCatalogBulkQrSize(sz)}
+                          className={`py-1.5 rounded-lg transition-all capitalize cursor-pointer ${
+                            catalogBulkQrSize === sz
+                              ? "bg-emerald-600 text-white shadow-md"
+                              : "text-slate-400 hover:text-white"
+                          }`}
+                        >
+                          {sz === "small" ? "Kecil" : sz === "medium" ? "Sedang" : "Besar"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Columns */}
+                  <div className="space-y-1.5">
+                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Kolom Baris Grid</label>
+                    <div className="grid grid-cols-3 gap-1 bg-slate-900/50 p-1 border border-white/5 rounded-xl text-[10px] font-bold">
+                      {([2, 3, 4] as const).map((col) => (
+                        <button
+                          key={col}
+                          onClick={() => setCatalogBulkQrCols(col)}
+                          className={`py-1.5 rounded-lg transition-all cursor-pointer ${
+                            catalogBulkQrCols === col
+                              ? "bg-emerald-600 text-white shadow-md"
+                              : "text-slate-400 hover:text-white"
+                          }`}
+                        >
+                          {col} Kolom
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* QR Content Encoding */}
+                  <div className="space-y-1.5">
+                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Isi Data QR Code</label>
+                    <div className="grid grid-cols-2 gap-1 bg-slate-900/50 p-1 border border-white/5 rounded-xl text-[10px] font-bold">
+                      <button
+                        onClick={() => setCatalogBulkQrEncoding("url")}
+                        className={`py-1.5 rounded-lg transition-all cursor-pointer text-center ${
+                          catalogBulkQrEncoding === "url"
+                            ? "bg-emerald-600 text-white shadow-md"
+                            : "text-slate-400 hover:text-white"
+                        }`}
+                        title="Isi QR dengan tautan langsung ke halaman detail produk"
+                      >
+                        Tautan Produk
+                      </button>
+                      <button
+                        onClick={() => setCatalogBulkQrEncoding("code")}
+                        className={`py-1.5 rounded-lg transition-all cursor-pointer text-center ${
+                          catalogBulkQrEncoding === "code"
+                            ? "bg-emerald-600 text-white shadow-md"
+                            : "text-slate-400 hover:text-white"
+                        }`}
+                        title="Isi QR dengan SKU / Serial Number produk"
+                      >
+                        SKU / Kode Unik
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Print SKU Label Toggle Option */}
+                  <div className="space-y-1.5 pt-1">
+                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Opsi Tampilan Label</label>
+                    <div className="bg-slate-900/50 p-2.5 border border-white/5 rounded-xl flex items-center justify-between">
+                      <div className="flex flex-col">
+                        <span className="text-[11px] font-bold text-white">Print SKU Label</span>
+                        <span className="text-[9px] text-slate-500">Tampilkan teks SKU besar di bawah QR</span>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={catalogBulkQrShowSkuLabel}
+                          onChange={(e) => {
+                            setCatalogBulkQrShowSkuLabel(e.target.checked);
+                            try { playClickSound(); } catch {}
+                          }}
+                          className="sr-only peer"
+                        />
+                        <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600 peer-checked:after:bg-white peer-checked:after:border-white"></div>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Dynamic Font Size Slider for SKU Label */}
+                  {catalogBulkQrShowSkuLabel && (
+                    <div className="space-y-1.5 pt-1 animate-fadeIn">
+                      <div className="flex justify-between items-center">
+                        <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">SKU Label Font Size</label>
+                        <span className="text-[10px] font-mono text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                          {catalogBulkQrSkuFontSize}px
+                        </span>
+                      </div>
+                      <div className="bg-slate-900/50 p-2.5 border border-white/5 rounded-xl space-y-1.5">
+                        <input
+                          type="range"
+                          min="8"
+                          max="24"
+                          step="1"
+                          value={catalogBulkQrSkuFontSize}
+                          onChange={(e) => {
+                            setCatalogBulkQrSkuFontSize(Number(e.target.value));
+                          }}
+                          className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                        />
+                        <div className="flex justify-between text-[8px] text-slate-500 font-bold px-0.5">
+                          <span>Kecil (8px)</span>
+                          <span>Bawaan (11px)</span>
+                          <span>Besar (24px)</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* SKU Label Alignment Control */}
+                  {catalogBulkQrShowSkuLabel && (
+                    <div className="space-y-1.5 pt-1 animate-fadeIn">
+                      <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Label Alignment</label>
+                      <div className="bg-slate-900/50 p-1 border border-white/5 rounded-xl grid grid-cols-3 gap-1">
+                        {(["left", "center", "right"] as const).map((align) => (
+                          <button
+                            key={align}
+                            type="button"
+                            onClick={() => {
+                              setCatalogBulkQrSkuAlignment(align);
+                              try { playClickSound(); } catch {}
+                            }}
+                            className={`py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all cursor-pointer ${
+                              catalogBulkQrSkuAlignment === align
+                                ? "bg-emerald-600 text-white shadow-sm"
+                                : "text-slate-400 hover:text-white hover:bg-white/5"
+                            }`}
+                          >
+                            {align === "left" ? "Left" : align === "center" ? "Center" : "Right"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Dynamic Margin Slider for QR Code */}
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex justify-between items-center">
+                      <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Margin Kontainer QR</label>
+                      <span className="text-[10px] font-mono text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                        {catalogBulkQrMargin}px
+                      </span>
+                    </div>
+                    <div className="bg-slate-900/50 p-2.5 border border-white/5 rounded-xl space-y-1.5">
+                      <input
+                        type="range"
+                        min="2"
+                        max="24"
+                        step="1"
+                        value={catalogBulkQrMargin}
+                        onChange={(e) => {
+                          setCatalogBulkQrMargin(Number(e.target.value));
+                        }}
+                        className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                      />
+                      <div className="flex justify-between text-[8px] text-slate-500 font-bold px-0.5">
+                        <span>Tipis (2px)</span>
+                        <span>Bawaan (6px)</span>
+                        <span>Lebar (24px)</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Quiet Zone (Margin API) Slider for QR Code */}
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex justify-between items-center">
+                      <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Quiet Zone QR (Margin API)</label>
+                      <span className="text-[10px] font-mono text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                        {catalogBulkQrQuietZone}
+                      </span>
+                    </div>
+                    <div className="bg-slate-900/50 p-2.5 border border-white/5 rounded-xl space-y-1.5">
+                      <input
+                        type="range"
+                        min="0"
+                        max="10"
+                        step="1"
+                        value={catalogBulkQrQuietZone}
+                        onChange={(e) => {
+                          setCatalogBulkQrQuietZone(Number(e.target.value));
+                        }}
+                        className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                      />
+                      <div className="flex justify-between text-[8px] text-slate-500 font-bold px-0.5">
+                        <span>Tanpa Jarak (0)</span>
+                        <span>Normal (1)</span>
+                        <span>Sangat Lebar (10)</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Dynamic Inner Card Padding Slider for Label Density */}
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex justify-between items-center">
+                      <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Padding Internal Label</label>
+                      <span className="text-[10px] font-mono text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                        {catalogBulkQrCardPadding}px
+                      </span>
+                    </div>
+                    <div className="bg-slate-900/50 p-2.5 border border-white/5 rounded-xl space-y-1.5">
+                      <input
+                        type="range"
+                        min="4"
+                        max="32"
+                        step="1"
+                        value={catalogBulkQrCardPadding}
+                        onChange={(e) => {
+                          setCatalogBulkQrCardPadding(Number(e.target.value));
+                        }}
+                        className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                      />
+                      <div className="flex justify-between text-[8px] text-slate-500 font-bold px-0.5">
+                        <span>Padat (4px)</span>
+                        <span>Bawaan (14px)</span>
+                        <span>Sangat Longgar (32px)</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Dynamic Corner Radius Slider for Cards */}
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex justify-between items-center">
+                      <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Sudut Kartu (Corner Radius)</label>
+                      <span className="text-[10px] font-mono text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                        {catalogBulkQrBorderRadius}px
+                      </span>
+                    </div>
+                    <div className="bg-slate-900/50 p-2.5 border border-white/5 rounded-xl space-y-1.5">
+                      <input
+                        type="range"
+                        min="0"
+                        max="32"
+                        step="1"
+                        value={catalogBulkQrBorderRadius}
+                        onChange={(e) => {
+                          setCatalogBulkQrBorderRadius(Number(e.target.value));
+                        }}
+                        className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                      />
+                      <div className="flex justify-between text-[8px] text-slate-500 font-bold px-0.5">
+                        <span>Kotak (0px)</span>
+                        <span>Bawaan (12px)</span>
+                        <span>Bulat (32px)</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Dynamic Gutter Slider for Label Spacing */}
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex justify-between items-center">
+                      <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Jarak Antar Label (Gutter)</label>
+                      <span className="text-[10px] font-mono text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                        {catalogBulkQrGutter}px
+                      </span>
+                    </div>
+                    <div className="bg-slate-900/50 p-2.5 border border-white/5 rounded-xl space-y-1.5">
+                      <input
+                        type="range"
+                        min="4"
+                        max="48"
+                        step="2"
+                        value={catalogBulkQrGutter}
+                        onChange={(e) => {
+                          setCatalogBulkQrGutter(Number(e.target.value));
+                        }}
+                        className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                      />
+                      <div className="flex justify-between text-[8px] text-slate-500 font-bold px-0.5">
+                        <span>Rapat (4px)</span>
+                        <span>Bawaan (16px)</span>
+                        <span>Sangat Lebar (48px)</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Rotation Toggle Option */}
+                  <div className="space-y-1.5 pt-1">
+                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Rotasi Label (Orientasi)</label>
+                    <div className="bg-slate-900/50 p-1 border border-white/5 rounded-xl grid grid-cols-4 gap-1">
+                      {([0, 90, 180, 270] as const).map((angle) => (
+                        <button
+                          key={angle}
+                          type="button"
+                          onClick={() => {
+                            setCatalogBulkQrRotation(angle);
+                            try { playClickSound(); } catch {}
+                          }}
+                          className={`py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all cursor-pointer ${
+                            catalogBulkQrRotation === angle
+                              ? "bg-emerald-600 text-white shadow-sm"
+                              : "text-slate-400 hover:text-white hover:bg-white/5"
+                          }`}
+                        >
+                          {angle}°
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Label Cutting Border Toggle Option */}
+                  <div className="space-y-1.5 pt-1">
+                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Batas Potong Label</label>
+                    <div className="bg-slate-900/50 p-2.5 border border-white/5 rounded-xl flex items-center justify-between">
+                      <div className="flex flex-col">
+                        <span className="text-[11px] font-bold text-white">Tampilkan Border Label</span>
+                        <span className="text-[9px] text-slate-500">Tampilkan garis pemotong di sekitar label</span>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={catalogBulkQrShowLabelBorder}
+                          onChange={(e) => {
+                            setCatalogBulkQrShowLabelBorder(e.target.checked);
+                            try { playClickSound(); } catch {}
+                          }}
+                          className="sr-only peer"
+                        />
+                        <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600 peer-checked:after:bg-white peer-checked:after:border-white"></div>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* SKU Label Border Toggle Option */}
+                  <div className="space-y-1.5 pt-1">
+                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Batas SKU Label</label>
+                    <div className="bg-slate-900/50 p-2.5 border border-white/5 rounded-xl flex items-center justify-between">
+                      <div className="flex flex-col">
+                        <span className="text-[11px] font-bold text-white">Border Label SKU</span>
+                        <span className="text-[9px] text-slate-500">Tampilkan garis pemisah tipis di sekitar teks SKU</span>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={catalogBulkQrShowSkuBorder}
+                          onChange={(e) => {
+                            setCatalogBulkQrShowSkuBorder(e.target.checked);
+                            try { playClickSound(); } catch {}
+                          }}
+                          className="sr-only peer"
+                        />
+                        <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600 peer-checked:after:bg-white peer-checked:after:border-white"></div>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Brand Color Picker Option */}
+                  <div className="space-y-1.5 pt-1">
+                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Warna Kode QR</label>
+                    <div className="bg-slate-900/50 p-2.5 border border-white/5 rounded-xl space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex flex-col">
+                          <span className="text-[11px] font-bold text-white">Warna Kustom QR</span>
+                          <span className="text-[9px] text-slate-500">Pilih warna utama untuk kode QR</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="color"
+                            value={catalogBulkQrColor}
+                            onChange={(e) => {
+                              setCatalogBulkQrColor(e.target.value);
+                            }}
+                            className="w-8 h-8 rounded-lg cursor-pointer bg-transparent border-0"
+                          />
+                          <span className="text-[10px] font-mono text-slate-400 uppercase font-bold">{catalogBulkQrColor}</span>
+                        </div>
+                      </div>
+                      {/* Presets */}
+                      <div className="flex items-center gap-1.5 pt-1">
+                        {[
+                          { name: "Black", color: "#000000" },
+                          { name: "Emerald", color: "#059669" },
+                          { name: "Blue", color: "#2563eb" },
+                          { name: "Indigo", color: "#4f46e5" },
+                          { name: "Red", color: "#dc2626" }
+                        ].map((preset) => (
+                          <button
+                            key={preset.color}
+                            type="button"
+                            onClick={() => {
+                              setCatalogBulkQrColor(preset.color);
+                              try { playClickSound(); } catch {}
+                            }}
+                            className={`w-5 h-5 rounded-full border cursor-pointer transition-all ${
+                              catalogBulkQrColor.toLowerCase() === preset.color.toLowerCase()
+                                ? "border-white ring-2 ring-emerald-500/50 scale-110"
+                                : "border-white/20 hover:scale-105"
+                            }`}
+                            style={{ backgroundColor: preset.color }}
+                            title={preset.name}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Auto-Copy SKU Toggle Option */}
+                  <div className="space-y-1.5 pt-1">
+                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Salin SKU Otomatis</label>
+                    <div className="bg-slate-900/50 p-2.5 border border-white/5 rounded-xl flex items-center justify-between">
+                      <div className="flex flex-col">
+                        <span className="text-[11px] font-bold text-white">Auto-Copy SKU</span>
+                        <span className="text-[9px] text-slate-500">Salin SKU otomatis ke clipboard saat QR dibuat</span>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={catalogBulkQrAutoCopySku}
+                          onChange={(e) => {
+                            setCatalogBulkQrAutoCopySku(e.target.checked);
+                            try { playClickSound(); } catch {}
+                          }}
+                          className="sr-only peer"
+                        />
+                        <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600 peer-checked:after:bg-white peer-checked:after:border-white"></div>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* QR Preview Toggle Option */}
+                  <div className="space-y-1.5 pt-1">
+                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Pratinjau Halaman</label>
+                    <div className="bg-slate-900/50 p-2.5 border border-white/5 rounded-xl flex items-center justify-between">
+                      <div className="flex flex-col">
+                        <span className="text-[11px] font-bold text-white">Tampilkan Pratinjau QR</span>
+                        <span className="text-[9px] text-slate-500">Aktifkan pratinjau layout sebelum dicetak</span>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={catalogBulkQrShowPreview}
+                          onChange={(e) => {
+                            setCatalogBulkQrShowPreview(e.target.checked);
+                            try { playClickSound(); } catch {}
+                          }}
+                          className="sr-only peer"
+                        />
+                        <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600 peer-checked:after:bg-white peer-checked:after:border-white"></div>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="pt-4 border-t border-white/5 space-y-2 mt-4 md:mt-0">
+                <button
+                  onClick={() => {
+                    window.print();
+                  }}
+                  disabled={filteredAdminCatalog.length === 0}
+                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl shadow-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Icons.Printer className="h-4 w-4" />
+                  <span>Cetak Label QR</span>
+                </button>
+                <button
+                  onClick={() => setShowCatalogBulkQrModal(false)}
+                  className="w-full py-2.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white font-bold text-xs rounded-xl border border-white/5 transition-all flex items-center justify-center gap-1 cursor-pointer"
+                >
+                  Tutup
+                </button>
+              </div>
+            </div>
+
+            {/* Right Preview Grid Area */}
+            <div className="flex-1 bg-slate-950 p-6 overflow-y-auto flex flex-col justify-between">
+              <div className="mb-4 flex items-center justify-between border-b border-white/5 pb-2.5">
+                <div>
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                    <Icons.Eye className="h-4 w-4 text-emerald-400" />
+                    Preview Label Cetak
+                  </h4>
+                  <p className="text-[10px] text-slate-400 mt-0.5">Penampilan label produk pada lembar cetak (Tema: {catalogBulkQrTheme === "print" ? "Cetak Putih" : catalogBulkQrTheme === "dark" ? "Slate Gelap" : "Corporate Indigo"})</p>
+                </div>
+                <div className="text-[10px] font-mono text-slate-500 bg-white/5 px-2.5 py-1 rounded-lg border border-white/5">
+                  Total: {filteredAdminCatalog.length} Produk
+                </div>
+              </div>
+
+              {filteredAdminCatalog.length === 0 ? (
+                <div className="flex-1 flex flex-col items-center justify-center text-slate-500 space-y-3 py-12">
+                  <Icons.PackageX className="h-12 w-12 text-slate-600" />
+                  <p className="text-xs">Tidak ada produk hasil filter yang siap dicetak.</p>
+                </div>
+              ) : !catalogBulkQrShowPreview ? (
+                <div className="flex-1 flex flex-col justify-between h-full bg-slate-900/40 border border-white/5 rounded-2xl p-6">
+                  <div className="flex flex-col items-center justify-center text-center space-y-4 py-8 flex-1">
+                    <div className="h-16 w-16 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shadow-lg animate-pulse">
+                      <Icons.EyeOff className="h-8 w-8" />
+                    </div>
+                    <div>
+                      <h5 className="text-sm font-black text-white uppercase tracking-wider">Pratinjau Visual Dimatikan</h5>
+                      <p className="text-[11px] text-slate-400 mt-1 max-w-md mx-auto leading-relaxed">
+                        Layout lembar cetak A4 tidak ditampilkan di layar. QR Code dan SKU Label tetap akan tercetak dengan benar dan rapi saat tombol <strong className="text-emerald-400">Cetak Label QR</strong> ditekan.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setCatalogBulkQrShowPreview(true)}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] uppercase font-black tracking-wider rounded-xl transition-all cursor-pointer shadow-md"
+                    >
+                      Aktifkan Pratinjau Visual
+                    </button>
+                  </div>
+
+                  <div className="border-t border-white/5 pt-4 mt-4">
+                    <span className="text-[10px] text-slate-400 uppercase font-black tracking-wider block mb-2.5">
+                      Daftar Cetak Antrean ({filteredAdminCatalog.length} Produk)
+                    </span>
+                    <div className="max-h-[180px] overflow-y-auto divide-y divide-white/5 bg-slate-950/50 rounded-xl border border-white/5 p-3.5 space-y-2">
+                      {filteredAdminCatalog.map((prod, idx) => (
+                        <div key={prod.id} className="flex items-center justify-between py-1 text-[11px]">
+                          <div className="flex items-center space-x-2 truncate">
+                            <span className="text-slate-500 font-mono text-[9px]">#{idx + 1}</span>
+                            <span className="text-white font-bold truncate">{prod.name}</span>
+                          </div>
+                          <span className="text-emerald-400 font-mono font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded text-[10px]">
+                            {prod.sku || prod.serialNumber || "N/A"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex-1 overflow-y-auto pr-1">
+                  <div 
+                    className={`grid ${
+                      catalogBulkQrCols === 2 ? "grid-cols-2" : catalogBulkQrCols === 4 ? "grid-cols-4" : "grid-cols-3"
+                    }`}
+                    style={{ gap: `${catalogBulkQrGutter}px` }}
+                  >
+                    {filteredAdminCatalog.map((prod) => {
+                      const origin = typeof window !== "undefined" ? window.location.origin : "";
+                      const qrData = catalogBulkQrEncoding === "url" ? `${origin}/?product=${prod.id}` : (prod.sku || prod.serialNumber || prod.id);
+                      const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=140x140&color=${catalogBulkQrColor.replace("#", "")}&margin=${catalogBulkQrQuietZone}&data=${encodeURIComponent(qrData)}`;
+                      
+                      // Theme-based card styles
+                      const cardStyle = catalogBulkQrTheme === "print"
+                        ? `bg-white text-black border ${catalogBulkQrShowLabelBorder ? "border-slate-300" : "border-transparent"} rounded-xl flex flex-col justify-between shadow-sm`
+                        : catalogBulkQrTheme === "dark"
+                        ? `bg-slate-900 text-white border ${catalogBulkQrShowLabelBorder ? "border-white/10" : "border-transparent"} rounded-xl flex flex-col justify-between shadow-sm`
+                        : `bg-gradient-to-br from-indigo-950 to-slate-900 text-white border ${catalogBulkQrShowLabelBorder ? "border-indigo-500/20" : "border-transparent"} rounded-xl flex flex-col justify-between shadow-sm`;
+
+                      const headingStyle = catalogBulkQrTheme === "print" ? "text-slate-500" : "text-emerald-400";
+                      const textMutedStyle = catalogBulkQrTheme === "print" ? "text-slate-600" : "text-slate-400";
+                      const skuFontSizeClass = catalogBulkQrSize === "small" ? "text-[10px] tracking-wider" : catalogBulkQrSize === "medium" ? "text-xs tracking-widest" : "text-sm tracking-widest font-extrabold";
+
+                      return (
+                        <div 
+                          key={prod.id}
+                          className={`${cardStyle} transition-all duration-300 ${
+                            catalogBulkQrSize === "small" ? "min-h-[140px]" : catalogBulkQrSize === "medium" ? "min-h-[190px]" : "min-h-[240px]"
+                          }`}
+                          style={{
+                            padding: `${catalogBulkQrCardPadding}px`,
+                            borderRadius: `${catalogBulkQrBorderRadius}px`,
+                            transform: catalogBulkQrRotation ? `rotate(${catalogBulkQrRotation}deg)` : undefined,
+                          }}
+                        >
+                          <div className={`border-b pb-1.5 mb-2 flex items-center justify-between ${
+                            catalogBulkQrTheme === "print" ? "border-slate-200" : "border-white/10"
+                          }`}>
+                            <span className="text-[8px] font-black tracking-widest uppercase">BBS CATALOG</span>
+                            <span className={`text-[7px] font-bold uppercase ${headingStyle}`}>{prod.category}</span>
+                          </div>
+
+                          <div className="flex flex-col items-center justify-center my-1 flex-1 w-full">
+                            {/* QR code is always generated with white background for readability */}
+                            <div 
+                              className="bg-white rounded-lg border border-slate-200 flex items-center justify-center transition-all duration-150"
+                              style={{ padding: `${catalogBulkQrMargin}px` }}
+                            >
+                              <img 
+                                src={qrCodeUrl} 
+                                alt={`QR ${prod.name}`} 
+                                className={`object-contain ${
+                                  catalogBulkQrSize === "small" ? "w-14 h-14" : catalogBulkQrSize === "medium" ? "w-20 h-20" : "w-28 h-28"
+                                }`}
+                                referrerPolicy="no-referrer"
+                              />
+                            </div>
+                            {catalogBulkQrShowSkuLabel ? (
+                              <div className={`mt-1.5 w-full px-2 py-1 ${
+                                catalogBulkQrShowSkuBorder ? "border border-dashed" : "border border-transparent"
+                              } rounded-lg ${
+                                catalogBulkQrSkuAlignment === "left"
+                                  ? "text-left"
+                                  : catalogBulkQrSkuAlignment === "right"
+                                  ? "text-right"
+                                  : "text-center"
+                              } ${
+                                catalogBulkQrTheme === "print"
+                                  ? `bg-slate-50 ${catalogBulkQrShowSkuBorder ? "border-slate-400" : "border-transparent"} text-black shadow-sm`
+                                  : catalogBulkQrTheme === "dark"
+                                  ? `bg-slate-800/80 ${catalogBulkQrShowSkuBorder ? "border-slate-700" : "border-transparent"} text-emerald-400 shadow-inner`
+                                  : `bg-indigo-950/60 ${catalogBulkQrShowSkuBorder ? "border-indigo-700" : "border-transparent"} text-emerald-400 shadow-inner`
+                              }`}>
+                                <div className="text-[6px] font-black tracking-widest uppercase opacity-60">WAREHOUSE SKU</div>
+                                <div 
+                                  className="font-mono font-black uppercase truncate"
+                                  style={{ fontSize: `${catalogBulkQrSkuFontSize}px`, lineHeight: "1.2" }}
+                                >
+                                  {prod.sku || prod.serialNumber || "N/A"}
+                                </div>
+                              </div>
+                            ) : (
+                              <span className={`font-black font-mono tracking-wider mt-1.5 uppercase ${
+                                catalogBulkQrTheme === "print" ? "text-slate-800" : "text-white"
+                              } ${
+                                catalogBulkQrSize === "small" ? "text-[8px]" : catalogBulkQrSize === "medium" ? "text-[10px]" : "text-[12px]"
+                              }`}>{prod.sku || prod.serialNumber || prod.id}</span>
+                            )}
+                          </div>
+
+                          <div className={`mt-2 text-[9px] space-y-0.5 border-t pt-1.5 ${
+                            catalogBulkQrTheme === "print" ? "border-slate-200 text-slate-700" : "border-white/5 text-slate-300"
+                          }`}>
+                            <div className="truncate font-black text-xs leading-tight">{prod.name}</div>
+                            {prod.sku && <div className="truncate"><strong className={textMutedStyle}>SKU:</strong> {prod.sku}</div>}
+                            <div className="truncate font-mono"><strong className={textMutedStyle}>Est:</strong> {prod.estimatedPriceRange}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BULK CATALOG QR CODE PRINT ONLY CONTAINER */}
+      {showCatalogBulkQrModal && (
+        <div id="catalog-bulk-qr-sheet-for-printing" className="hidden print:block bg-white text-black min-h-screen p-6">
+          <div className="mb-4 border-b-2 border-black pb-2 text-center">
+            <h1 className="text-xl font-extrabold tracking-wider uppercase">LEMBAR LABEL QR CODE PRODUK MASAL</h1>
+            <p className="text-xs font-semibold uppercase tracking-widest text-slate-700">Berkah Bintang Solusindo &bull; E-Catalog System</p>
+            <p className="text-[10px] text-slate-500 mt-1 font-mono">
+              Dicetak pada: {new Date().toLocaleString("id-ID")} | Total: {filteredAdminCatalog.length} Produk | Tema: {catalogBulkQrTheme.toUpperCase()}
+            </p>
+          </div>
+          <div 
+            className={`grid ${
+              catalogBulkQrCols === 2 ? "grid-cols-2" : catalogBulkQrCols === 4 ? "grid-cols-4" : "grid-cols-3"
+            }`}
+            style={{ gap: `${catalogBulkQrGutter}px` }}
+          >
+            {filteredAdminCatalog.map((prod) => {
+              const origin = typeof window !== "undefined" ? window.location.origin : "";
+              const qrData = catalogBulkQrEncoding === "url" ? `${origin}/?product=${prod.id}` : (prod.sku || prod.serialNumber || prod.id);
+              const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=140x140&color=${catalogBulkQrColor.replace("#", "")}&margin=${catalogBulkQrQuietZone}&data=${encodeURIComponent(qrData)}`;
+              
+              // Theme configurations for actual printing
+              let themeCardClass = "";
+              let themeTextClass = "";
+              let themeMutedTextClass = "";
+              let borderClass = "";
+
+              if (catalogBulkQrTheme === "print") {
+                themeCardClass = `bg-white text-black ${catalogBulkQrShowLabelBorder ? "border-slate-300" : "border-transparent"}`;
+                themeTextClass = "text-black";
+                themeMutedTextClass = "text-slate-500";
+                borderClass = "border-slate-200";
+              } else if (catalogBulkQrTheme === "dark") {
+                themeCardClass = `bg-slate-900 text-white ${catalogBulkQrShowLabelBorder ? "border-slate-700" : "border-transparent"}`;
+                themeTextClass = "text-white";
+                themeMutedTextClass = "text-slate-400";
+                borderClass = "border-slate-800";
+              } else {
+                // Indigo
+                themeCardClass = `bg-indigo-950 text-white ${catalogBulkQrShowLabelBorder ? "border-indigo-800" : "border-transparent"}`;
+                themeTextClass = "text-white";
+                themeMutedTextClass = "text-indigo-200";
+                borderClass = "border-indigo-900";
+              }
+
+              const skuFontSizeClass = catalogBulkQrSize === "small" ? "text-[10px] tracking-wider" : catalogBulkQrSize === "medium" ? "text-xs tracking-widest" : "text-sm tracking-widest font-extrabold";
+
+              return (
+                <div 
+                  key={prod.id}
+                  className={`${catalogBulkQrShowLabelBorder ? "border" : "border-none"} flex flex-col justify-between page-break-inside-avoid ${themeCardClass} ${
+                    catalogBulkQrSize === "small" ? "min-h-[140px]" : catalogBulkQrSize === "medium" ? "min-h-[190px]" : "min-h-[240px]"
+                  }`}
+                  style={{
+                    padding: `${catalogBulkQrCardPadding}px`,
+                    borderRadius: `${catalogBulkQrBorderRadius}px`,
+                    pageBreakInside: "avoid",
+                    breakInside: "avoid",
+                    transform: catalogBulkQrRotation ? `rotate(${catalogBulkQrRotation}deg)` : undefined,
+                  }}
+                >
+                  <div className={`border-b pb-1.5 mb-2 flex items-center justify-between ${borderClass}`}>
+                    <span className="text-[8px] font-black tracking-widest uppercase">BBS CATALOG</span>
+                    <span className="text-[7px] font-bold uppercase">{prod.category}</span>
+                  </div>
+
+                  <div className="flex flex-col items-center justify-center my-1 flex-1 w-full">
+                    <div 
+                      className="bg-white rounded border border-slate-200 flex items-center justify-center"
+                      style={{ padding: `${catalogBulkQrMargin}px` }}
+                    >
+                      <img 
+                        src={qrCodeUrl} 
+                        alt={`QR ${prod.sku || prod.id}`} 
+                        className={`object-contain ${
+                          catalogBulkQrSize === "small" ? "w-14 h-14" : catalogBulkQrSize === "medium" ? "w-20 h-20" : "w-28 h-28"
+                        }`}
+                        referrerPolicy="no-referrer"
+                      />
+                    </div>
+                    {catalogBulkQrShowSkuLabel ? (
+                      <div className={`mt-1.5 w-full px-2 py-1 ${
+                        catalogBulkQrShowSkuBorder ? "border border-dashed" : "border border-transparent"
+                      } rounded-lg ${
+                        catalogBulkQrSkuAlignment === "left"
+                          ? "text-left"
+                          : catalogBulkQrSkuAlignment === "right"
+                          ? "text-right"
+                          : "text-center"
+                      } ${
+                        catalogBulkQrTheme === "print"
+                          ? `bg-slate-50 ${catalogBulkQrShowSkuBorder ? "border-slate-400" : "border-transparent"} text-black shadow-sm`
+                          : catalogBulkQrTheme === "dark"
+                          ? `bg-slate-800/80 ${catalogBulkQrShowSkuBorder ? "border-slate-700" : "border-transparent"} text-white shadow-inner`
+                          : `bg-indigo-950/60 ${catalogBulkQrShowSkuBorder ? "border-indigo-700" : "border-transparent"} text-white shadow-inner`
+                      }`}>
+                        <div className="text-[6px] font-black tracking-widest uppercase opacity-60">WAREHOUSE SKU</div>
+                        <div 
+                          className="font-mono font-black uppercase truncate"
+                          style={{ fontSize: `${catalogBulkQrSkuFontSize}px`, lineHeight: "1.2" }}
+                        >
+                          {prod.sku || prod.serialNumber || "N/A"}
+                        </div>
+                      </div>
+                    ) : (
+                      <span className={`font-black font-mono tracking-wider mt-1.5 uppercase ${themeTextClass} ${
+                        catalogBulkQrSize === "small" ? "text-[8px]" : catalogBulkQrSize === "medium" ? "text-[10px]" : "text-[12px]"
+                      }`}>{prod.sku || prod.serialNumber || prod.id}</span>
+                    )}
+                  </div>
+
+                  <div className={`mt-2 text-[9px] space-y-0.5 border-t pt-1.5 ${borderClass}`}>
+                    <div className="truncate font-black text-xs leading-tight">{prod.name}</div>
+                    {prod.sku && <div className="truncate"><strong className={themeMutedTextClass}>SKU:</strong> {prod.sku}</div>}
+                    <div className="truncate font-mono"><strong className={themeMutedTextClass}>Est:</strong> {prod.estimatedPriceRange}</div>
                   </div>
                 </div>
               );

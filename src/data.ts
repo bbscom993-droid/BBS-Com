@@ -130,7 +130,8 @@ export const PRODUCT_CATALOG: ProductItem[] = [
       "Windows 11 Pro Original"
     ],
     icon: "Laptop",
-    image: imgLenovo
+    image: imgLenovo,
+    sku: "BBS-LNV-T14"
   },
   {
     id: "prod_2",
@@ -146,7 +147,8 @@ export const PRODUCT_CATALOG: ProductItem[] = [
       "Sudah termasuk Keyboard & Mouse USB ASUS"
     ],
     icon: "Monitor",
-    image: imgAsus
+    image: imgAsus,
+    sku: "BBS-ASU-D7M"
   },
   {
     id: "prod_3",
@@ -162,7 +164,8 @@ export const PRODUCT_CATALOG: ProductItem[] = [
       "Dell iDRAC9 Basic Remote Management"
     ],
     icon: "Database",
-    image: imgDell
+    image: imgDell,
+    sku: "BBS-DEL-R25"
   },
   {
     id: "prod_4",
@@ -178,7 +181,8 @@ export const PRODUCT_CATALOG: ProductItem[] = [
       "Synology DiskStation Manager (DSM) OS"
     ],
     icon: "HardDrive",
-    image: imgSynology
+    image: imgSynology,
+    sku: "BBS-SYN-923"
   },
   {
     id: "prod_5",
@@ -194,7 +198,8 @@ export const PRODUCT_CATALOG: ProductItem[] = [
       "MikroTik RouterOS v7 License Level 5"
     ],
     icon: "Cpu",
-    image: imgMikrotik
+    image: imgMikrotik,
+    sku: "BBS-MTK-500"
   },
   {
     id: "prod_6",
@@ -210,7 +215,8 @@ export const PRODUCT_CATALOG: ProductItem[] = [
       "Powered by PoE (Power over Ethernet)"
     ],
     icon: "Wifi",
-    image: imgUnifi
+    image: imgUnifi,
+    sku: "BBS-UBQ-U6L"
   },
   {
     id: "prod_7",
@@ -226,7 +232,8 @@ export const PRODUCT_CATALOG: ProductItem[] = [
       "Teknologi Kompresi Hemat Bandwidth H.265+"
     ],
     icon: "Shield",
-    image: imgHikvision
+    image: imgHikvision,
+    sku: "BBS-HKV-112"
   },
   {
     id: "prod_8",
@@ -242,6 +249,7 @@ export const PRODUCT_CATALOG: ProductItem[] = [
       "Bisa diinstal di 5 perangkat (PC/Mac/HP) per user"
     ],
     icon: "FileCode",
-    image: imgMicrosoft
+    image: imgMicrosoft,
+    sku: "BBS-MSF-365"
   }
 ];

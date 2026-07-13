@@ -17,6 +17,7 @@ export interface ProductItem {
   icon: string;
   image?: string;
   serialNumber?: string;
+  sku?: string;
 }
 
 export interface RFQItem {
@@ -126,5 +127,20 @@ export interface QuickTopic {
   prompt: string;
   description: string;
   isCustom?: boolean;
+}
+
+export interface AdminRfqFilterPreset {
+  id: string;
+  name: string;
+  statuses: string[];
+  priority?: string;
+  category?: string;
+  subCategory?: string;
+  search?: string;
+  keyword?: string;
+  showOnlyMyClients?: boolean;
+  startDate?: string;
+  endDate?: string;
+  isSystem?: boolean;
 }
 
