@@ -72,6 +72,15 @@ function getBarcodeValue(productId: string) {
   return mockBarcodes[productId] || `BBS-${productId.toUpperCase()}`;
 }
 
+export function getRfqTime(rfq: RFQ): number {
+  const rfqIdNum = parseInt(rfq.id.replace("rfq_", ""), 10);
+  const hasExactTime = rfq.id.startsWith("rfq_") && !isNaN(rfqIdNum) && rfqIdNum > 1000000000000;
+  if (hasExactTime) {
+    return rfqIdNum;
+  }
+  return rfq.date ? new Date(rfq.date).getTime() : 0;
+}
+
 // Crisp high-quality mechanical click sound synthesizer
 export function playClickSound(profileOverride?: string) {
   try {
@@ -835,6 +844,7 @@ export default function App() {
   const [showOnlyMyClients, setShowOnlyMyClients] = useState(false);
   const [adminRfqStartDate, setAdminRfqStartDate] = useState("");
   const [adminRfqEndDate, setAdminRfqEndDate] = useState("");
+  const [adminRfqShowRecent, setAdminRfqShowRecent] = useState(false);
   const [adminRfqStatuses, setAdminRfqStatuses] = useState<string[]>(() => {
     try {
       const stored = localStorage.getItem("bbs_admin_rfq_statuses");
@@ -946,6 +956,7 @@ export default function App() {
     adminRfqPriorityFilter,
     adminRfqStartDate,
     adminRfqEndDate,
+    adminRfqShowRecent,
     adminRfqSearch,
     statusKeywordSearch,
     adminRfqCategoryFilter,
@@ -1127,7 +1138,7 @@ export default function App() {
     setIsFilterPulsing(true);
     const timer = setTimeout(() => setIsFilterPulsing(false), 800);
     return () => clearTimeout(timer);
-  }, [adminRfqSearch, adminRfqStartDate, adminRfqEndDate, adminRfqClientFilter, adminRfqStatuses, statusKeywordSearch, adminRfqCategoryFilter, adminRfqSubCategoryFilter]);
+  }, [adminRfqSearch, adminRfqStartDate, adminRfqEndDate, adminRfqShowRecent, adminRfqClientFilter, adminRfqStatuses, statusKeywordSearch, adminRfqCategoryFilter, adminRfqSubCategoryFilter]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -1149,6 +1160,7 @@ export default function App() {
   const [adminUsername, setAdminUsername] = useState("");
 
   const [selectedHistoryRfq, setSelectedHistoryRfq] = useState<RFQ | null>(null);
+  const [isPrintingRfqSummary, setIsPrintingRfqSummary] = useState(false);
   const [showBulkQrModal, setShowBulkQrModal] = useState(false);
   const [bulkQrSize, setBulkQrSize] = useState<"small" | "medium" | "large">("medium");
   const [bulkQrTheme, setBulkQrTheme] = useState<"print" | "dark">("print");
@@ -1158,25 +1170,181 @@ export default function App() {
   const [showCatalogBulkQrModal, setShowCatalogBulkQrModal] = useState(false);
   const [catalogBulkQrSize, setCatalogBulkQrSize] = useState<"small" | "medium" | "large">("medium");
   const [catalogBulkQrTheme, setCatalogBulkQrTheme] = useState<"print" | "dark" | "indigo">("print");
-  const [catalogBulkQrCols, setCatalogBulkQrCols] = useState<2 | 3 | 4>(3);
+  const [catalogBulkQrCols, setCatalogBulkQrCols] = useState<1 | 2 | 3 | 4>(3);
   const [catalogBulkQrEncoding, setCatalogBulkQrEncoding] = useState<"url" | "code">("url");
   const [catalogBulkQrShowSkuLabel, setCatalogBulkQrShowSkuLabel] = useState(true);
   const [catalogBulkQrSkuFontSize, setCatalogBulkQrSkuFontSize] = useState<number>(11);
   const [catalogBulkQrShowPreview, setCatalogBulkQrShowPreview] = useState(true);
   const [catalogBulkQrMargin, setCatalogBulkQrMargin] = useState<number>(6);
+  const [catalogBulkQrQrPadding, setCatalogBulkQrQrPadding] = useState<number>(8);
   const [catalogBulkQrQuietZone, setCatalogBulkQrQuietZone] = useState<number>(1);
   const [catalogBulkQrCardPadding, setCatalogBulkQrCardPadding] = useState<number>(14);
   const [catalogBulkQrBorderRadius, setCatalogBulkQrBorderRadius] = useState<number>(12);
+  const [catalogBulkQrAspectRatio, setCatalogBulkQrAspectRatio] = useState<number>(1.0);
   const [catalogBulkQrSkuAlignment, setCatalogBulkQrSkuAlignment] = useState<"left" | "center" | "right">("center");
+  const [catalogBulkQrSkuVPosition, setCatalogBulkQrSkuVPosition] = useState<"top" | "center" | "bottom">("bottom");
   const [catalogBulkQrShowLabelBorder, setCatalogBulkQrShowLabelBorder] = useState(true);
   const [catalogBulkQrShowSkuBorder, setCatalogBulkQrShowSkuBorder] = useState(true);
+  const [catalogBulkQrSkuBorderColor, setCatalogBulkQrSkuBorderColor] = useState<string>("#475569");
   const [catalogBulkQrGutter, setCatalogBulkQrGutter] = useState<number>(16);
+  const [catalogBulkQrElementSpacing, setCatalogBulkQrElementSpacing] = useState<number>(8);
   const [catalogBulkQrRotation, setCatalogBulkQrRotation] = useState<0 | 90 | 180 | 270>(0);
+  const [catalogBulkQrFlipH, setCatalogBulkQrFlipH] = useState(false);
+  const [catalogBulkQrFlipV, setCatalogBulkQrFlipV] = useState(false);
   const [catalogBulkQrAutoCopySku, setCatalogBulkQrAutoCopySku] = useState(false);
   const [catalogBulkQrColor, setCatalogBulkQrColor] = useState<string>("#000000");
+  const [catalogBulkQrShowShadow, setCatalogBulkQrShowShadow] = useState(true);
+  const [catalogBulkQrQrScale, setCatalogBulkQrQrScale] = useState<number>(100);
+  const [catalogBulkQrBypassValidation, setCatalogBulkQrBypassValidation] = useState(false);
+  const [catalogBulkQrFilterOutInvalid, setCatalogBulkQrFilterOutInvalid] = useState(false);
+
+  // States for storing and loading QR label presets inside catalog bulk QR modal
+  interface CatalogQrPreset {
+    id: string;
+    name: string;
+    scale: number;
+    rotation: 0 | 90 | 180 | 270;
+    showSkuBorder: boolean;
+    skuBorderColor: string;
+    cols: 1 | 2 | 3 | 4;
+    borderRadius: number;
+    qrPadding?: number;
+  }
+  const [catalogQrPresets, setCatalogQrPresets] = useState<CatalogQrPreset[]>(() => {
+    try {
+      const saved = localStorage.getItem("catalog_qr_presets");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [newCatalogQrPresetName, setNewCatalogQrPresetName] = useState("");
+
+  const handleSaveQrPreset = () => {
+    if (!newCatalogQrPresetName.trim()) return;
+    const newPreset: CatalogQrPreset = {
+      id: Date.now().toString(),
+      name: newCatalogQrPresetName.trim(),
+      scale: catalogBulkQrQrScale,
+      rotation: catalogBulkQrRotation,
+      showSkuBorder: catalogBulkQrShowSkuBorder,
+      skuBorderColor: catalogBulkQrSkuBorderColor,
+      cols: catalogBulkQrCols,
+      borderRadius: catalogBulkQrBorderRadius,
+      qrPadding: catalogBulkQrQrPadding,
+    };
+    const updated = [...catalogQrPresets, newPreset];
+    setCatalogQrPresets(updated);
+    localStorage.setItem("catalog_qr_presets", JSON.stringify(updated));
+    setNewCatalogQrPresetName("");
+  };
+
+  const handleApplyQrPreset = (preset: CatalogQrPreset) => {
+    if (preset.scale !== undefined) setCatalogBulkQrQrScale(preset.scale);
+    if (preset.rotation !== undefined) setCatalogBulkQrRotation(preset.rotation);
+    if (preset.showSkuBorder !== undefined) setCatalogBulkQrShowSkuBorder(preset.showSkuBorder);
+    if (preset.skuBorderColor !== undefined) setCatalogBulkQrSkuBorderColor(preset.skuBorderColor);
+    if (preset.cols !== undefined) setCatalogBulkQrCols(preset.cols);
+    if (preset.borderRadius !== undefined) setCatalogBulkQrBorderRadius(preset.borderRadius);
+    if (preset.qrPadding !== undefined) setCatalogBulkQrQrPadding(preset.qrPadding);
+  };
+
+  const handleDeleteQrPreset = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const updated = catalogQrPresets.filter((p) => p.id !== id);
+    setCatalogQrPresets(updated);
+    localStorage.setItem("catalog_qr_presets", JSON.stringify(updated));
+  };
+
   const [selectedClientProfile, setSelectedClientProfile] = useState<any | null>(null);
   const [clientSearchQuery, setClientSearchQuery] = useState("");
   const [clientCategoryFilter, setClientCategoryFilter] = useState("");
+
+  // Contact Us Form States
+  const [contactName, setContactName] = useState("");
+  const [contactEmailOrPhone, setContactEmailOrPhone] = useState("");
+  const [contactCompany, setContactCompany] = useState("");
+  const [contactSubject, setContactSubject] = useState("");
+  const [contactMessage, setContactMessage] = useState("");
+  const [contactSubmitting, setContactSubmitting] = useState(false);
+  const [contactSubmitted, setContactSubmitted] = useState(false);
+  const [contactFormError, setContactFormError] = useState("");
+  const [copiedEmail, setCopiedEmail] = useState(false);
+  const [copiedAccount, setCopiedAccount] = useState(false);
+  const [activeFaqId, setActiveFaqId] = useState<number | null>(null);
+  const [sentContactMessages, setSentContactMessages] = useState<any[]>(() => {
+    try {
+      const saved = localStorage.getItem("bbs_sent_contact_messages");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const handleContactSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setContactFormError("");
+    
+    if (!contactName.trim()) {
+      setContactFormError("Nama Lengkap wajib diisi.");
+      return;
+    }
+    if (!contactEmailOrPhone.trim()) {
+      setContactFormError("Email atau nomor kontak wajib diisi.");
+      return;
+    }
+    if (!contactSubject) {
+      setContactFormError("Silakan pilih Perihal pesan Anda.");
+      return;
+    }
+    if (!contactMessage.trim()) {
+      setContactFormError("Pesan tidak boleh kosong.");
+      return;
+    }
+
+    setContactSubmitting(true);
+    
+    setTimeout(() => {
+      const newMessage = {
+        id: "msg-" + Date.now(),
+        name: contactName,
+        emailOrPhone: contactEmailOrPhone,
+        company: contactCompany || "-",
+        subject: contactSubject,
+        message: contactMessage,
+        timestamp: new Date().toLocaleString("id-ID", {
+          day: "2-digit",
+          month: "long",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit"
+        }) + " WIB",
+        status: "Menunggu Review"
+      };
+
+      const updated = [newMessage, ...sentContactMessages];
+      setSentContactMessages(updated);
+      try {
+        localStorage.setItem("bbs_sent_contact_messages", JSON.stringify(updated));
+      } catch (err) {
+        console.error(err);
+      }
+
+      setContactSubmitting(false);
+      setContactSubmitted(true);
+      
+      // Clear inputs
+      setContactName("");
+      setContactEmailOrPhone("");
+      setContactCompany("");
+      setContactSubject("");
+      setContactMessage("");
+
+      try {
+        playClickSound();
+      } catch {}
+    }, 1200);
+  };
 
   // RFQ History Modal States
   const [historyStatusInput, setHistoryStatusInput] = useState("");
@@ -1853,6 +2021,13 @@ export default function App() {
         return false;
       }
 
+      // 2b. Filter by Show Recent (last 24 hours)
+      if (adminRfqShowRecent) {
+        const creationTime = getRfqTime(rfq);
+        const isRecent = (Date.now() - creationTime) <= 24 * 60 * 60 * 1000;
+        if (!isRecent) return false;
+      }
+
       // 3. Filter by selected client or company name/category
       if (adminRfqClientFilter) {
         if (adminRfqClientFilter.startsWith("cat:")) {
@@ -1980,7 +2155,7 @@ export default function App() {
       }
       return 0;
     });
-  }, [rfqs, adminRfqSearch, adminRfqStartDate, adminRfqEndDate, adminRfqClientFilter, adminRfqStatuses, statusKeywordSearch, settings.customRfqStatuses, adminRfqSortBy, adminRfqCategoryFilter, adminRfqSubCategoryFilter, adminRfqPriorityFilter, showOnlyMyClients, adminUsers, adminUsername]);
+  }, [rfqs, adminRfqSearch, adminRfqStartDate, adminRfqEndDate, adminRfqShowRecent, adminRfqClientFilter, adminRfqStatuses, statusKeywordSearch, settings.customRfqStatuses, adminRfqSortBy, adminRfqCategoryFilter, adminRfqSubCategoryFilter, adminRfqPriorityFilter, showOnlyMyClients, adminUsers, adminUsername]);
 
   const uniqueClients = useMemo(() => {
     const clientsMap: Record<string, {
@@ -2246,6 +2421,15 @@ export default function App() {
         }
       });
     }
+
+    if (adminRfqShowRecent) {
+      list.push({
+        label: "Dibuat",
+        value: "24 Jam Terakhir",
+        icon: <Icons.Flame className="h-3.5 w-3.5 text-amber-400" />,
+        onClear: () => setAdminRfqShowRecent(false)
+      });
+    }
     
     if (adminRfqClientFilter) {
       let clientName = adminRfqClientFilter;
@@ -2333,13 +2517,38 @@ export default function App() {
     }
     
     return list;
-  }, [adminRfqSearch, adminRfqStartDate, adminRfqEndDate, adminRfqClientFilter, adminRfqStatuses, statusKeywordSearch, adminRfqCategoryFilter, adminRfqSubCategoryFilter, adminRfqPriorityFilter, showOnlyMyClients, setAdminRfqSearch, setAdminRfqStartDate, setAdminRfqEndDate, setAdminRfqClientFilter, setAdminRfqStatuses, setStatusKeywordSearch, setAdminRfqCategoryFilter, setAdminRfqSubCategoryFilter, setAdminRfqPriorityFilter, setShowOnlyMyClients]);
+  }, [adminRfqSearch, adminRfqStartDate, adminRfqEndDate, adminRfqShowRecent, adminRfqClientFilter, adminRfqStatuses, statusKeywordSearch, adminRfqCategoryFilter, adminRfqSubCategoryFilter, adminRfqPriorityFilter, showOnlyMyClients, setAdminRfqSearch, setAdminRfqStartDate, setAdminRfqEndDate, setAdminRfqShowRecent, setAdminRfqClientFilter, setAdminRfqStatuses, setStatusKeywordSearch, setAdminRfqCategoryFilter, setAdminRfqSubCategoryFilter, setAdminRfqPriorityFilter, setShowOnlyMyClients]);
 
   const showToast = (message: string, type: "success" | "error" | "info" = "success") => {
     setToast({ message, type });
     setTimeout(() => {
       setToast(null);
     }, 4000);
+  };
+
+  const validateRfqDateRange = (start: string, end: string) => {
+    if (start && end) {
+      const startDate = new Date(start);
+      const endDate = new Date(end);
+      if (startDate > endDate) {
+        showToast("Rentang tanggal tidak valid! Tanggal mulai tidak boleh setelah tanggal akhir. Silakan perbaiki atau atur ulang (reset) tanggal periode pencarian.", "error");
+        return false;
+      }
+    }
+    return true;
+  };
+
+  useEffect(() => {
+    validateRfqDateRange(adminRfqStartDate, adminRfqEndDate);
+  }, [adminRfqStartDate, adminRfqEndDate]);
+
+  const handlePrintSummary = () => {
+    try { playClickSound(); } catch {}
+    setIsPrintingRfqSummary(true);
+    setTimeout(() => {
+      window.print();
+      setIsPrintingRfqSummary(false);
+    }, 250);
   };
 
   const handleShare = async () => {
@@ -4062,6 +4271,32 @@ export default function App() {
     return matchQ && matchC;
   });
 
+  // Computed values for Bulk QR label printing and validation
+  const bulkQrMissingProducts = useMemo(() => {
+    return filteredAdminCatalog.filter(p => {
+      const missingSku = !(p.sku && p.sku.trim());
+      const missingBarcode = !((p.barcode && p.barcode.trim()) || (p.serialNumber && p.serialNumber.trim()));
+      return missingSku || missingBarcode;
+    });
+  }, [filteredAdminCatalog]);
+
+  const bulkQrItemsToPrint = useMemo(() => {
+    if (catalogBulkQrFilterOutInvalid) {
+      return filteredAdminCatalog.filter(p => {
+        const hasSku = p.sku && p.sku.trim();
+        const hasBarcode = (p.barcode && p.barcode.trim()) || (p.serialNumber && p.serialNumber.trim());
+        return hasSku && hasBarcode;
+      });
+    }
+    return filteredAdminCatalog;
+  }, [filteredAdminCatalog, catalogBulkQrFilterOutInvalid]);
+
+  const isBulkQrPrintDisabled = filteredAdminCatalog.length === 0 || (
+    bulkQrMissingProducts.length > 0 && 
+    !catalogBulkQrBypassValidation && 
+    !catalogBulkQrFilterOutInvalid
+  );
+
   // Auto-Copy SKUs when QR generated
   useEffect(() => {
     if (showCatalogBulkQrModal && catalogBulkQrAutoCopySku && filteredAdminCatalog.length > 0) {
@@ -5726,6 +5961,7 @@ export default function App() {
                     <button onClick={() => setCurrentTab("landing")} className="text-left text-slate-300 hover:text-indigo-400 transition-colors">Halaman Beranda</button>
                     <button onClick={() => setCurrentTab("consult")} className="text-left text-slate-300 hover:text-indigo-400 transition-colors">Konsultasi AI</button>
                     <button onClick={() => setCurrentTab("rfq")} className="text-left text-slate-300 hover:text-indigo-400 transition-colors">Buat Penawaran RFQ</button>
+                    <button onClick={() => setCurrentTab("contact")} className="text-left text-slate-300 hover:text-indigo-400 transition-colors">Hubungi Kami (Kontak)</button>
                   </div>
                 </div>
               </div>
@@ -7760,42 +7996,250 @@ export default function App() {
                       <div className="px-5 py-3.5 bg-slate-950/40 border-b border-white/5 flex flex-col xl:flex-row xl:items-center justify-between gap-4 text-xs">
                         <div className="flex flex-col md:flex-row md:items-center gap-4 flex-1">
                           {/* Date Range Section */}
-                          <div className="flex flex-wrap items-center gap-2">
-                            <div className="flex items-center space-x-2 text-slate-300 font-semibold shrink-0">
+                          <div className="flex flex-col gap-1.5">
+                            <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase select-none">
+                              Select a Timeframe / Date Range Presets
+                            </span>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <div className="flex items-center space-x-2 text-slate-300 font-semibold shrink-0">
                               <Icons.Calendar className="h-4 w-4 text-indigo-400" />
                               <span>Periode:</span>
                             </div>
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="date"
-                                id="rfq_start_date_picker"
-                                value={adminRfqStartDate}
-                                onChange={(e) => setAdminRfqStartDate(e.target.value)}
-                                className="bg-slate-950 border border-white/10 hover:border-indigo-500/40 rounded-xl px-3 py-1.5 text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs font-mono [color-scheme:dark] transition-all"
-                              />
-                              <span className="text-slate-500 font-medium">s/d</span>
-                              <input
-                                type="date"
-                                id="rfq_end_date_picker"
-                                value={adminRfqEndDate}
-                                onChange={(e) => setAdminRfqEndDate(e.target.value)}
-                                className="bg-slate-950 border border-white/10 hover:border-indigo-500/40 rounded-xl px-3 py-1.5 text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs font-mono [color-scheme:dark] transition-all"
-                              />
-                            </div>
-                            {(adminRfqStartDate || adminRfqEndDate) && (
+                            <div className="flex items-center gap-2 flex-wrap" id="rfq_start_date_picker_container">
+                              {(() => {
+                                const isDateRangeInvalid = !!(adminRfqStartDate && adminRfqEndDate && new Date(adminRfqStartDate) > new Date(adminRfqEndDate));
+                                return (
+                                  <>
+                                    {/* Native select dropdown mapping to preset date logic */}
+                                    <div className="relative">
+                                      <select
+                                        id="rfq_date_preset_selector"
+                                        value={(() => {
+                                          if (!adminRfqStartDate || !adminRfqEndDate) return "custom";
+                                          const now = new Date();
+                                          const formatDate = (d: Date): string => {
+                                            const yyyy = d.getFullYear();
+                                            const mm = String(d.getMonth() + 1).padStart(2, '0');
+                                            const dd = String(d.getDate()).padStart(2, '0');
+                                            return `${yyyy}-${mm}-${dd}`;
+                                          };
+
+                                          const last7Start = formatDate(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
+                                          const last7End = formatDate(now);
+                                          if (adminRfqStartDate === last7Start && adminRfqEndDate === last7End) return "last7";
+
+                                          const thisMonthStart = formatDate(new Date(now.getFullYear(), now.getMonth(), 1));
+                                          const thisMonthEnd = formatDate(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+                                          if (adminRfqStartDate === thisMonthStart && adminRfqEndDate === thisMonthEnd) return "thisMonth";
+
+                                          const currentQuarter = Math.floor(now.getMonth() / 3);
+                                          let startYear = now.getFullYear();
+                                          let endYear = now.getFullYear();
+                                          let startMonth = 0;
+                                          let endMonth = 0;
+                                          if (currentQuarter === 0) {
+                                            startYear -= 1;
+                                            endYear -= 1;
+                                            startMonth = 9;
+                                            endMonth = 11;
+                                          } else {
+                                            startMonth = (currentQuarter - 1) * 3;
+                                            endMonth = startMonth + 2;
+                                          }
+                                          const lastQuarterStart = formatDate(new Date(startYear, startMonth, 1));
+                                          const lastQuarterEnd = formatDate(new Date(endYear, endMonth + 1, 0));
+                                          if (adminRfqStartDate === lastQuarterStart && adminRfqEndDate === lastQuarterEnd) return "lastQuarter";
+
+                                          return "custom";
+                                        })()}
+                                        onChange={(e) => {
+                                          const val = e.target.value;
+                                          if (!val) return;
+                                          const now = new Date();
+                                          const formatDate = (d: Date): string => {
+                                            const yyyy = d.getFullYear();
+                                            const mm = String(d.getMonth() + 1).padStart(2, '0');
+                                            const dd = String(d.getDate()).padStart(2, '0');
+                                            return `${yyyy}-${mm}-${dd}`;
+                                          };
+
+                                          if (val === "last7") {
+                                            const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+                                            setAdminRfqStartDate(formatDate(start));
+                                            setAdminRfqEndDate(formatDate(now));
+                                          } else if (val === "thisMonth") {
+                                            const start = new Date(now.getFullYear(), now.getMonth(), 1);
+                                            const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+                                            setAdminRfqStartDate(formatDate(start));
+                                            setAdminRfqEndDate(formatDate(end));
+                                          } else if (val === "lastQuarter") {
+                                            const currentQuarter = Math.floor(now.getMonth() / 3);
+                                            let startYear = now.getFullYear();
+                                            let endYear = now.getFullYear();
+                                            let startMonth = 0;
+                                            let endMonth = 0;
+                                            if (currentQuarter === 0) {
+                                              startYear -= 1;
+                                              endYear -= 1;
+                                              startMonth = 9;
+                                              endMonth = 11;
+                                            } else {
+                                              startMonth = (currentQuarter - 1) * 3;
+                                              endMonth = startMonth + 2;
+                                            }
+                                            const start = new Date(startYear, startMonth, 1);
+                                            const end = new Date(endYear, endMonth + 1, 0);
+                                            setAdminRfqStartDate(formatDate(start));
+                                            setAdminRfqEndDate(formatDate(end));
+                                          } else if (val === "custom") {
+                                            // Keep custom
+                                          }
+                                          try { playClickSound(); } catch {}
+                                        }}
+                                        className="bg-slate-950 border border-white/10 hover:border-indigo-500/40 rounded-xl pl-3 pr-8 py-1.5 text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs transition-all appearance-none cursor-pointer font-semibold select-none"
+                                        style={{
+                                          backgroundImage: `url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e")`,
+                                          backgroundPosition: 'right 0.75rem center',
+                                          backgroundSize: '1em',
+                                          backgroundRepeat: 'no-repeat'
+                                        }}
+                                      >
+                                        <option value="custom" className="bg-slate-950 text-slate-200">Custom</option>
+                                        <option value="last7" className="bg-slate-950 text-slate-200">Last 7 Days</option>
+                                        <option value="thisMonth" className="bg-slate-950 text-slate-200">This Month</option>
+                                        <option value="lastQuarter" className="bg-slate-950 text-slate-200">Last Quarter</option>
+                                      </select>
+                                    </div>
+
+                                    <input
+                                      type="date"
+                                      id="rfq_start_date_picker"
+                                      value={adminRfqStartDate}
+                                      onChange={(e) => setAdminRfqStartDate(e.target.value)}
+                                      className={`bg-slate-950 border rounded-xl px-3 py-1.5 text-slate-200 focus:outline-none focus:ring-1 text-xs font-mono [color-scheme:dark] transition-all ${
+                                        isDateRangeInvalid
+                                          ? "border-rose-500 hover:border-rose-500/80 focus:ring-rose-500 focus:border-rose-500"
+                                          : "border-white/10 hover:border-indigo-500/40 focus:ring-indigo-500 focus:border-indigo-500"
+                                      }`}
+                                      title={isDateRangeInvalid ? "Peringatan: Tanggal mulai tidak boleh setelah tanggal akhir!" : "Tanggal Mulai"}
+                                    />
+                                    <span className="text-slate-500 font-medium">s/d</span>
+                                    <input
+                                      type="date"
+                                      id="rfq_end_date_picker"
+                                      value={adminRfqEndDate}
+                                      onChange={(e) => setAdminRfqEndDate(e.target.value)}
+                                      className={`bg-slate-950 border rounded-xl px-3 py-1.5 text-slate-200 focus:outline-none focus:ring-1 text-xs font-mono [color-scheme:dark] transition-all ${
+                                        isDateRangeInvalid
+                                          ? "border-rose-500 hover:border-rose-500/80 focus:ring-rose-500 focus:border-rose-500"
+                                          : "border-white/10 hover:border-indigo-500/40 focus:ring-indigo-500 focus:border-indigo-500"
+                                      }`}
+                                      title={isDateRangeInvalid ? "Peringatan: Tanggal akhir tidak boleh sebelum tanggal mulai!" : "Tanggal Akhir"}
+                                    />
+                                  </>
+                                );
+                              })()}
+                              {adminRfqStartDate && adminRfqEndDate && (() => {
+                                const start = new Date(adminRfqStartDate);
+                                const end = new Date(adminRfqEndDate);
+                                const diffTime = end.getTime() - start.getTime();
+                                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+                                if (isNaN(diffDays)) return null;
+                                if (diffDays <= 0) {
+                                  return (
+                                    <span className="text-[10px] font-bold text-rose-400 bg-rose-500/10 border border-rose-500/20 px-2 py-1 rounded-lg shrink-0">
+                                      Tanggal tidak valid
+                                    </span>
+                                  );
+                                }
+                                return (
+                                  <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-lg flex items-center gap-1 font-mono shrink-0 animate-fade-in" id="rfq_date_duration_badge">
+                                    <Icons.Clock className="h-3 w-3 text-emerald-400 animate-pulse" />
+                                    <span>Durasi: {diffDays} Hari</span>
+                                  </span>
+                                );
+                              })()}
+
+                              {/* A4 Landscape Print Summary Button */}
                               <button
                                 type="button"
-                                onClick={() => {
-                                  setAdminRfqStartDate("");
-                                  setAdminRfqEndDate("");
-                                }}
-                                className="px-2.5 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/20 rounded-xl font-bold transition-all text-xs flex items-center gap-1 cursor-pointer"
+                                id="rfq_print_summary_btn"
+                                onClick={handlePrintSummary}
+                                className="bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 hover:text-white border border-indigo-500/30 hover:border-indigo-500/50 rounded-xl px-3 py-1.5 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm shadow-indigo-500/5"
+                                title="Cetak Ringkasan RFQ terfilter (A4 Landscape)"
                               >
-                                <X className="h-3 w-3" />
-                                <span>Hapus</span>
+                                <Icons.Printer className="h-3.5 w-3.5 text-indigo-400 animate-pulse" />
+                                <span>Cetak Ringkasan</span>
                               </button>
-                            )}
+                            </div>
+
+                            {/* Category Filter Dropdown */}
+                            <div className="relative">
+                              <select
+                                id="rfq_category_select"
+                                value={adminRfqSubCategoryFilter}
+                                onChange={(e) => {
+                                  setAdminRfqSubCategoryFilter(e.target.value);
+                                  try { playClickSound(); } catch {}
+                                }}
+                                className="bg-slate-950 border border-white/10 hover:border-emerald-500/40 rounded-xl pl-3 pr-8 py-1.5 text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-xs transition-all appearance-none cursor-pointer font-medium select-none"
+                                style={{
+                                  backgroundImage: `url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2310b981' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e")`,
+                                  backgroundPosition: 'right 0.75rem center',
+                                  backgroundSize: '1em',
+                                  backgroundRepeat: 'no-repeat'
+                                }}
+                              >
+                                <option value="" className="bg-slate-950 text-slate-400">Kategori: Semua</option>
+                                <option value="Hardware" className="bg-slate-950 text-slate-200">🖥️ Hardware</option>
+                                <option value="Network" className="bg-slate-950 text-slate-200">🌐 Network</option>
+                                <option value="CCTV" className="bg-slate-950 text-slate-200">📹 CCTV</option>
+                                <option value="Software" className="bg-slate-950 text-slate-200">💿 Software</option>
+                              </select>
+                            </div>
+
+                            {/* Show Recent (Last 24 Hours) Filter Toggle */}
+                            <button
+                              type="button"
+                              id="rfq_show_recent_toggle"
+                              onClick={() => {
+                                setAdminRfqShowRecent(!adminRfqShowRecent);
+                                try { playClickSound(); } catch {}
+                              }}
+                              className={`px-3 py-1.5 rounded-xl font-bold transition-all text-xs flex items-center gap-1.5 cursor-pointer border ${
+                                adminRfqShowRecent
+                                  ? "bg-amber-500/15 border-amber-500/30 text-amber-400 hover:bg-amber-500/25"
+                                  : "bg-slate-950 border border-white/10 text-slate-400 hover:text-slate-200 hover:border-indigo-500/40"
+                              }`}
+                              title="Tampilkan hanya RFQ yang dibuat dalam 24 jam terakhir"
+                            >
+                              <Icons.Clock className={`h-3.5 w-3.5 ${adminRfqShowRecent ? "text-amber-400 animate-pulse" : "text-slate-400"}`} />
+                              <span>Show Recent</span>
+                              {adminRfqShowRecent && (
+                                <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-ping shrink-0" />
+                              )}
+                            </button>
+
+                            <button
+                              type="button"
+                              id="rfq_date_quick_reset_btn"
+                              onClick={() => {
+                                setAdminRfqStartDate("");
+                                setAdminRfqEndDate("");
+                                try { playClickSound(); } catch {}
+                              }}
+                              disabled={!adminRfqStartDate && !adminRfqEndDate}
+                              className={`px-3 py-1.5 rounded-xl font-bold transition-all text-xs flex items-center gap-1.5 cursor-pointer border ${
+                                !adminRfqStartDate && !adminRfqEndDate
+                                  ? "bg-slate-950/40 text-slate-600 border-white/5 cursor-not-allowed opacity-50"
+                                  : "bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border-rose-500/20"
+                              }`}
+                            >
+                              <Icons.RotateCcw className="h-3.5 w-3.5" />
+                              <span>Quick Reset</span>
+                            </button>
                           </div>
+                        </div>
 
                           {/* Status Dropdown Filter Section */}
                           <div className="flex flex-wrap items-center gap-2 md:border-l md:border-white/10 md:pl-4">
@@ -7846,7 +8290,7 @@ export default function App() {
                               </motion.div>
 
                               {/* Glowing border animation overlay when active filters are detected */}
-                              {(adminRfqStatuses.length > 0 || !!adminRfqSearch || !!adminRfqStartDate || !!adminRfqEndDate || !!adminRfqClientFilter || !!statusKeywordSearch || !!adminRfqCategoryFilter || !!adminRfqSubCategoryFilter || !!adminRfqPriorityFilter || showOnlyMyClients) && (
+                              {(adminRfqStatuses.length > 0 || !!adminRfqSearch || !!adminRfqStartDate || !!adminRfqEndDate || adminRfqShowRecent || !!adminRfqClientFilter || !!statusKeywordSearch || !!adminRfqCategoryFilter || !!adminRfqSubCategoryFilter || !!adminRfqPriorityFilter || showOnlyMyClients) && (
                                 <motion.div
                                   className="absolute inset-0 rounded-xl pointer-events-none z-0"
                                   animate={{
@@ -9464,13 +9908,14 @@ export default function App() {
                               <div className="relative flex-1 sm:flex-initial z-10" id="rfq_reset_filters_button_container">
                                 <button
                                   type="button"
-                                  disabled={!(adminRfqStatuses.length > 0 || !!adminRfqSearch || !!adminRfqStartDate || !!adminRfqEndDate || !!adminRfqClientFilter || !!statusKeywordSearch || !!adminRfqCategoryFilter || !!adminRfqSubCategoryFilter || !!adminRfqPriorityFilter || showOnlyMyClients)}
+                                  disabled={!(adminRfqStatuses.length > 0 || !!adminRfqSearch || !!adminRfqStartDate || !!adminRfqEndDate || adminRfqShowRecent || !!adminRfqClientFilter || !!statusKeywordSearch || !!adminRfqCategoryFilter || !!adminRfqSubCategoryFilter || !!adminRfqPriorityFilter || showOnlyMyClients)}
                                   onClick={() => {
                                     setAdminRfqStatuses([]);
                                     setStatusKeywordSearch("");
                                     setAdminRfqSearch("");
                                     setAdminRfqStartDate("");
                                     setAdminRfqEndDate("");
+                                    setAdminRfqShowRecent(false);
                                     setAdminRfqCategoryFilter("");
                                     setAdminRfqSubCategoryFilter("");
                                     setAdminRfqPriorityFilter("");
@@ -9478,7 +9923,7 @@ export default function App() {
                                     setShowOnlyMyClients(false);
                                   }}
                                   className={`flex items-center justify-between border rounded-xl px-3 py-1.5 text-xs font-semibold cursor-pointer transition-all gap-2 w-full sm:min-w-[130px] text-left ${
-                                    !(adminRfqStatuses.length > 0 || !!adminRfqSearch || !!adminRfqStartDate || !!adminRfqEndDate || !!adminRfqClientFilter || !!statusKeywordSearch || !!adminRfqCategoryFilter || !!adminRfqSubCategoryFilter || !!adminRfqPriorityFilter || showOnlyMyClients)
+                                    !(adminRfqStatuses.length > 0 || !!adminRfqSearch || !!adminRfqStartDate || !!adminRfqEndDate || adminRfqShowRecent || !!adminRfqClientFilter || !!statusKeywordSearch || !!adminRfqCategoryFilter || !!adminRfqSubCategoryFilter || !!adminRfqPriorityFilter || showOnlyMyClients)
                                       ? "bg-slate-950/40 border-white/5 text-slate-500 cursor-not-allowed"
                                       : "bg-slate-950 border-rose-500/20 text-rose-400 hover:border-rose-500/50 hover:bg-slate-900 shadow-sm hover:shadow-rose-500/5"
                                   }`}
@@ -10504,7 +10949,7 @@ export default function App() {
                               </div>
 
                               <AnimatePresence>
-                                {(adminRfqStatuses.length > 0 || !!adminRfqSearch || !!adminRfqStartDate || !!adminRfqEndDate || !!adminRfqClientFilter || !!statusKeywordSearch || !!adminRfqCategoryFilter || !!adminRfqSubCategoryFilter || !!adminRfqPriorityFilter || showOnlyMyClients) && (
+                                {(adminRfqStatuses.length > 0 || !!adminRfqSearch || !!adminRfqStartDate || !!adminRfqEndDate || adminRfqShowRecent || !!adminRfqClientFilter || !!statusKeywordSearch || !!adminRfqCategoryFilter || !!adminRfqSubCategoryFilter || !!adminRfqPriorityFilter || showOnlyMyClients) && (
                                   <motion.button
                                     type="button"
                                     initial={{ opacity: 0, scale: 0.8, x: 10 }}
@@ -10518,6 +10963,7 @@ export default function App() {
                                       setAdminRfqSearch("");
                                       setAdminRfqStartDate("");
                                       setAdminRfqEndDate("");
+                                      setAdminRfqShowRecent(false);
                                       setAdminRfqCategoryFilter("");
                                       setAdminRfqSubCategoryFilter("");
                                       setAdminRfqPriorityFilter("");
@@ -14040,6 +14486,515 @@ export default function App() {
               </div>
             )}
 
+          </div>
+        )}
+
+        {/* ==================================== */}
+        {/* TAB 5: KONTAK KAMI (CONTACT US)      */}
+        {/* ==================================== */}
+        {currentTab === "contact" && (
+          <div className="space-y-10 animate-fadeIn" id="contact-us-tab-container">
+            {/* Header / Hero */}
+            <div className="text-center max-w-3xl mx-auto space-y-4">
+              <div className="inline-flex items-center space-x-2 px-3.5 py-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full text-indigo-300 text-xs font-semibold uppercase tracking-wider animate-pulse">
+                <Icons.Headphones className="h-4 w-4 text-indigo-400" />
+                <span>Layanan Hubungan Pelanggan &amp; Kemitraan</span>
+              </div>
+              <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
+                Hubungi <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-cyan-400">Tim BBS</span>
+              </h1>
+              <p className="text-slate-400 text-sm leading-relaxed">
+                Punya pertanyaan seputar pengadaan barang IT, layanan integrasi sistem, atau butuh konsultasi penawaran harga (RFQ) khusus? Kami siap memberikan solusi responsif dan profesional terbaik untuk institusi dan bisnis Anda.
+              </p>
+            </div>
+
+            {/* Quick Contact Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" id="contact-quick-cards-grid">
+              {/* Card 1: WhatsApp */}
+              <div className="bg-slate-900/40 hover:bg-slate-900/60 border border-white/5 hover:border-emerald-500/30 rounded-2xl p-5 space-y-3 transition-all group duration-300 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-20 h-20 bg-emerald-500/5 rounded-bl-full pointer-events-none transition-transform group-hover:scale-110"></div>
+                <div className="flex items-center justify-between">
+                  <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-xl group-hover:bg-emerald-500 group-hover:text-white transition-all duration-300">
+                    <Icons.MessageSquare className="h-5 w-5" />
+                  </div>
+                  <span className="flex items-center gap-1 text-[9px] font-extrabold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                    <span>Aktif</span>
+                  </span>
+                </div>
+                <div>
+                  <h4 className="font-bold text-white text-sm">WhatsApp Direct</h4>
+                  <p className="text-xs text-slate-400 mt-1 leading-normal">Konsultasi cepat via pesan instan chat interaktif.</p>
+                </div>
+                <a 
+                  href={`https://wa.me/${settings.whatsapp.replace(/\D/g, "")}`} 
+                  target="_blank" 
+                  rel="noreferrer" 
+                  onClick={() => { try { playClickSound(); } catch {} }}
+                  className="flex items-center justify-between w-full px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition-all cursor-pointer group-hover:shadow-[0_0_15px_rgba(16,185,129,0.2)]"
+                >
+                  <span>Mulai Chat Sekarang</span>
+                  <Icons.ArrowRight className="h-3.5 w-3.5" />
+                </a>
+              </div>
+
+              {/* Card 2: Email Resmi */}
+              <div className="bg-slate-900/40 hover:bg-slate-900/60 border border-white/5 hover:border-indigo-500/30 rounded-2xl p-5 space-y-3 transition-all group duration-300 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-20 h-20 bg-indigo-500/5 rounded-bl-full pointer-events-none transition-transform group-hover:scale-110"></div>
+                <div className="flex items-center justify-between">
+                  <div className="p-2.5 bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 rounded-xl group-hover:bg-indigo-500 group-hover:text-white transition-all duration-300">
+                    <Icons.Mail className="h-5 w-5" />
+                  </div>
+                  {copiedEmail ? (
+                    <span className="text-[9px] font-extrabold text-indigo-300 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                      Tersalin
+                    </span>
+                  ) : (
+                    <span className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider">
+                      Klik Salin
+                    </span>
+                  )}
+                </div>
+                <div>
+                  <h4 className="font-bold text-white text-sm">Email Korporat</h4>
+                  <p className="text-xs text-slate-400 mt-1 truncate" title={settings.email}>{settings.email}</p>
+                </div>
+                <div className="flex gap-1.5">
+                  <a 
+                    href={`mailto:${settings.email}`}
+                    onClick={() => { try { playClickSound(); } catch {} }}
+                    className="flex-1 text-center py-2 bg-slate-950 hover:bg-slate-900 border border-white/10 hover:border-indigo-500/30 text-slate-300 font-bold text-xs rounded-xl transition-all cursor-pointer"
+                  >
+                    Kirim Email
+                  </a>
+                  <button 
+                    onClick={() => {
+                      navigator.clipboard.writeText(settings.email);
+                      setCopiedEmail(true);
+                      setTimeout(() => setCopiedEmail(false), 2000);
+                      try { playClickSound(); } catch {}
+                    }}
+                    className="p-2 bg-slate-950 hover:bg-slate-900 border border-white/10 text-slate-400 hover:text-white rounded-xl transition-all cursor-pointer"
+                    title="Salin alamat email"
+                  >
+                    <Icons.Copy className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Card 3: Jam Kerja */}
+              <div className="bg-slate-900/40 border border-white/5 rounded-2xl p-5 space-y-3 relative overflow-hidden">
+                <div className="flex items-center justify-between">
+                  <div className="p-2.5 bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 rounded-xl">
+                    <Icons.Clock className="h-5 w-5" />
+                  </div>
+                  <span className="flex items-center gap-1 text-[9px] font-extrabold text-cyan-400 bg-cyan-500/10 border border-cyan-500/20 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                    <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse"></span>
+                    <span>Buka</span>
+                  </span>
+                </div>
+                <div>
+                  <h4 className="font-bold text-white text-sm">Jam Operasional</h4>
+                  <p className="text-xs text-slate-300 mt-1 font-medium leading-relaxed">{settings.workingHours}</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">Tutup pada Hari Libur Nasional & Akhir Pekan.</p>
+                </div>
+              </div>
+
+              {/* Card 4: Rekening Perusahaan */}
+              <div className="bg-slate-900/40 hover:bg-slate-900/60 border border-white/5 hover:border-cyan-500/30 rounded-2xl p-5 space-y-3 transition-all group duration-300 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-20 h-20 bg-cyan-500/5 rounded-bl-full pointer-events-none transition-transform group-hover:scale-110"></div>
+                <div className="flex items-center justify-between">
+                  <div className="p-2.5 bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 rounded-xl group-hover:bg-cyan-500 group-hover:text-white transition-all duration-300">
+                    <Icons.CreditCard className="h-5 w-5" />
+                  </div>
+                  {copiedAccount ? (
+                    <span className="text-[9px] font-extrabold text-cyan-300 bg-cyan-500/10 border border-cyan-500/20 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                      Tersalin
+                    </span>
+                  ) : (
+                    <span className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider">
+                      Klik Salin
+                    </span>
+                  )}
+                </div>
+                <div>
+                  <h4 className="font-bold text-white text-sm">{settings.bankAccount.bankName}</h4>
+                  <p className="text-xs text-slate-300 font-mono font-bold mt-0.5">{settings.bankAccount.accountNumber}</p>
+                  <p className="text-[10px] text-slate-500 truncate" title={settings.bankAccount.accountHolder}>a/n {settings.bankAccount.accountHolder}</p>
+                </div>
+                <button 
+                  onClick={() => {
+                    navigator.clipboard.writeText(settings.bankAccount.accountNumber);
+                    setCopiedAccount(true);
+                    setTimeout(() => setCopiedAccount(false), 2000);
+                    try { playClickSound(); } catch {}
+                  }}
+                  className="w-full text-center py-2 bg-slate-950 hover:bg-slate-900 border border-white/10 hover:border-cyan-500/30 text-slate-300 font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1"
+                >
+                  <Icons.Copy className="h-3 w-3" />
+                  <span>Salin No. Rekening</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Main Interactive Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8" id="contact-main-interactive-grid">
+              {/* Form Column - Left (8 Cols on Desktop) */}
+              <div className="lg:col-span-7 space-y-6">
+                <div className="bg-slate-900/30 border border-white/5 rounded-3xl p-6 sm:p-8 space-y-6 relative overflow-hidden backdrop-blur-xl">
+                  {/* Subtle Background Art */}
+                  <div className="absolute top-[-20%] right-[-10%] w-[300px] h-[300px] bg-indigo-500/5 rounded-full blur-3xl pointer-events-none"></div>
+                  
+                  <div className="flex items-center justify-between border-b border-white/5 pb-4">
+                    <div className="space-y-1">
+                      <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                        <Icons.Send className="h-5 w-5 text-indigo-400" />
+                        <span>Kirim Pesan Instan</span>
+                      </h3>
+                      <p className="text-xs text-slate-400">Tinggalkan pesan, tim spesialis BBS akan segera menghubungi Anda.</p>
+                    </div>
+                  </div>
+
+                  {contactSubmitted ? (
+                    <motion.div 
+                      className="text-center py-8 px-4 space-y-5"
+                      initial={{ scale: 0.95, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      transition={{ duration: 0.3 }}
+                    >
+                      <div className="inline-flex p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-full text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.1)]">
+                        <Icons.CheckCircle className="h-12 w-12 animate-bounce" />
+                      </div>
+                      <div className="space-y-2">
+                        <h4 className="text-xl font-bold text-white">Inquiry Berhasil Terkirim!</h4>
+                        <p className="text-sm text-slate-300 max-w-md mx-auto leading-relaxed">
+                          Terima kasih atas minat Anda. Pesan Anda telah didaftarkan dengan aman pada sistem database lokal BBS.
+                        </p>
+                        <p className="text-xs text-slate-400 max-w-sm mx-auto bg-slate-950/60 p-2.5 rounded-xl border border-white/5 mt-3">
+                          <Icons.Clock className="h-3.5 w-3.5 text-indigo-400 inline mr-1" />
+                          Tim Account Executive kami akan memproses &amp; memberikan respon komprehensif dalam kurun waktu <strong>maksimal 1x24 jam kerja</strong>.
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setContactSubmitted(false);
+                          try { playClickSound(); } catch {}
+                        }}
+                        className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl transition-all cursor-pointer hover:shadow-[0_0_15px_rgba(99,102,241,0.2)]"
+                      >
+                        Kirim Pesan Lainnya
+                      </button>
+                    </motion.div>
+                  ) : (
+                    <form onSubmit={handleContactSubmit} className="space-y-4">
+                      {contactFormError && (
+                        <div className="p-3.5 bg-red-950/80 border border-red-500/30 rounded-xl text-red-300 text-xs font-medium flex items-center gap-2 animate-shake">
+                          <Icons.AlertCircle className="h-4 w-4 shrink-0 text-red-400" />
+                          <span>{contactFormError}</span>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {/* Name Input */}
+                        <div className="space-y-1.5">
+                          <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">
+                            Nama Lengkap <span className="text-red-500">*</span>
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="Contoh: Budi Santoso"
+                            value={contactName}
+                            onChange={(e) => setContactName(e.target.value)}
+                            className="w-full bg-slate-950 border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/50 transition-all"
+                          />
+                        </div>
+
+                        {/* Contact Info Input */}
+                        <div className="space-y-1.5">
+                          <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">
+                            Email / No. WhatsApp <span className="text-red-500">*</span>
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="Contoh: budi@company.com atau 0812..."
+                            value={contactEmailOrPhone}
+                            onChange={(e) => setContactEmailOrPhone(e.target.value)}
+                            className="w-full bg-slate-950 border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/50 transition-all"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {/* Company Input */}
+                        <div className="space-y-1.5">
+                          <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">
+                            Nama Perusahaan <span className="text-slate-500">(Opsional)</span>
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="Contoh: PT Teknologi Utama"
+                            value={contactCompany}
+                            onChange={(e) => setContactCompany(e.target.value)}
+                            className="w-full bg-slate-950 border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/50 transition-all"
+                          />
+                        </div>
+
+                        {/* Subject Selector */}
+                        <div className="space-y-1.5">
+                          <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">
+                            Perihal <span className="text-red-500">*</span>
+                          </label>
+                          <select
+                            value={contactSubject}
+                            onChange={(e) => setContactSubject(e.target.value)}
+                            className="w-full bg-slate-950 border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/50 transition-all cursor-pointer"
+                          >
+                            <option value="">-- Pilih Perihal --</option>
+                            <option value="Permintaan Penawaran Harga (RFQ)">Permintaan Penawaran Harga (RFQ)</option>
+                            <option value="Konsultasi Spesifikasi IT / Server">Konsultasi Spesifikasi IT / Server</option>
+                            <option value="Kemitraan & Vendor">Kemitraan &amp; Vendor</option>
+                            <option value="Komplain / Layanan Purnajual">Komplain / Layanan Purnajual</option>
+                            <option value="Lainnya">Lainnya</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Message Input */}
+                      <div className="space-y-1.5">
+                        <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">
+                          Isi Pesan / Detail Inquiry <span className="text-red-500">*</span>
+                        </label>
+                        <textarea
+                          rows={5}
+                          placeholder="Tuliskan spesifikasi produk IT yang dicari, estimasi kuantitas pengadaan, atau pertanyaan teknis Anda di sini secara lengkap..."
+                          value={contactMessage}
+                          onChange={(e) => setContactMessage(e.target.value)}
+                          className="w-full bg-slate-950 border border-white/10 rounded-xl px-4 py-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/50 transition-all resize-none leading-relaxed"
+                        ></textarea>
+                      </div>
+
+                      {/* Submit Button */}
+                      <button
+                        type="submit"
+                        disabled={contactSubmitting}
+                        className="w-full py-3 bg-gradient-to-r from-indigo-600 to-cyan-500 hover:from-indigo-500 hover:to-cyan-400 disabled:opacity-40 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer hover:shadow-[0_0_20px_rgba(99,102,241,0.25)] flex items-center justify-center gap-2"
+                      >
+                        {contactSubmitting ? (
+                          <>
+                            <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                            <span>Mengirimkan Pesan...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Icons.Send className="h-3.5 w-3.5" />
+                            <span>Kirim Inquiry Sekarang</span>
+                          </>
+                        )}
+                      </button>
+                    </form>
+                  )}
+                </div>
+
+                {/* Sent Messages History Section (Only visible if has history) */}
+                {sentContactMessages.length > 0 && (
+                  <div className="bg-slate-900/20 border border-white/5 rounded-3xl p-6 space-y-4">
+                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider flex items-center justify-between">
+                      <span>Riwayat Inquiry Terkirim Anda ({sentContactMessages.length})</span>
+                      <button 
+                        onClick={() => {
+                          if (confirm("Hapus seluruh riwayat pesan lokal Anda?")) {
+                            setSentContactMessages([]);
+                            localStorage.removeItem("bbs_sent_contact_messages");
+                            try { playClickSound(); } catch {}
+                          }
+                        }}
+                        className="text-[9px] font-bold text-rose-400 hover:text-rose-300 normal-case flex items-center gap-1 bg-rose-500/5 border border-rose-500/10 px-2 py-0.5 rounded-full"
+                      >
+                        <Icons.Trash2 className="h-3 w-3" />
+                        <span>Hapus Riwayat</span>
+                      </button>
+                    </h3>
+                    
+                    <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+                      {sentContactMessages.map((msg) => (
+                        <div key={msg.id} className="bg-slate-950/60 p-4 rounded-2xl border border-white/5 space-y-2 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-bold text-white truncate max-w-[150px]">{msg.name}</span>
+                            <span className="text-[9px] font-mono text-slate-500">{msg.timestamp}</span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5 text-[9px] text-slate-400 font-medium">
+                            <span className="bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                              {msg.subject}
+                            </span>
+                            {msg.company !== "-" && (
+                              <span className="bg-slate-800/80 border border-white/5 text-slate-300 px-2 py-0.5 rounded-full">
+                                {msg.company}
+                              </span>
+                            )}
+                            <span className="bg-amber-500/10 border border-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1">
+                              <span className="h-1 w-1 bg-amber-400 rounded-full animate-ping"></span>
+                              <span>{msg.status}</span>
+                            </span>
+                          </div>
+                          <p className="text-slate-400 leading-normal bg-white/[1%] p-3 rounded-xl border border-white/5 whitespace-pre-wrap">
+                            {msg.message}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Map & Office Information - Right (5 Cols on Desktop) */}
+              <div className="lg:col-span-5 space-y-6">
+                {/* Visual Map Simulator */}
+                <div className="bg-slate-900/30 border border-white/5 rounded-3xl p-6 space-y-4 backdrop-blur-xl relative overflow-hidden">
+                  <div className="absolute top-[-20%] left-[-20%] w-[300px] h-[300px] bg-cyan-500/5 rounded-full blur-3xl pointer-events-none"></div>
+
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Icons.Map className="h-4 w-4 text-cyan-400" />
+                    <span>Peta Lokasi Kantor Pusat</span>
+                  </h3>
+                  
+                  {/* Styled Cyberpunk Map Visualizer */}
+                  <div className="relative w-full h-56 bg-slate-950 border border-white/10 rounded-2xl overflow-hidden flex flex-col items-center justify-center text-center p-4">
+                    {/* Retro Grid lines */}
+                    <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff03_1px,transparent_1px),linear-gradient(to_bottom,#ffffff03_1px,transparent_1px)] bg-[size:16px_16px]"></div>
+                    {/* Concentric waves radar */}
+                    <div className="absolute h-32 w-32 rounded-full border border-indigo-500/10 animate-ping pointer-events-none z-0"></div>
+                    <div className="absolute h-16 w-16 rounded-full border border-cyan-500/25 animate-pulse pointer-events-none z-0"></div>
+                    
+                    <div className="relative z-10 space-y-3">
+                      <div className="inline-flex p-3 bg-gradient-to-tr from-indigo-600 to-cyan-500 text-white rounded-2xl shadow-lg shadow-indigo-500/20 animate-bounce">
+                        <Icons.MapPin className="h-6 w-6" />
+                      </div>
+                      <div className="space-y-1">
+                        <h4 className="font-extrabold text-white text-xs tracking-wide uppercase">Jakarta Raya Cempaka</h4>
+                        <p className="text-[11px] text-slate-400 max-w-[220px] mx-auto leading-relaxed">
+                          {settings.address}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Coordinates details */}
+                    <div className="absolute bottom-3 left-3 right-3 flex justify-between text-[9px] font-mono text-slate-500 select-none">
+                      <span>LAT: -6.1751° S</span>
+                      <span>LNG: 106.8650° E</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Lokasi kantor pusat strategis kami memudahkan logistik pengiriman cepat di area metropolitan Jabodetabek &amp; sekitarnya.
+                    </p>
+                    <a
+                      href={`https://maps.google.com/?q=${encodeURIComponent(settings.address + " " + settings.companyName)}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={() => { try { playClickSound(); } catch {} }}
+                      className="w-full py-2.5 bg-slate-950 hover:bg-slate-900 border border-white/10 hover:border-cyan-500/30 text-slate-300 hover:text-white font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      <Icons.MapPin className="h-4 w-4 text-cyan-400" />
+                      <span>Buka di Google Maps Resmi</span>
+                    </a>
+                  </div>
+                </div>
+
+                {/* Secure Guarantee Certificate card */}
+                <div className="bg-gradient-to-br from-indigo-950/40 to-slate-900/40 border border-white/5 rounded-3xl p-6 space-y-4">
+                  <h4 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-2">
+                    <Icons.ShieldAlert className="h-4 w-4 text-indigo-400" />
+                    <span>Jaminan Keamanan BBS</span>
+                  </h4>
+                  <ul className="space-y-2 text-xs text-slate-400 leading-relaxed">
+                    <li className="flex items-start gap-2">
+                      <Icons.Check className="h-3.5 w-3.5 text-indigo-400 shrink-0 mt-0.5" />
+                      <span>Seluruh komunikasi, kontrak, dan invoice diverifikasi dengan enkripsi SSL.</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <Icons.Check className="h-3.5 w-3.5 text-indigo-400 shrink-0 mt-0.5" />
+                      <span>Rekening resmi yang digunakan hanya beratasnamakan <strong>PT Berkah Bintang Solusindo</strong>.</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <Icons.Check className="h-3.5 w-3.5 text-indigo-400 shrink-0 mt-0.5" />
+                      <span>Setiap pengajuan penawaran harga (RFQ) dilengkapi QR Code unik untuk validasi keaslian dokumen.</span>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            {/* Bottom FAQ Section */}
+            <div className="border-t border-white/5 pt-10 space-y-6" id="contact-faq-section">
+              <div className="text-center space-y-1 max-w-xl mx-auto">
+                <h2 className="text-xl sm:text-2xl font-bold text-white">Pertanyaan Sering Diajukan (FAQ)</h2>
+                <p className="text-xs text-slate-400">Temukan jawaban cepat atas pertanyaan mendasar mengenai alur pengadaan &amp; layanan kami.</p>
+              </div>
+
+              <div className="max-w-3xl mx-auto space-y-3" id="contact-faqs-accordion">
+                {[
+                  {
+                    id: 1,
+                    question: "Bagaimana cara melakukan pengadaan barang / meminta penawaran harga (RFQ) di BBS?",
+                    answer: "Sangat mudah! Anda dapat memilih produk dari katalog acuan kami di halaman Beranda atau Toko Online, lalu menambahkannya ke Keranjang RFQ. Setelah itu, masuk ke tab 'Buat RFQ', sesuaikan jumlah kebutuhan, dan kirim pengajuan. Tim sales kami akan memproses penawaran resmi dalam waktu kurang dari 24 jam."
+                  },
+                  {
+                    id: 2,
+                    question: "Apakah Berkah Bintang Solusindo bisa melayani pengiriman ke luar Jabodetabek?",
+                    answer: "Ya, kami melayani pengadaan perangkat IT dan pengiriman barang ke seluruh wilayah Indonesia menggunakan ekspedisi rekanan terpercaya dan berasuransi guna menjamin keamanan produk Anda."
+                  },
+                  {
+                    id: 3,
+                    question: "Berapa lama estimasi waktu respon setelah saya mengirimkan pesan atau request RFQ?",
+                    answer: "Untuk pesan umum, kami biasanya merespon dalam waktu 1-2 jam pada hari kerja. Untuk pengajuan RFQ resmi, tim sales kami akan mengirimkan draf penawaran harga (Quotation) resmi dalam waktu maksimal 1x24 jam kerja."
+                  },
+                  {
+                    id: 4,
+                    question: "Apakah BBS menyediakan layanan instalasi, maintenance, dan garansi purnajual?",
+                    answer: "Tentu saja. Sebagai perusahaan solusi IT terintegrasi, kami tidak hanya menjual perangkat keras, tetapi juga menyediakan layanan instalasi jaringan, setup server, konfigurasi CCTV, jasa maintenance berkala, serta jaminan garansi resmi distributor."
+                  },
+                  {
+                    id: 5,
+                    question: "Metode pembayaran apa saja yang didukung oleh Berkah Bintang Solusindo?",
+                    answer: "Kami menerima pembayaran melalui transfer bank perusahaan (PT Berkah Bintang Solusindo) ke Bank Mandiri. Untuk pelanggan korporat yang telah bermitra, kami juga menyediakan opsi syarat pembayaran (Term of Payment/TOP) sesuai kesepakatan kontrak pengadaan."
+                  }
+                ].map((faq) => {
+                  const isOpen = activeFaqId === faq.id;
+                  return (
+                    <div 
+                      key={faq.id} 
+                      className={`border rounded-2xl transition-all duration-300 ${
+                        isOpen 
+                          ? "bg-slate-900/60 border-indigo-500/30" 
+                          : "bg-slate-900/20 border-white/5 hover:border-white/10"
+                      }`}
+                    >
+                      <button
+                        onClick={() => {
+                          setActiveFaqId(isOpen ? null : faq.id);
+                          try { playClickSound(); } catch {}
+                        }}
+                        className="w-full flex items-center justify-between p-4 text-left font-semibold text-xs sm:text-sm text-white focus:outline-none cursor-pointer"
+                      >
+                        <span>{faq.question}</span>
+                        {isOpen ? (
+                          <Icons.ChevronUp className="h-4 w-4 text-indigo-400 shrink-0 ml-4" />
+                        ) : (
+                          <Icons.ChevronDown className="h-4 w-4 text-slate-500 shrink-0 ml-4" />
+                        )}
+                      </button>
+                      
+                      {isOpen && (
+                        <div className="px-4 pb-4 text-xs text-slate-400 leading-relaxed border-t border-white/5 pt-3 animate-fadeIn">
+                          {faq.answer}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         )}
 
@@ -19149,6 +20104,154 @@ export default function App() {
                     Saat ini menampilkan <strong className="text-white font-black">{filteredAdminCatalog.length} produk</strong> hasil pencarian/kategori di Katalog Admin.
                   </div>
 
+                  {/* Validation Box */}
+                  {(() => {
+                    if (bulkQrMissingProducts.length > 0) {
+                      return (
+                        <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-[11px] text-rose-300 leading-relaxed space-y-3" id="bulk-qr-validation-warning">
+                          <div className="space-y-1">
+                            <p className="font-black flex items-center gap-1.5 text-rose-400 uppercase tracking-wider text-[10px]">
+                              <Icons.AlertTriangle className="h-3.5 w-3.5 text-rose-500 animate-bounce" />
+                              Validasi Gagal ({bulkQrMissingProducts.length} Produk)
+                            </p>
+                            <p className="text-[10px] text-slate-400 leading-normal">
+                              Terdapat produk dalam antrean yang belum memiliki SKU atau Barcode/SN. Mereka ditandai dengan warna merah.
+                            </p>
+                          </div>
+                          
+                          <div className="space-y-2 border-t border-rose-500/20 pt-2 text-[10px]">
+                            <label className="flex items-start gap-2 text-slate-300 hover:text-white cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={catalogBulkQrFilterOutInvalid}
+                                onChange={(e) => {
+                                  setCatalogBulkQrFilterOutInvalid(e.target.checked);
+                                  if (e.target.checked) {
+                                    setCatalogBulkQrBypassValidation(false);
+                                  }
+                                  try { playClickSound(); } catch {}
+                                }}
+                                className="mt-0.5 rounded border-white/10 bg-slate-950 text-emerald-600 focus:ring-0 focus:ring-offset-0 h-3.5 w-3.5 cursor-pointer"
+                              />
+                              <div className="flex flex-col">
+                                <span className="font-bold text-white">Sembunyikan Item Bermasalah</span>
+                                <span className="text-[8px] text-slate-400 leading-tight">Lewati item kosong agar label lainnya bisa dicetak ({filteredAdminCatalog.length - bulkQrMissingProducts.length} produk valid)</span>
+                              </div>
+                            </label>
+
+                            <label className="flex items-start gap-2 text-slate-300 hover:text-white cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={catalogBulkQrBypassValidation}
+                                onChange={(e) => {
+                                  setCatalogBulkQrBypassValidation(e.target.checked);
+                                  if (e.target.checked) {
+                                    setCatalogBulkQrFilterOutInvalid(false);
+                                  }
+                                  try { playClickSound(); } catch {}
+                                }}
+                                className="mt-0.5 rounded border-white/10 bg-slate-950 text-emerald-600 focus:ring-0 focus:ring-offset-0 h-3.5 w-3.5 cursor-pointer"
+                              />
+                              <div className="flex flex-col">
+                                <span className="font-bold text-white">Abaikan &amp; Tetap Cetak Semua</span>
+                                <span className="text-[8px] text-slate-400 leading-tight">Tetap cetak semua produk dalam daftar meskipun data tidak lengkap</span>
+                              </div>
+                            </label>
+                          </div>
+                        </div>
+                      );
+                    } else if (filteredAdminCatalog.length > 0) {
+                      return (
+                        <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-[11px] text-emerald-300 leading-relaxed space-y-1" id="bulk-qr-validation-success">
+                          <p className="font-black flex items-center gap-1.5 text-emerald-400 uppercase tracking-wider text-[10px]">
+                            <Icons.CheckCircle className="h-3.5 w-3.5 text-emerald-500" />
+                            Validasi Sukses
+                          </p>
+                          <p className="text-[10px] text-slate-400 leading-normal">
+                            Semua {filteredAdminCatalog.length} produk siap dicetak dengan kelengkapan SKU &amp; Barcode yang valid.
+                          </p>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
+
+                  {/* Preset Manager */}
+                  <div className="space-y-2 border-t border-b border-white/5 py-3 my-1" id="catalog-bulk-qr-presets-section">
+                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider flex items-center justify-between">
+                      <span>Preset Tata Letak</span>
+                      {catalogQrPresets.length > 0 && (
+                        <span className="text-[9px] font-mono lowercase font-normal text-slate-500">
+                          {catalogQrPresets.length} preset tersimpan
+                        </span>
+                      )}
+                    </label>
+                    
+                    {/* List of presets if any */}
+                    {catalogQrPresets.length > 0 && (
+                      <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
+                        {catalogQrPresets.map((preset) => (
+                          <div 
+                            key={preset.id}
+                            onClick={() => {
+                              handleApplyQrPreset(preset);
+                              try { playClickSound(); } catch {}
+                            }}
+                            className="flex items-center justify-between p-2 bg-slate-900/60 hover:bg-slate-900 border border-white/5 hover:border-emerald-500/30 rounded-lg text-xs cursor-pointer transition-all group"
+                          >
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <Icons.Bookmark className="h-3 w-3 text-emerald-400 shrink-0" />
+                              <span className="text-white font-medium truncate" title={preset.name}>{preset.name}</span>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="text-[9px] font-mono text-slate-500">{preset.scale}% | {preset.rotation}° | {preset.qrPadding ?? 8}px</span>
+                              <button
+                                onClick={(e) => {
+                                  handleDeleteQrPreset(preset.id, e);
+                                  try { playClickSound(); } catch {}
+                                }}
+                                className="text-slate-500 hover:text-rose-400 p-0.5 rounded transition-all"
+                                title="Hapus preset"
+                              >
+                                <Icons.Trash2 className="h-3 w-3" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Save current layout as preset */}
+                    <div className="bg-slate-900/50 p-2.5 border border-white/5 rounded-xl space-y-2">
+                      <div className="text-[10px] text-slate-400 leading-normal">
+                        Simpan kombinasi <strong>scale, rotasi, kolom, padding area QR</strong> &amp; <strong>border SKU</strong> saat ini.
+                      </div>
+                      <div className="flex gap-1.5">
+                        <input
+                          id="catalog-bulk-qr-preset-name-input"
+                          type="text"
+                          placeholder="Nama preset baru..."
+                          value={newCatalogQrPresetName}
+                          onChange={(e) => setNewCatalogQrPresetName(e.target.value)}
+                          className="flex-1 bg-slate-950 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50"
+                        />
+                        <button
+                          id="catalog-bulk-qr-save-preset-btn"
+                          onClick={() => {
+                            handleSaveQrPreset();
+                            try { playClickSound(); } catch {}
+                          }}
+                          disabled={!newCatalogQrPresetName.trim()}
+                          className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:hover:bg-emerald-600 text-white font-bold text-xs rounded-lg transition-all flex items-center justify-center cursor-pointer gap-1 shrink-0"
+                          title="Simpan preset"
+                        >
+                          <Icons.Save className="h-3.5 w-3.5" />
+                          <span>Simpan</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* QR Theme Style */}
                   <div className="space-y-1.5">
                     <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Tema Warna Cetak</label>
@@ -19209,21 +20312,26 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Columns */}
-                  <div className="space-y-1.5">
-                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Kolom Baris Grid</label>
-                    <div className="grid grid-cols-3 gap-1 bg-slate-900/50 p-1 border border-white/5 rounded-xl text-[10px] font-bold">
-                      {([2, 3, 4] as const).map((col) => (
+                  {/* Grid Layout Option */}
+                  <div className="space-y-1.5" id="catalog-bulk-qr-grid-layout-container">
+                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Tata Letak (Grid Layout)</label>
+                    <div className="grid grid-cols-4 gap-1 bg-slate-900/50 p-1 border border-white/5 rounded-xl text-[10px] font-bold">
+                      {([1, 2, 3, 4] as const).map((col) => (
                         <button
+                          id={`catalog-bulk-qr-layout-${col}x${col}`}
                           key={col}
-                          onClick={() => setCatalogBulkQrCols(col)}
+                          onClick={() => {
+                            setCatalogBulkQrCols(col);
+                            try { playClickSound(); } catch {}
+                          }}
                           className={`py-1.5 rounded-lg transition-all cursor-pointer ${
                             catalogBulkQrCols === col
                               ? "bg-emerald-600 text-white shadow-md"
                               : "text-slate-400 hover:text-white"
                           }`}
+                          title={`Tata letak grid ${col}x${col}`}
                         >
-                          {col} Kolom
+                          {col === 1 ? "1x1" : col === 2 ? "2x2" : col === 3 ? "3x3" : "4x4"}
                         </button>
                       ))}
                     </div>
@@ -19313,28 +20421,44 @@ export default function App() {
 
                   {/* SKU Label Alignment Control */}
                   {catalogBulkQrShowSkuLabel && (
-                    <div className="space-y-1.5 pt-1 animate-fadeIn">
-                      <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Label Alignment</label>
-                      <div className="bg-slate-900/50 p-1 border border-white/5 rounded-xl grid grid-cols-3 gap-1">
-                        {(["left", "center", "right"] as const).map((align) => (
-                          <button
-                            key={align}
-                            type="button"
-                            onClick={() => {
-                              setCatalogBulkQrSkuAlignment(align);
+                    <>
+                      <div className="space-y-1.5 pt-1 animate-fadeIn">
+                        <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Perataan Teks SKU</label>
+                        <div className="bg-slate-900/50 p-2 border border-white/5 rounded-xl">
+                          <select
+                            value={catalogBulkQrSkuAlignment}
+                            onChange={(e) => {
+                              setCatalogBulkQrSkuAlignment(e.target.value as "left" | "center" | "right");
                               try { playClickSound(); } catch {}
                             }}
-                            className={`py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all cursor-pointer ${
-                              catalogBulkQrSkuAlignment === align
-                                ? "bg-emerald-600 text-white shadow-sm"
-                                : "text-slate-400 hover:text-white hover:bg-white/5"
-                            }`}
+                            className="w-full bg-slate-800 text-white text-[11px] font-bold py-1.5 px-2.5 rounded-lg border border-white/10 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
                           >
-                            {align === "left" ? "Left" : align === "center" ? "Center" : "Right"}
-                          </button>
-                        ))}
+                            <option value="left" className="bg-slate-900 text-white">Kiri (Left)</option>
+                            <option value="center" className="bg-slate-900 text-white">Tengah (Center)</option>
+                            <option value="right" className="bg-slate-900 text-white">Kanan (Right)</option>
+                          </select>
+                        </div>
                       </div>
-                    </div>
+
+                      {/* SKU Vertical Position Control */}
+                      <div className="space-y-1.5 pt-1 animate-fadeIn">
+                        <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Posisi Vertikal SKU</label>
+                        <div className="bg-slate-900/50 p-2 border border-white/5 rounded-xl">
+                          <select
+                            value={catalogBulkQrSkuVPosition}
+                            onChange={(e) => {
+                              setCatalogBulkQrSkuVPosition(e.target.value as "top" | "center" | "bottom");
+                              try { playClickSound(); } catch {}
+                            }}
+                            className="w-full bg-slate-800 text-white text-[11px] font-bold py-1.5 px-2.5 rounded-lg border border-white/10 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
+                          >
+                            <option value="top" className="bg-slate-900 text-white">Atas (Above QR)</option>
+                            <option value="center" className="bg-slate-900 text-white">Tengah (Center Overlay)</option>
+                            <option value="bottom" className="bg-slate-900 text-white">Bawah (Below QR)</option>
+                          </select>
+                        </div>
+                      </div>
+                    </>
                   )}
 
                   {/* Dynamic Margin Slider for QR Code */}
@@ -19361,6 +20485,35 @@ export default function App() {
                         <span>Tipis (2px)</span>
                         <span>Bawaan (6px)</span>
                         <span>Lebar (24px)</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Dynamic Padding Slider for QR Code Container */}
+                  <div className="space-y-1.5 pt-1" id="catalog-bulk-qr-padding-slider-container">
+                    <div className="flex justify-between items-center">
+                      <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Padding Kontainer QR</label>
+                      <span className="text-[10px] font-mono text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                        {catalogBulkQrQrPadding}px
+                      </span>
+                    </div>
+                    <div className="bg-slate-900/50 p-2.5 border border-white/5 rounded-xl space-y-1.5">
+                      <input
+                        id="catalog-bulk-qr-padding-slider"
+                        type="range"
+                        min="0"
+                        max="32"
+                        step="1"
+                        value={catalogBulkQrQrPadding}
+                        onChange={(e) => {
+                          setCatalogBulkQrQrPadding(Number(e.target.value));
+                        }}
+                        className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                      />
+                      <div className="flex justify-between text-[8px] text-slate-500 font-bold px-0.5">
+                        <span>Tanpa Jarak (0px)</span>
+                        <span>Bawaan (8px)</span>
+                        <span>Sangat Lebar (32px)</span>
                       </div>
                     </div>
                   </div>
@@ -19394,15 +20547,16 @@ export default function App() {
                   </div>
 
                   {/* Dynamic Inner Card Padding Slider for Label Density */}
-                  <div className="space-y-1.5 pt-1">
+                  <div className="space-y-1.5 pt-1" id="catalog-bulk-qr-card-padding-container">
                     <div className="flex justify-between items-center">
-                      <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Padding Internal Label</label>
+                      <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Padding Internal Kartu</label>
                       <span className="text-[10px] font-mono text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
                         {catalogBulkQrCardPadding}px
                       </span>
                     </div>
                     <div className="bg-slate-900/50 p-2.5 border border-white/5 rounded-xl space-y-1.5">
                       <input
+                        id="catalog-bulk-qr-card-padding-slider"
                         type="range"
                         min="4"
                         max="32"
@@ -19421,8 +20575,67 @@ export default function App() {
                     </div>
                   </div>
 
+                  {/* Dynamic Element Spacing Slider for Inner Card Layout */}
+                  <div className="space-y-1.5 pt-1" id="catalog-bulk-qr-element-spacing-container">
+                    <div className="flex justify-between items-center">
+                      <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Jarak Margin Antar Elemen</label>
+                      <span className="text-[10px] font-mono text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                        {catalogBulkQrElementSpacing}px
+                      </span>
+                    </div>
+                    <div className="bg-slate-900/50 p-2.5 border border-white/5 rounded-xl space-y-1.5">
+                      <input
+                        id="catalog-bulk-qr-element-spacing-slider"
+                        type="range"
+                        min="2"
+                        max="24"
+                        step="1"
+                        value={catalogBulkQrElementSpacing}
+                        onChange={(e) => {
+                          setCatalogBulkQrElementSpacing(Number(e.target.value));
+                        }}
+                        className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                      />
+                      <div className="flex justify-between text-[8px] text-slate-500 font-bold px-0.5">
+                        <span>Sangat Rapat (2px)</span>
+                        <span>Bawaan (8px)</span>
+                        <span>Sangat Renggang (24px)</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Dynamic QR Code Scale Slider */}
+                  <div className="space-y-1.5 pt-1" id="catalog-bulk-qr-scale-container">
+                    <div className="flex justify-between items-center">
+                      <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Skala QR Code (Scale)</label>
+                      <span className="text-[10px] font-mono text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 flex items-center gap-1">
+                        <span className="text-[8px] text-slate-400 font-black tracking-wider uppercase">QR Scale:</span>
+                        <span>{catalogBulkQrQrScale}%</span>
+                      </span>
+                    </div>
+                    <div className="bg-slate-900/50 p-2.5 border border-white/5 rounded-xl space-y-1.5">
+                      <input
+                        id="catalog-bulk-qr-scale-slider"
+                        type="range"
+                        min="50"
+                        max="150"
+                        step="5"
+                        value={catalogBulkQrQrScale}
+                        onChange={(e) => {
+                          setCatalogBulkQrQrScale(Number(e.target.value));
+                        }}
+                        className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                      />
+                      <div className="flex justify-between text-[8px] text-slate-500 font-bold px-0.5">
+                        <span>Kecil (50%)</span>
+                        <span>Normal (100%)</span>
+                        <span>Besar (150%)</span>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Dynamic Corner Radius Slider for Cards */}
-                  <div className="space-y-1.5 pt-1">
+                  <div className="space-y-1.5 pt-1" id="catalog-bulk-qr-border-radius-container">
                     <div className="flex justify-between items-center">
                       <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Sudut Kartu (Corner Radius)</label>
                       <span className="text-[10px] font-mono text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
@@ -19431,6 +20644,7 @@ export default function App() {
                     </div>
                     <div className="bg-slate-900/50 p-2.5 border border-white/5 rounded-xl space-y-1.5">
                       <input
+                        id="catalog-bulk-qr-border-radius-slider"
                         type="range"
                         min="0"
                         max="32"
@@ -19449,10 +20663,42 @@ export default function App() {
                     </div>
                   </div>
 
+                  {/* Dynamic Aspect Ratio Slider for Cards */}
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex justify-between items-center">
+                      <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Aspek Rasio Kartu (Aspect Ratio)</label>
+                      <span className="text-[10px] font-mono text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                        {catalogBulkQrAspectRatio === 1.0
+                          ? "1:1 (Persegi)"
+                          : catalogBulkQrAspectRatio < 1.0
+                          ? `${catalogBulkQrAspectRatio.toFixed(2)} (Vertikal)`
+                          : `${catalogBulkQrAspectRatio.toFixed(2)} (Horizontal)`}
+                      </span>
+                    </div>
+                    <div className="bg-slate-900/50 p-2.5 border border-white/5 rounded-xl space-y-1.5">
+                      <input
+                        type="range"
+                        min="0.5"
+                        max="2.0"
+                        step="0.05"
+                        value={catalogBulkQrAspectRatio}
+                        onChange={(e) => {
+                          setCatalogBulkQrAspectRatio(Number(e.target.value));
+                        }}
+                        className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                      />
+                      <div className="flex justify-between text-[8px] text-slate-500 font-bold px-0.5">
+                        <span>Tinggi (0.5)</span>
+                        <span>Persegi (1.0)</span>
+                        <span>Lebar (2.0)</span>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Dynamic Gutter Slider for Label Spacing */}
                   <div className="space-y-1.5 pt-1">
                     <div className="flex justify-between items-center">
-                      <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Jarak Antar Label (Gutter)</label>
+                      <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Margin Antar Kartu (Gutter)</label>
                       <span className="text-[10px] font-mono text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
                         {catalogBulkQrGutter}px
                       </span>
@@ -19477,40 +20723,90 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Rotation Toggle Option */}
-                  <div className="space-y-1.5 pt-1">
-                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Rotasi Label (Orientasi)</label>
-                    <div className="bg-slate-900/50 p-1 border border-white/5 rounded-xl grid grid-cols-4 gap-1">
-                      {([0, 90, 180, 270] as const).map((angle) => (
-                        <button
-                          key={angle}
-                          type="button"
-                          onClick={() => {
-                            setCatalogBulkQrRotation(angle);
-                            try { playClickSound(); } catch {}
-                          }}
-                          className={`py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all cursor-pointer ${
-                            catalogBulkQrRotation === angle
-                              ? "bg-emerald-600 text-white shadow-sm"
-                              : "text-slate-400 hover:text-white hover:bg-white/5"
-                          }`}
-                        >
-                          {angle}°
-                        </button>
-                      ))}
+                  {/* Rotation Dropdown Option */}
+                  <div className="space-y-1.5 pt-1" id="catalog-bulk-qr-rotation-container">
+                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Rotasi & Orientasi Cetak</label>
+                    <div className="bg-slate-900/50 p-2 border border-white/5 rounded-xl">
+                      <select
+                        id="catalog-bulk-qr-rotation-select"
+                        value={catalogBulkQrRotation}
+                        onChange={(e) => {
+                          setCatalogBulkQrRotation(Number(e.target.value) as 0 | 90 | 180 | 270);
+                          try { playClickSound(); } catch {}
+                        }}
+                        className="w-full bg-slate-800 text-white text-[11px] font-bold py-1.5 px-2.5 rounded-lg border border-white/10 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
+                      >
+                        <option value={0} className="bg-slate-900 text-white">0° (Bawaan / Lanskap)</option>
+                        <option value={90} className="bg-slate-900 text-white">90° (Vertikal Kanan)</option>
+                        <option value={180} className="bg-slate-900 text-white">180° (Terbalik)</option>
+                        <option value={270} className="bg-slate-900 text-white">270° (Vertikal Kiri)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Flip / Mirror Controls */}
+                  <div className="space-y-1.5 pt-1" id="catalog-bulk-qr-flip-controls-container">
+                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Cermin / Flip Label</label>
+                    <div className="bg-slate-900/50 p-2.5 border border-white/5 rounded-xl space-y-3">
+                      
+                      {/* Horizontal Flip Toggle */}
+                      <div className="flex items-center justify-between" id="catalog-bulk-qr-flip-horizontal-item">
+                        <div className="flex flex-col pr-2">
+                          <span className="text-[11px] font-bold text-white">Cermin Horizontal</span>
+                          <span className="text-[9px] text-slate-400">Balik kiri-kanan (Flip Horizontal)</span>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer select-none">
+                          <input
+                            id="catalog-bulk-qr-flip-h-toggle"
+                            type="checkbox"
+                            checked={catalogBulkQrFlipH}
+                            onChange={(e) => {
+                              setCatalogBulkQrFlipH(e.target.checked);
+                              try { playClickSound(); } catch {}
+                            }}
+                            className="sr-only peer"
+                          />
+                          <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600 peer-checked:after:bg-white peer-checked:after:border-white"></div>
+                        </label>
+                      </div>
+
+                      {/* Vertical Flip Toggle */}
+                      <div className="flex items-center justify-between" id="catalog-bulk-qr-flip-vertical-item">
+                        <div className="flex flex-col pr-2">
+                          <span className="text-[11px] font-bold text-white">Cermin Vertikal</span>
+                          <span className="text-[9px] text-slate-400">Balik atas-bawah (Flip Vertical)</span>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer select-none">
+                          <input
+                            id="catalog-bulk-qr-flip-v-toggle"
+                            type="checkbox"
+                            checked={catalogBulkQrFlipV}
+                            onChange={(e) => {
+                              setCatalogBulkQrFlipV(e.target.checked);
+                              try { playClickSound(); } catch {}
+                            }}
+                            className="sr-only peer"
+                          />
+                          <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600 peer-checked:after:bg-white peer-checked:after:border-white"></div>
+                        </label>
+                      </div>
+
                     </div>
                   </div>
 
                   {/* Label Cutting Border Toggle Option */}
-                  <div className="space-y-1.5 pt-1">
-                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Batas Potong Label</label>
+                  <div className="space-y-1.5 pt-1" id="catalog-bulk-qr-border-toggle-container">
+                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Batas Tepi Kartu (Border)</label>
                     <div className="bg-slate-900/50 p-2.5 border border-white/5 rounded-xl flex items-center justify-between">
-                      <div className="flex flex-col">
-                        <span className="text-[11px] font-bold text-white">Tampilkan Border Label</span>
-                        <span className="text-[9px] text-slate-500">Tampilkan garis pemotong di sekitar label</span>
+                      <div className="flex flex-col pr-2">
+                        <span className="text-[11px] font-bold text-white">Batas Tepi (Border) Kartu</span>
+                        <span className="text-[9px] text-slate-400">
+                          {catalogBulkQrShowLabelBorder ? "Garis potong jelas (dengan border)" : "Sembunyikan border untuk cetak pada kertas pre-printed"}
+                        </span>
                       </div>
                       <label className="relative inline-flex items-center cursor-pointer select-none">
                         <input
+                          id="catalog-bulk-qr-border-toggle"
                           type="checkbox"
                           checked={catalogBulkQrShowLabelBorder}
                           onChange={(e) => {
@@ -19524,26 +20820,52 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* SKU Label Border Toggle Option */}
-                  <div className="space-y-1.5 pt-1">
-                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Batas SKU Label</label>
-                    <div className="bg-slate-900/50 p-2.5 border border-white/5 rounded-xl flex items-center justify-between">
-                      <div className="flex flex-col">
-                        <span className="text-[11px] font-bold text-white">Border Label SKU</span>
-                        <span className="text-[9px] text-slate-500">Tampilkan garis pemisah tipis di sekitar teks SKU</span>
+                  {/* SKU Element Border Toggle Option */}
+                  <div className="space-y-1.5 pt-1" id="catalog-bulk-qr-sku-border-toggle-container">
+                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Batas Elemen SKU (Border)</label>
+                    <div className="bg-slate-900/50 p-2.5 border border-white/5 rounded-xl space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex flex-col pr-2">
+                          <span className="text-[11px] font-bold text-white">Border Elemen SKU</span>
+                          <span className="text-[9px] text-slate-400">
+                            {catalogBulkQrShowSkuBorder ? "Kejelasan visual dengan border kustom" : "Desain SKU bersih tanpa border"}
+                          </span>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer select-none">
+                          <input
+                            id="catalog-bulk-qr-sku-border-toggle"
+                            type="checkbox"
+                            checked={catalogBulkQrShowSkuBorder}
+                            onChange={(e) => {
+                              setCatalogBulkQrShowSkuBorder(e.target.checked);
+                              try { playClickSound(); } catch {}
+                            }}
+                            className="sr-only peer"
+                          />
+                          <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600 peer-checked:after:bg-white peer-checked:after:border-white"></div>
+                        </label>
                       </div>
-                      <label className="relative inline-flex items-center cursor-pointer select-none">
-                        <input
-                          type="checkbox"
-                          checked={catalogBulkQrShowSkuBorder}
-                          onChange={(e) => {
-                            setCatalogBulkQrShowSkuBorder(e.target.checked);
-                            try { playClickSound(); } catch {}
-                          }}
-                          className="sr-only peer"
-                        />
-                        <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600 peer-checked:after:bg-white peer-checked:after:border-white"></div>
-                      </label>
+
+                      {catalogBulkQrShowSkuBorder && (
+                        <div className="flex items-center justify-between pt-2 border-t border-white/5" id="catalog-bulk-qr-sku-border-color-container">
+                          <div className="flex flex-col">
+                            <span className="text-[11px] font-bold text-white">Warna Border SKU</span>
+                            <span className="text-[9px] text-slate-500">Sesuaikan warna border dengan identitas visual</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <input
+                              id="catalog-bulk-qr-sku-border-color-picker"
+                              type="color"
+                              value={catalogBulkQrSkuBorderColor}
+                              onChange={(e) => {
+                                setCatalogBulkQrSkuBorderColor(e.target.value);
+                              }}
+                              className="w-8 h-8 rounded-lg cursor-pointer bg-transparent border-0"
+                            />
+                            <span className="text-[10px] font-mono text-slate-400 uppercase font-bold">{catalogBulkQrSkuBorderColor}</span>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -19642,6 +20964,29 @@ export default function App() {
                       </label>
                     </div>
                   </div>
+
+                  {/* Card Shadow Toggle Option */}
+                  <div className="space-y-1.5 pt-1">
+                    <label className="block text-[10px] text-slate-400 uppercase font-black tracking-wider">Bayangan Kartu</label>
+                    <div className="bg-slate-900/50 p-2.5 border border-white/5 rounded-xl flex items-center justify-between">
+                      <div className="flex flex-col">
+                        <span className="text-[11px] font-bold text-white">Aktifkan Efek Bayangan</span>
+                        <span className="text-[9px] text-slate-500">Berikan efek drop shadow lembut pada kartu QR</span>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={catalogBulkQrShowShadow}
+                          onChange={(e) => {
+                            setCatalogBulkQrShowShadow(e.target.checked);
+                            try { playClickSound(); } catch {}
+                          }}
+                          className="sr-only peer"
+                        />
+                        <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600 peer-checked:after:bg-white peer-checked:after:border-white"></div>
+                      </label>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -19649,13 +20994,37 @@ export default function App() {
               <div className="pt-4 border-t border-white/5 space-y-2 mt-4 md:mt-0">
                 <button
                   onClick={() => {
+                    if (bulkQrMissingProducts.length > 0 && !catalogBulkQrBypassValidation && !catalogBulkQrFilterOutInvalid) {
+                      showToast("Harap selesaikan validasi atau pilih opsi penanganan sebelum mencetak.", "error");
+                      return;
+                    }
+
+                    if (bulkQrMissingProducts.length > 0 && catalogBulkQrBypassValidation) {
+                      const names = bulkQrMissingProducts.map(p => `- ${p.name}`).slice(0, 5).join("\n");
+                      const extraCount = bulkQrMissingProducts.length > 5 ? `\n...dan ${bulkQrMissingProducts.length - 5} produk lainnya` : "";
+                      const confirmPrint = window.confirm(
+                        `⚠️ PERINGATAN VALIDASI\n\nTerdapat ${bulkQrMissingProducts.length} produk yang belum memiliki SKU atau Barcode/Serial Number:\n${names}${extraCount}\n\nApakah Anda yakin ingin tetap melanjutkan pencetakan dengan label kosong/tidak lengkap?`
+                      );
+                      if (!confirmPrint) {
+                        try { playClickSound("error"); } catch {}
+                        return;
+                      }
+                    }
                     window.print();
                   }}
-                  disabled={filteredAdminCatalog.length === 0}
-                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl shadow-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  disabled={isBulkQrPrintDisabled}
+                  className={`w-full py-2.5 disabled:opacity-40 disabled:cursor-not-allowed text-white font-extrabold text-xs rounded-xl shadow-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                    isBulkQrPrintDisabled
+                      ? "bg-slate-800 border border-white/5 text-slate-500"
+                      : "bg-emerald-600 hover:bg-emerald-500"
+                  }`}
                 >
                   <Icons.Printer className="h-4 w-4" />
-                  <span>Cetak Label QR</span>
+                  <span>
+                    {isBulkQrPrintDisabled && filteredAdminCatalog.length > 0
+                      ? "Harap Selesaikan Validasi"
+                      : "Cetak Label QR"}
+                  </span>
                 </button>
                 <button
                   onClick={() => setShowCatalogBulkQrModal(false)}
@@ -19677,14 +21046,20 @@ export default function App() {
                   <p className="text-[10px] text-slate-400 mt-0.5">Penampilan label produk pada lembar cetak (Tema: {catalogBulkQrTheme === "print" ? "Cetak Putih" : catalogBulkQrTheme === "dark" ? "Slate Gelap" : "Corporate Indigo"})</p>
                 </div>
                 <div className="text-[10px] font-mono text-slate-500 bg-white/5 px-2.5 py-1 rounded-lg border border-white/5">
-                  Total: {filteredAdminCatalog.length} Produk
+                  {catalogBulkQrFilterOutInvalid 
+                    ? `Dicetak: ${bulkQrItemsToPrint.length} / ${filteredAdminCatalog.length} Produk` 
+                    : `Total: ${filteredAdminCatalog.length} Produk`}
                 </div>
               </div>
 
-              {filteredAdminCatalog.length === 0 ? (
+              {bulkQrItemsToPrint.length === 0 ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-slate-500 space-y-3 py-12">
                   <Icons.PackageX className="h-12 w-12 text-slate-600" />
-                  <p className="text-xs">Tidak ada produk hasil filter yang siap dicetak.</p>
+                  <p className="text-xs">
+                    {filteredAdminCatalog.length > 0
+                      ? "Semua produk dalam antrean disembunyikan karena tidak lengkap."
+                      : "Tidak ada produk hasil filter yang siap dicetak."}
+                  </p>
                 </div>
               ) : !catalogBulkQrShowPreview ? (
                 <div className="flex-1 flex flex-col justify-between h-full bg-slate-900/40 border border-white/5 rounded-2xl p-6">
@@ -19711,17 +21086,53 @@ export default function App() {
                       Daftar Cetak Antrean ({filteredAdminCatalog.length} Produk)
                     </span>
                     <div className="max-h-[180px] overflow-y-auto divide-y divide-white/5 bg-slate-950/50 rounded-xl border border-white/5 p-3.5 space-y-2">
-                      {filteredAdminCatalog.map((prod, idx) => (
-                        <div key={prod.id} className="flex items-center justify-between py-1 text-[11px]">
-                          <div className="flex items-center space-x-2 truncate">
-                            <span className="text-slate-500 font-mono text-[9px]">#{idx + 1}</span>
-                            <span className="text-white font-bold truncate">{prod.name}</span>
+                      {filteredAdminCatalog.map((prod, idx) => {
+                        const missingSku = !(prod.sku && prod.sku.trim());
+                        const missingBarcode = !((prod.barcode && prod.barcode.trim()) || (prod.serialNumber && prod.serialNumber.trim()));
+                        const isMissing = missingSku || missingBarcode;
+                        const isSkipped = isMissing && catalogBulkQrFilterOutInvalid;
+
+                        return (
+                          <div 
+                            key={prod.id} 
+                            className={`flex items-center justify-between py-1.5 px-2 rounded-lg text-[11px] transition-all ${
+                              isSkipped
+                                ? "bg-slate-900/40 border border-white/5 opacity-45 text-slate-500 line-through"
+                                : isMissing 
+                                ? "bg-red-500/10 border border-red-500/20 text-red-200 animate-pulse" 
+                                : "hover:bg-white/[2%] text-slate-300"
+                            }`}
+                          >
+                            <div className="flex items-center space-x-2 truncate">
+                              <span className="text-slate-500 font-mono text-[9px]">#{idx + 1}</span>
+                              <span className={`font-bold truncate ${
+                                isSkipped ? "text-slate-500 line-through" : isMissing ? "text-red-300" : "text-white"
+                              }`}>{prod.name}</span>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              {isSkipped ? (
+                                <span className="text-[8px] font-black uppercase bg-slate-800 border border-white/15 text-slate-400 px-1.5 py-0.5 rounded flex items-center gap-1">
+                                  <span>Dilewati (Tanpa SKU/BC)</span>
+                                </span>
+                              ) : isMissing ? (
+                                <span className="text-[8px] font-black uppercase bg-red-600/20 border border-red-500/40 text-red-400 px-1.5 py-0.5 rounded flex items-center gap-1 animate-pulse">
+                                  <Icons.AlertTriangle className="h-2.5 w-2.5" />
+                                  <span>{missingSku && missingBarcode ? "No SKU & Barcode" : missingSku ? "No SKU" : "No Barcode"}</span>
+                                </span>
+                              ) : null}
+                              <span className={`font-mono font-bold px-1.5 py-0.5 rounded text-[10px] ${
+                                isSkipped
+                                  ? "bg-slate-950 text-slate-500"
+                                  : isMissing 
+                                  ? "bg-red-500/20 text-red-300 border border-red-500/20" 
+                                  : "bg-emerald-500/10 text-emerald-400"
+                              }`}>
+                                {prod.sku || prod.serialNumber || "N/A"}
+                              </span>
+                            </div>
                           </div>
-                          <span className="text-emerald-400 font-mono font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded text-[10px]">
-                            {prod.sku || prod.serialNumber || "N/A"}
-                          </span>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
@@ -19729,24 +21140,46 @@ export default function App() {
                 <div className="flex-1 overflow-y-auto pr-1">
                   <div 
                     className={`grid ${
-                      catalogBulkQrCols === 2 ? "grid-cols-2" : catalogBulkQrCols === 4 ? "grid-cols-4" : "grid-cols-3"
+                      catalogBulkQrCols === 1
+                        ? "grid-cols-1"
+                        : catalogBulkQrCols === 2
+                        ? "grid-cols-2"
+                        : catalogBulkQrCols === 4
+                        ? "grid-cols-4"
+                        : "grid-cols-3"
                     }`}
                     style={{ gap: `${catalogBulkQrGutter}px` }}
                   >
-                    {filteredAdminCatalog.map((prod) => {
+                    {bulkQrItemsToPrint.map((prod) => {
                       const origin = typeof window !== "undefined" ? window.location.origin : "";
                       const qrData = catalogBulkQrEncoding === "url" ? `${origin}/?product=${prod.id}` : (prod.sku || prod.serialNumber || prod.id);
                       const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=140x140&color=${catalogBulkQrColor.replace("#", "")}&margin=${catalogBulkQrQuietZone}&data=${encodeURIComponent(qrData)}`;
                       
-                      // Theme-based card styles
-                      const cardStyle = catalogBulkQrTheme === "print"
-                        ? `bg-white text-black border ${catalogBulkQrShowLabelBorder ? "border-slate-300" : "border-transparent"} rounded-xl flex flex-col justify-between shadow-sm`
-                        : catalogBulkQrTheme === "dark"
-                        ? `bg-slate-900 text-white border ${catalogBulkQrShowLabelBorder ? "border-white/10" : "border-transparent"} rounded-xl flex flex-col justify-between shadow-sm`
-                        : `bg-gradient-to-br from-indigo-950 to-slate-900 text-white border ${catalogBulkQrShowLabelBorder ? "border-indigo-500/20" : "border-transparent"} rounded-xl flex flex-col justify-between shadow-sm`;
+                      const missingSku = !(prod.sku && prod.sku.trim());
+                      const missingBarcode = !((prod.barcode && prod.barcode.trim()) || (prod.serialNumber && prod.serialNumber.trim()));
+                      const isMissing = missingSku || missingBarcode;
 
-                      const headingStyle = catalogBulkQrTheme === "print" ? "text-slate-500" : "text-emerald-400";
-                      const textMutedStyle = catalogBulkQrTheme === "print" ? "text-slate-600" : "text-slate-400";
+                      // Theme-based card styles
+                      const cardStyle = isMissing
+                        ? `bg-rose-950/20 text-rose-200 border-2 border-red-500/80 ring-2 ring-red-500/30 shadow-[0_0_15px_rgba(239,68,68,0.3)]`
+                        : catalogBulkQrTheme === "print"
+                        ? `bg-white text-black border ${catalogBulkQrShowLabelBorder ? "border-slate-300" : "border-transparent"} rounded-xl flex flex-col justify-between ${catalogBulkQrShowShadow ? "shadow-sm" : "shadow-none"}`
+                        : catalogBulkQrTheme === "dark"
+                        ? `bg-slate-900 text-white border ${catalogBulkQrShowLabelBorder ? "border-white/10" : "border-transparent"} rounded-xl flex flex-col justify-between ${catalogBulkQrShowShadow ? "shadow-sm" : "shadow-none"}`
+                        : `bg-gradient-to-br from-indigo-950 to-slate-900 text-white border ${catalogBulkQrShowLabelBorder ? "border-indigo-500/20" : "border-transparent"} rounded-xl flex flex-col justify-between ${catalogBulkQrShowShadow ? "shadow-sm" : "shadow-none"}`;
+
+                      const headingStyle = isMissing 
+                        ? "text-rose-400" 
+                        : catalogBulkQrTheme === "print" 
+                        ? "text-slate-500" 
+                        : "text-emerald-400";
+                        
+                      const textMutedStyle = isMissing 
+                        ? "text-rose-400/70" 
+                        : catalogBulkQrTheme === "print" 
+                        ? "text-slate-600" 
+                        : "text-slate-400";
+                        
                       const skuFontSizeClass = catalogBulkQrSize === "small" ? "text-[10px] tracking-wider" : catalogBulkQrSize === "medium" ? "text-xs tracking-widest" : "text-sm tracking-widest font-extrabold";
 
                       return (
@@ -19758,67 +21191,145 @@ export default function App() {
                           style={{
                             padding: `${catalogBulkQrCardPadding}px`,
                             borderRadius: `${catalogBulkQrBorderRadius}px`,
-                            transform: catalogBulkQrRotation ? `rotate(${catalogBulkQrRotation}deg)` : undefined,
+                            aspectRatio: `${catalogBulkQrAspectRatio}`,
+                            minHeight: 'unset',
+                            transform: [
+                              catalogBulkQrRotation ? `rotate(${catalogBulkQrRotation}deg)` : "",
+                              catalogBulkQrFlipH ? "scaleX(-1)" : "",
+                              catalogBulkQrFlipV ? "scaleY(-1)" : "",
+                            ].filter(Boolean).join(" ") || undefined,
                           }}
                         >
-                          <div className={`border-b pb-1.5 mb-2 flex items-center justify-between ${
-                            catalogBulkQrTheme === "print" ? "border-slate-200" : "border-white/10"
-                          }`}>
-                            <span className="text-[8px] font-black tracking-widest uppercase">BBS CATALOG</span>
-                            <span className={`text-[7px] font-bold uppercase ${headingStyle}`}>{prod.category}</span>
+                          <div className={`border-b pb-1.5 flex items-center justify-between ${
+                            isMissing 
+                              ? "border-red-500/30" 
+                              : catalogBulkQrTheme === "print" 
+                              ? "border-slate-200" 
+                              : "border-white/10"
+                          }`}
+                          style={{ marginBottom: `${catalogBulkQrElementSpacing}px` }}>
+                            <span className="text-[8px] font-black tracking-widest uppercase flex items-center gap-1">
+                              {isMissing && <Icons.AlertTriangle className="h-3 w-3 text-red-500 animate-pulse" />}
+                              <span>BBS CATALOG</span>
+                            </span>
+                            <span className={`text-[7px] font-bold uppercase ${headingStyle}`}>
+                              {isMissing ? "⚠️ VALIDATION" : prod.category}
+                            </span>
                           </div>
 
-                          <div className="flex flex-col items-center justify-center my-1 flex-1 w-full">
+                          <div className="flex flex-col items-center justify-center flex-1 w-full"
+                          style={{ gap: `${catalogBulkQrElementSpacing}px` }}>
+                            {/* SKU Content rendered according to catalogBulkQrSkuVPosition */}
+                            {catalogBulkQrSkuVPosition === "top" && (
+                              catalogBulkQrShowSkuLabel ? (
+                                <div 
+                                  className={`w-full px-2 py-1 ${
+                                    catalogBulkQrShowSkuBorder ? "border border-dashed" : "border border-transparent"
+                                  } rounded-lg ${
+                                    catalogBulkQrSkuAlignment === "left"
+                                      ? "text-left"
+                                      : catalogBulkQrSkuAlignment === "right"
+                                      ? "text-right"
+                                      : "text-center"
+                                  } ${
+                                    catalogBulkQrTheme === "print"
+                                      ? `bg-slate-50 ${catalogBulkQrShowSkuBorder ? "border-slate-400" : "border-transparent"} text-black shadow-sm`
+                                      : catalogBulkQrTheme === "dark"
+                                      ? `bg-slate-800/80 ${catalogBulkQrShowSkuBorder ? "border-slate-700" : "border-transparent"} text-emerald-400 shadow-inner`
+                                      : `bg-indigo-950/60 ${catalogBulkQrShowSkuBorder ? "border-indigo-700" : "border-transparent"} text-emerald-400 shadow-inner`
+                                  }`}
+                                  style={{ borderColor: catalogBulkQrShowSkuBorder ? catalogBulkQrSkuBorderColor : undefined }}
+                                >
+                                  <div className="text-[6px] font-black tracking-widest uppercase opacity-60">WAREHOUSE SKU</div>
+                                  <div 
+                                    className="font-mono font-black uppercase truncate"
+                                    style={{ fontSize: `${catalogBulkQrSkuFontSize}px`, lineHeight: "1.2" }}
+                                  >
+                                    {prod.sku || prod.serialNumber || "N/A"}
+                                  </div>
+                                </div>
+                              ) : (
+                                <span className={`font-black font-mono tracking-wider uppercase ${
+                                  catalogBulkQrTheme === "print" ? "text-slate-800" : "text-white"
+                                } ${
+                                  catalogBulkQrSize === "small" ? "text-[8px]" : catalogBulkQrSize === "medium" ? "text-[10px]" : "text-[12px]"
+                                }`}>{prod.sku || prod.serialNumber || prod.id}</span>
+                              )
+                            )}
+
                             {/* QR code is always generated with white background for readability */}
                             <div 
-                              className="bg-white rounded-lg border border-slate-200 flex items-center justify-center transition-all duration-150"
-                              style={{ padding: `${catalogBulkQrMargin}px` }}
+                              className="bg-white rounded-lg border border-slate-200 flex items-center justify-center transition-all duration-150 relative overflow-hidden"
+                              style={{ 
+                                padding: `${catalogBulkQrQrPadding}px`,
+                                margin: `${catalogBulkQrMargin}px 0`
+                              }}
                             >
                               <img 
                                 src={qrCodeUrl} 
                                 alt={`QR ${prod.name}`} 
-                                className={`object-contain ${
+                                className={`object-contain transition-transform duration-150 ${
                                   catalogBulkQrSize === "small" ? "w-14 h-14" : catalogBulkQrSize === "medium" ? "w-20 h-20" : "w-28 h-28"
                                 }`}
+                                style={{ transform: `scale(${catalogBulkQrQrScale / 100})` }}
                                 referrerPolicy="no-referrer"
                               />
-                            </div>
-                            {catalogBulkQrShowSkuLabel ? (
-                              <div className={`mt-1.5 w-full px-2 py-1 ${
-                                catalogBulkQrShowSkuBorder ? "border border-dashed" : "border border-transparent"
-                              } rounded-lg ${
-                                catalogBulkQrSkuAlignment === "left"
-                                  ? "text-left"
-                                  : catalogBulkQrSkuAlignment === "right"
-                                  ? "text-right"
-                                  : "text-center"
-                              } ${
-                                catalogBulkQrTheme === "print"
-                                  ? `bg-slate-50 ${catalogBulkQrShowSkuBorder ? "border-slate-400" : "border-transparent"} text-black shadow-sm`
-                                  : catalogBulkQrTheme === "dark"
-                                  ? `bg-slate-800/80 ${catalogBulkQrShowSkuBorder ? "border-slate-700" : "border-transparent"} text-emerald-400 shadow-inner`
-                                  : `bg-indigo-950/60 ${catalogBulkQrShowSkuBorder ? "border-indigo-700" : "border-transparent"} text-emerald-400 shadow-inner`
-                              }`}>
-                                <div className="text-[6px] font-black tracking-widest uppercase opacity-60">WAREHOUSE SKU</div>
-                                <div 
-                                  className="font-mono font-black uppercase truncate"
-                                  style={{ fontSize: `${catalogBulkQrSkuFontSize}px`, lineHeight: "1.2" }}
-                                >
-                                  {prod.sku || prod.serialNumber || "N/A"}
+
+                              {/* Center Overlay if position is "center" */}
+                              {catalogBulkQrSkuVPosition === "center" && (
+                                <div className="absolute inset-0 flex items-center justify-center p-1">
+                                  <div className="bg-white text-black px-1.5 py-0.5 rounded border border-slate-300 shadow-sm max-w-[85%] text-center overflow-hidden">
+                                    <div className="text-[4px] font-black tracking-widest uppercase opacity-60 leading-none mb-0.5">SKU</div>
+                                    <div className="font-mono font-black uppercase truncate text-[8px] leading-none">
+                                      {prod.sku || prod.serialNumber || "N/A"}
+                                    </div>
+                                  </div>
                                 </div>
-                              </div>
-                            ) : (
-                              <span className={`font-black font-mono tracking-wider mt-1.5 uppercase ${
-                                catalogBulkQrTheme === "print" ? "text-slate-800" : "text-white"
-                              } ${
-                                catalogBulkQrSize === "small" ? "text-[8px]" : catalogBulkQrSize === "medium" ? "text-[10px]" : "text-[12px]"
-                              }`}>{prod.sku || prod.serialNumber || prod.id}</span>
+                              )}
+                            </div>
+
+                            {catalogBulkQrSkuVPosition === "bottom" && (
+                              catalogBulkQrShowSkuLabel ? (
+                                <div 
+                                  className={`w-full px-2 py-1 ${
+                                    catalogBulkQrShowSkuBorder ? "border border-dashed" : "border border-transparent"
+                                  } rounded-lg ${
+                                    catalogBulkQrSkuAlignment === "left"
+                                      ? "text-left"
+                                      : catalogBulkQrSkuAlignment === "right"
+                                      ? "text-right"
+                                      : "text-center"
+                                  } ${
+                                    catalogBulkQrTheme === "print"
+                                      ? `bg-slate-50 ${catalogBulkQrShowSkuBorder ? "border-slate-400" : "border-transparent"} text-black shadow-sm`
+                                      : catalogBulkQrTheme === "dark"
+                                      ? `bg-slate-800/80 ${catalogBulkQrShowSkuBorder ? "border-slate-700" : "border-transparent"} text-emerald-400 shadow-inner`
+                                      : `bg-indigo-950/60 ${catalogBulkQrShowSkuBorder ? "border-indigo-700" : "border-transparent"} text-emerald-400 shadow-inner`
+                                  }`}
+                                  style={{ borderColor: catalogBulkQrShowSkuBorder ? catalogBulkQrSkuBorderColor : undefined }}
+                                >
+                                  <div className="text-[6px] font-black tracking-widest uppercase opacity-60">WAREHOUSE SKU</div>
+                                  <div 
+                                    className="font-mono font-black uppercase truncate"
+                                    style={{ fontSize: `${catalogBulkQrSkuFontSize}px`, lineHeight: "1.2" }}
+                                  >
+                                    {prod.sku || prod.serialNumber || "N/A"}
+                                  </div>
+                                </div>
+                              ) : (
+                                <span className={`font-black font-mono tracking-wider uppercase ${
+                                  catalogBulkQrTheme === "print" ? "text-slate-800" : "text-white"
+                                } ${
+                                  catalogBulkQrSize === "small" ? "text-[8px]" : catalogBulkQrSize === "medium" ? "text-[10px]" : "text-[12px]"
+                                }`}>{prod.sku || prod.serialNumber || prod.id}</span>
+                              )
                             )}
                           </div>
 
-                          <div className={`mt-2 text-[9px] space-y-0.5 border-t pt-1.5 ${
+                          <div className={`text-[9px] space-y-0.5 border-t pt-1.5 ${
                             catalogBulkQrTheme === "print" ? "border-slate-200 text-slate-700" : "border-white/5 text-slate-300"
-                          }`}>
+                          }`}
+                          style={{ marginTop: `${catalogBulkQrElementSpacing}px` }}>
                             <div className="truncate font-black text-xs leading-tight">{prod.name}</div>
                             {prod.sku && <div className="truncate"><strong className={textMutedStyle}>SKU:</strong> {prod.sku}</div>}
                             <div className="truncate font-mono"><strong className={textMutedStyle}>Est:</strong> {prod.estimatedPriceRange}</div>
@@ -19841,16 +21352,22 @@ export default function App() {
             <h1 className="text-xl font-extrabold tracking-wider uppercase">LEMBAR LABEL QR CODE PRODUK MASAL</h1>
             <p className="text-xs font-semibold uppercase tracking-widest text-slate-700">Berkah Bintang Solusindo &bull; E-Catalog System</p>
             <p className="text-[10px] text-slate-500 mt-1 font-mono">
-              Dicetak pada: {new Date().toLocaleString("id-ID")} | Total: {filteredAdminCatalog.length} Produk | Tema: {catalogBulkQrTheme.toUpperCase()}
-            </p>
-          </div>
-          <div 
-            className={`grid ${
-              catalogBulkQrCols === 2 ? "grid-cols-2" : catalogBulkQrCols === 4 ? "grid-cols-4" : "grid-cols-3"
-            }`}
-            style={{ gap: `${catalogBulkQrGutter}px` }}
-          >
-            {filteredAdminCatalog.map((prod) => {
+            Dicetak pada: {new Date().toLocaleString("id-ID")} | Total: {bulkQrItemsToPrint.length} Produk | Tema: {catalogBulkQrTheme.toUpperCase()}
+          </p>
+        </div>
+        <div 
+          className={`grid ${
+            catalogBulkQrCols === 1
+              ? "grid-cols-1"
+              : catalogBulkQrCols === 2
+              ? "grid-cols-2"
+              : catalogBulkQrCols === 4
+              ? "grid-cols-4"
+              : "grid-cols-3"
+          }`}
+          style={{ gap: `${catalogBulkQrGutter}px` }}
+        >
+          {bulkQrItemsToPrint.map((prod) => {
               const origin = typeof window !== "undefined" ? window.location.origin : "";
               const qrData = catalogBulkQrEncoding === "url" ? `${origin}/?product=${prod.id}` : (prod.sku || prod.serialNumber || prod.id);
               const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=140x140&color=${catalogBulkQrColor.replace("#", "")}&margin=${catalogBulkQrQuietZone}&data=${encodeURIComponent(qrData)}`;
@@ -19862,18 +21379,18 @@ export default function App() {
               let borderClass = "";
 
               if (catalogBulkQrTheme === "print") {
-                themeCardClass = `bg-white text-black ${catalogBulkQrShowLabelBorder ? "border-slate-300" : "border-transparent"}`;
+                themeCardClass = `bg-white text-black ${catalogBulkQrShowLabelBorder ? "border-slate-300" : "border-transparent"} ${catalogBulkQrShowShadow ? "shadow-sm" : "shadow-none"}`;
                 themeTextClass = "text-black";
                 themeMutedTextClass = "text-slate-500";
                 borderClass = "border-slate-200";
               } else if (catalogBulkQrTheme === "dark") {
-                themeCardClass = `bg-slate-900 text-white ${catalogBulkQrShowLabelBorder ? "border-slate-700" : "border-transparent"}`;
+                themeCardClass = `bg-slate-900 text-white ${catalogBulkQrShowLabelBorder ? "border-slate-700" : "border-transparent"} ${catalogBulkQrShowShadow ? "shadow-sm" : "shadow-none"}`;
                 themeTextClass = "text-white";
                 themeMutedTextClass = "text-slate-400";
                 borderClass = "border-slate-800";
               } else {
                 // Indigo
-                themeCardClass = `bg-indigo-950 text-white ${catalogBulkQrShowLabelBorder ? "border-indigo-800" : "border-transparent"}`;
+                themeCardClass = `bg-indigo-950 text-white ${catalogBulkQrShowLabelBorder ? "border-indigo-800" : "border-transparent"} ${catalogBulkQrShowShadow ? "shadow-sm" : "shadow-none"}`;
                 themeTextClass = "text-white";
                 themeMutedTextClass = "text-indigo-200";
                 borderClass = "border-indigo-900";
@@ -19890,62 +21407,129 @@ export default function App() {
                   style={{
                     padding: `${catalogBulkQrCardPadding}px`,
                     borderRadius: `${catalogBulkQrBorderRadius}px`,
+                    aspectRatio: `${catalogBulkQrAspectRatio}`,
+                    minHeight: 'unset',
                     pageBreakInside: "avoid",
                     breakInside: "avoid",
-                    transform: catalogBulkQrRotation ? `rotate(${catalogBulkQrRotation}deg)` : undefined,
+                    transform: [
+                      catalogBulkQrRotation ? `rotate(${catalogBulkQrRotation}deg)` : "",
+                      catalogBulkQrFlipH ? "scaleX(-1)" : "",
+                      catalogBulkQrFlipV ? "scaleY(-1)" : "",
+                    ].filter(Boolean).join(" ") || undefined,
                   }}
                 >
-                  <div className={`border-b pb-1.5 mb-2 flex items-center justify-between ${borderClass}`}>
+                  <div className={`border-b pb-1.5 flex items-center justify-between ${borderClass}`}
+                  style={{ marginBottom: `${catalogBulkQrElementSpacing}px` }}>
                     <span className="text-[8px] font-black tracking-widest uppercase">BBS CATALOG</span>
                     <span className="text-[7px] font-bold uppercase">{prod.category}</span>
                   </div>
 
-                  <div className="flex flex-col items-center justify-center my-1 flex-1 w-full">
+                  <div className="flex flex-col items-center justify-center flex-1 w-full"
+                  style={{ gap: `${catalogBulkQrElementSpacing}px` }}>
+                    {/* SKU Content rendered according to catalogBulkQrSkuVPosition */}
+                    {catalogBulkQrSkuVPosition === "top" && (
+                      catalogBulkQrShowSkuLabel ? (
+                        <div 
+                          className={`w-full px-2 py-1 ${
+                            catalogBulkQrShowSkuBorder ? "border border-dashed" : "border border-transparent"
+                          } rounded-lg ${
+                            catalogBulkQrSkuAlignment === "left"
+                              ? "text-left"
+                              : catalogBulkQrSkuAlignment === "right"
+                              ? "text-right"
+                              : "text-center"
+                          } ${
+                            catalogBulkQrTheme === "print"
+                              ? `bg-slate-50 ${catalogBulkQrShowSkuBorder ? "border-slate-400" : "border-transparent"} text-black shadow-sm`
+                              : catalogBulkQrTheme === "dark"
+                              ? `bg-slate-800/80 ${catalogBulkQrShowSkuBorder ? "border-slate-700" : "border-transparent"} text-white shadow-inner`
+                              : `bg-indigo-950/60 ${catalogBulkQrShowSkuBorder ? "border-indigo-700" : "border-transparent"} text-white shadow-inner`
+                          }`}
+                          style={{ borderColor: catalogBulkQrShowSkuBorder ? catalogBulkQrSkuBorderColor : undefined }}
+                        >
+                          <div className="text-[6px] font-black tracking-widest uppercase opacity-60">WAREHOUSE SKU</div>
+                          <div 
+                            className="font-mono font-black uppercase truncate"
+                            style={{ fontSize: `${catalogBulkQrSkuFontSize}px`, lineHeight: "1.2" }}
+                          >
+                            {prod.sku || prod.serialNumber || "N/A"}
+                          </div>
+                        </div>
+                      ) : (
+                        <span className={`font-black font-mono tracking-wider uppercase ${themeTextClass} ${
+                          catalogBulkQrSize === "small" ? "text-[8px]" : catalogBulkQrSize === "medium" ? "text-[10px]" : "text-[12px]"
+                        }`}>{prod.sku || prod.serialNumber || prod.id}</span>
+                      )
+                    )}
+
                     <div 
-                      className="bg-white rounded border border-slate-200 flex items-center justify-center"
-                      style={{ padding: `${catalogBulkQrMargin}px` }}
+                      className="bg-white rounded border border-slate-200 flex items-center justify-center relative overflow-hidden"
+                      style={{ 
+                        padding: `${catalogBulkQrQrPadding}px`,
+                        margin: `${catalogBulkQrMargin}px 0`
+                      }}
                     >
                       <img 
                         src={qrCodeUrl} 
                         alt={`QR ${prod.sku || prod.id}`} 
-                        className={`object-contain ${
+                        className={`object-contain transition-transform duration-150 ${
                           catalogBulkQrSize === "small" ? "w-14 h-14" : catalogBulkQrSize === "medium" ? "w-20 h-20" : "w-28 h-28"
                         }`}
+                        style={{ transform: `scale(${catalogBulkQrQrScale / 100})` }}
                         referrerPolicy="no-referrer"
                       />
-                    </div>
-                    {catalogBulkQrShowSkuLabel ? (
-                      <div className={`mt-1.5 w-full px-2 py-1 ${
-                        catalogBulkQrShowSkuBorder ? "border border-dashed" : "border border-transparent"
-                      } rounded-lg ${
-                        catalogBulkQrSkuAlignment === "left"
-                          ? "text-left"
-                          : catalogBulkQrSkuAlignment === "right"
-                          ? "text-right"
-                          : "text-center"
-                      } ${
-                        catalogBulkQrTheme === "print"
-                          ? `bg-slate-50 ${catalogBulkQrShowSkuBorder ? "border-slate-400" : "border-transparent"} text-black shadow-sm`
-                          : catalogBulkQrTheme === "dark"
-                          ? `bg-slate-800/80 ${catalogBulkQrShowSkuBorder ? "border-slate-700" : "border-transparent"} text-white shadow-inner`
-                          : `bg-indigo-950/60 ${catalogBulkQrShowSkuBorder ? "border-indigo-700" : "border-transparent"} text-white shadow-inner`
-                      }`}>
-                        <div className="text-[6px] font-black tracking-widest uppercase opacity-60">WAREHOUSE SKU</div>
-                        <div 
-                          className="font-mono font-black uppercase truncate"
-                          style={{ fontSize: `${catalogBulkQrSkuFontSize}px`, lineHeight: "1.2" }}
-                        >
-                          {prod.sku || prod.serialNumber || "N/A"}
+
+                      {/* Center Overlay if position is "center" */}
+                      {catalogBulkQrSkuVPosition === "center" && (
+                        <div className="absolute inset-0 flex items-center justify-center p-1">
+                          <div className="bg-white text-black px-1.5 py-0.5 rounded border border-slate-300 shadow-sm max-w-[85%] text-center overflow-hidden">
+                            <div className="text-[4px] font-black tracking-widest uppercase opacity-60 leading-none mb-0.5">SKU</div>
+                            <div className="font-mono font-black uppercase truncate text-[8px] leading-none">
+                              {prod.sku || prod.serialNumber || "N/A"}
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    ) : (
-                      <span className={`font-black font-mono tracking-wider mt-1.5 uppercase ${themeTextClass} ${
-                        catalogBulkQrSize === "small" ? "text-[8px]" : catalogBulkQrSize === "medium" ? "text-[10px]" : "text-[12px]"
-                      }`}>{prod.sku || prod.serialNumber || prod.id}</span>
+                      )}
+                    </div>
+
+                    {catalogBulkQrSkuVPosition === "bottom" && (
+                      catalogBulkQrShowSkuLabel ? (
+                        <div 
+                          className={`w-full px-2 py-1 ${
+                            catalogBulkQrShowSkuBorder ? "border border-dashed" : "border border-transparent"
+                          } rounded-lg ${
+                            catalogBulkQrSkuAlignment === "left"
+                              ? "text-left"
+                              : catalogBulkQrSkuAlignment === "right"
+                              ? "text-right"
+                              : "text-center"
+                          } ${
+                            catalogBulkQrTheme === "print"
+                              ? `bg-slate-50 ${catalogBulkQrShowSkuBorder ? "border-slate-400" : "border-transparent"} text-black shadow-sm`
+                              : catalogBulkQrTheme === "dark"
+                              ? `bg-slate-800/80 ${catalogBulkQrShowSkuBorder ? "border-slate-700" : "border-transparent"} text-white shadow-inner`
+                              : `bg-indigo-950/60 ${catalogBulkQrShowSkuBorder ? "border-indigo-700" : "border-transparent"} text-white shadow-inner`
+                          }`}
+                          style={{ borderColor: catalogBulkQrShowSkuBorder ? catalogBulkQrSkuBorderColor : undefined }}
+                        >
+                          <div className="text-[6px] font-black tracking-widest uppercase opacity-60">WAREHOUSE SKU</div>
+                          <div 
+                            className="font-mono font-black uppercase truncate"
+                            style={{ fontSize: `${catalogBulkQrSkuFontSize}px`, lineHeight: "1.2" }}
+                          >
+                            {prod.sku || prod.serialNumber || "N/A"}
+                          </div>
+                        </div>
+                      ) : (
+                        <span className={`font-black font-mono tracking-wider uppercase ${themeTextClass} ${
+                          catalogBulkQrSize === "small" ? "text-[8px]" : catalogBulkQrSize === "medium" ? "text-[10px]" : "text-[12px]"
+                        }`}>{prod.sku || prod.serialNumber || prod.id}</span>
+                      )
                     )}
                   </div>
 
-                  <div className={`mt-2 text-[9px] space-y-0.5 border-t pt-1.5 ${borderClass}`}>
+                  <div className={`text-[9px] space-y-0.5 border-t pt-1.5 ${borderClass}`}
+                  style={{ marginTop: `${catalogBulkQrElementSpacing}px` }}>
                     <div className="truncate font-black text-xs leading-tight">{prod.name}</div>
                     {prod.sku && <div className="truncate"><strong className={themeMutedTextClass}>SKU:</strong> {prod.sku}</div>}
                     <div className="truncate font-mono"><strong className={themeMutedTextClass}>Est:</strong> {prod.estimatedPriceRange}</div>
@@ -19955,6 +21539,310 @@ export default function App() {
             })}
           </div>
         </div>
+      )}
+
+      {/* ==================================================== */}
+      {/* RFQ SUMMARY PRINT ONLY SHEET (A4 LANDSCAPE)         */}
+      {/* ==================================================== */}
+      {isPrintingRfqSummary && (
+        <>
+          <style>{`
+            @media print {
+              @page {
+                size: A4 landscape;
+                margin: 12mm 15mm;
+              }
+              body > * {
+                display: none !important;
+              }
+              #rfq-summary-sheet-for-printing {
+                display: block !important;
+                position: absolute !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 100% !important;
+                height: auto !important;
+                background: white !important;
+                color: black !important;
+                z-index: 99999999 !important;
+                font-family: 'Inter', system-ui, -apple-system, sans-serif !important;
+                padding: 0 !important;
+                box-shadow: none !important;
+              }
+              .no-print-element {
+                display: none !important;
+              }
+              table {
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 15px;
+                margin-bottom: 20px;
+              }
+              th, td {
+                border: 1px solid #cbd5e1 !important;
+                padding: 7px 10px !important;
+                text-align: left;
+                vertical-align: top;
+                font-size: 9px !important;
+                line-height: 1.4 !important;
+              }
+              th {
+                background-color: #f1f5f9 !important;
+                color: #1e293b !important;
+                font-weight: 800 !important;
+                text-transform: uppercase !important;
+                letter-spacing: 0.05em !important;
+              }
+              tr:nth-child(even) {
+                background-color: #f8fafc !important;
+              }
+              .page-break-inside-avoid {
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+              }
+            }
+          `}</style>
+
+          <div id="rfq-summary-sheet-for-printing" className="hidden print:block bg-white text-slate-900 min-h-screen p-2">
+            {/* Header section with decorative styling */}
+            <div className="border-b-2 border-slate-900 pb-4 mb-5 flex items-start justify-between">
+              <div>
+                <span className="text-[10px] font-extrabold tracking-widest text-indigo-600 uppercase block mb-1">
+                  BBS E-PROCUREMENT SYSTEM
+                </span>
+                <h1 className="text-xl font-black tracking-tight text-slate-900 uppercase">
+                  Laporan Ringkasan Request for Quotation (RFQ)
+                </h1>
+                <p className="text-[10px] text-slate-500 font-medium mt-1">
+                  PT Berkah Bintang Solusindo &bull; Procurement & Supplier Coordination Services
+                </p>
+              </div>
+              <div className="text-right flex flex-col items-end">
+                <div className="bg-slate-100 border border-slate-200 rounded-lg p-2 text-right">
+                  <div className="text-[8px] font-extrabold text-slate-500 uppercase tracking-wider">TANGGAL CETAK</div>
+                  <div className="text-[10px] font-bold text-slate-800 font-mono mt-0.5">
+                    {new Date().toLocaleDateString("id-ID", {
+                      weekday: "long",
+                      year: "numeric",
+                      month: "long",
+                      day: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit"
+                    })}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Sub-Header Metadata boxes */}
+            <div className="grid grid-cols-4 gap-4 mb-6">
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                <span className="text-[8px] font-extrabold text-slate-400 uppercase tracking-widest">PERIODE LAPORAN</span>
+                <div className="text-[11px] font-bold text-slate-800 mt-1 font-mono">
+                  {adminRfqStartDate ? new Date(adminRfqStartDate).toLocaleDateString("id-ID") : "Semua Tanggal"}
+                  <span className="mx-1 text-slate-400">s/d</span>
+                  {adminRfqEndDate ? new Date(adminRfqEndDate).toLocaleDateString("id-ID") : "Semua Tanggal"}
+                </div>
+                {adminRfqStartDate && adminRfqEndDate && (() => {
+                  const start = new Date(adminRfqStartDate);
+                  const end = new Date(adminRfqEndDate);
+                  const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+                  return (
+                    <span className="text-[9px] font-semibold text-indigo-600 mt-0.5 block font-mono">
+                      Durasi: {days} Hari Kerja
+                    </span>
+                  );
+                })()}
+              </div>
+
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                <span className="text-[8px] font-extrabold text-slate-400 uppercase tracking-widest">KATEGORI FILTER</span>
+                <div className="text-[11px] font-extrabold text-slate-800 mt-1 uppercase">
+                  {adminRfqSubCategoryFilter && adminRfqSubCategoryFilter !== "all" 
+                    ? adminRfqSubCategoryFilter 
+                    : "Semua Kategori"}
+                </div>
+                <span className="text-[9px] text-slate-500 mt-0.5 block">
+                  Saringan Instansi Klien
+                </span>
+              </div>
+
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                <span className="text-[8px] font-extrabold text-slate-400 uppercase tracking-widest">METRIK RINGKASAN</span>
+                <div className="text-[11px] font-black text-indigo-600 mt-1 font-mono flex items-center gap-1.5">
+                  <span>{filteredRfqsForAdmin.length} RFQ</span>
+                  <span className="text-slate-300">|</span>
+                  <span className="text-slate-600">
+                    {filteredRfqsForAdmin.reduce((sum, r) => sum + (r.items?.length || 0), 0)} Items
+                  </span>
+                </div>
+                <span className="text-[9px] text-emerald-600 font-semibold mt-0.5 block">
+                  {filteredRfqsForAdmin.filter(r => r.status === "completed").length} Selesai &bull; {filteredRfqsForAdmin.filter(r => r.status === "pending").length} Baru
+                </span>
+              </div>
+
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                <span className="text-[8px] font-extrabold text-slate-400 uppercase tracking-widest">KRITERIA TAMBAHAN</span>
+                <div className="text-[10px] font-bold text-slate-700 mt-1 truncate">
+                  Prioritas: {adminRfqPriorityFilter && adminRfqPriorityFilter !== "all" ? adminRfqPriorityFilter.toUpperCase() : "SEMUA"}
+                </div>
+                <div className="text-[9px] text-slate-500 truncate mt-0.5">
+                  Status: {adminRfqStatuses.length > 0 ? adminRfqStatuses.map(s => s.toUpperCase()).join(", ") : "SEMUA"}
+                </div>
+              </div>
+            </div>
+
+            {/* List Table */}
+            {filteredRfqsForAdmin.length === 0 ? (
+              <div className="border border-dashed border-slate-300 rounded-xl p-8 text-center my-6">
+                <p className="text-xs text-slate-500 font-medium">Tidak ada data RFQ yang cocok dengan penyaringan aktif Anda.</p>
+              </div>
+            ) : (
+              <table className="w-full">
+                <thead>
+                  <tr>
+                    <th style={{ width: "4%" }} className="text-center">No</th>
+                    <th style={{ width: "16%" }}>No. RFQ & Tanggal</th>
+                    <th style={{ width: "20%" }}>Klien & Perusahaan</th>
+                    <th style={{ width: "15%" }}>Kontak</th>
+                    <th style={{ width: "12%" }}>Kategori & Prioritas</th>
+                    <th style={{ width: "23%" }}>Daftar Item Permintaan</th>
+                    <th style={{ width: "10%" }} className="text-center">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRfqsForAdmin.map((rfq, idx) => {
+                    const rfqDate = rfq.date ? new Date(rfq.date).toLocaleDateString("id-ID", {
+                      day: "numeric",
+                      month: "short",
+                      year: "numeric"
+                    }) : "-";
+
+                    // Define priority visual tags
+                    const priorityLabel = rfq.priority || "medium";
+                    const priorityBadgeColor = 
+                      priorityLabel === "urgent" ? "border-red-300 text-red-700 bg-red-50" :
+                      priorityLabel === "high" ? "border-amber-300 text-amber-700 bg-amber-50" :
+                      priorityLabel === "medium" ? "border-indigo-300 text-indigo-700 bg-indigo-50" :
+                      "border-slate-300 text-slate-600 bg-slate-50";
+
+                    // Define status translations & style
+                    const statusLabel = 
+                      rfq.status === "completed" ? "SELESAI" :
+                      rfq.status === "cancelled" ? "BATAL" :
+                      rfq.status === "quoted" ? "PENAWARAN" :
+                      rfq.status === "processing" ? "DIPROSES" : "BARU";
+
+                    const statusBadgeColor = 
+                      rfq.status === "completed" ? "border-emerald-300 text-emerald-700 bg-emerald-50" :
+                      rfq.status === "cancelled" ? "border-rose-300 text-rose-700 bg-rose-50" :
+                      rfq.status === "quoted" ? "border-blue-300 text-blue-700 bg-blue-50" :
+                      rfq.status === "processing" ? "border-amber-300 text-amber-700 bg-amber-50" :
+                      "border-slate-400 text-slate-700 bg-slate-50";
+
+                    return (
+                      <tr key={rfq.id} className="page-break-inside-avoid">
+                        <td className="text-center font-mono text-slate-500 font-medium">
+                          {idx + 1}
+                        </td>
+                        <td>
+                          <div className="font-black text-slate-900 font-mono tracking-wider">
+                            {rfq.rfqNumber}
+                          </div>
+                          <div className="text-[8px] text-slate-400 font-mono mt-0.5">
+                            {rfqDate}
+                          </div>
+                        </td>
+                        <td>
+                          <div className="font-bold text-slate-800 leading-snug">
+                            {rfq.clientName}
+                          </div>
+                          {rfq.companyName && (
+                            <div className="text-[8px] text-slate-500 mt-0.5">
+                              {rfq.companyName}
+                            </div>
+                          )}
+                        </td>
+                        <td className="font-mono text-[8px] text-slate-600 space-y-0.5">
+                          {rfq.whatsapp && (
+                            <div className="flex items-center gap-1">
+                              <span className="text-slate-400">WA:</span> {rfq.whatsapp}
+                            </div>
+                          )}
+                          {rfq.email && (
+                            <div className="flex items-center gap-1 truncate max-w-[120px]">
+                              <span className="text-slate-400">EM:</span> {rfq.email}
+                            </div>
+                          )}
+                        </td>
+                        <td>
+                          <div className="text-[8px] font-black uppercase tracking-wider text-slate-500">
+                            {rfq.clientCategory || "RETAIL"}
+                          </div>
+                          <div className={`mt-1 inline-block px-1.5 py-0.5 rounded border text-[7px] font-black uppercase ${priorityBadgeColor}`}>
+                            {priorityLabel}
+                          </div>
+                        </td>
+                        <td>
+                          {rfq.items && rfq.items.length > 0 ? (
+                            <ul className="list-disc pl-3 text-slate-700 space-y-0.5 text-[8.5px]">
+                              {rfq.items.map((item, i) => (
+                                <li key={i} className="leading-tight">
+                                  <strong className="text-slate-800">{item.name}</strong>
+                                  <span className="text-slate-500 font-mono font-medium ml-1">
+                                    x{item.quantity}
+                                  </span>
+                                  {item.description && (
+                                    <span className="text-[7.5px] text-slate-400 block italic leading-none mt-0.5">
+                                      {item.description}
+                                    </span>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <span className="text-slate-400 italic">Tidak ada item terinci</span>
+                          )}
+                        </td>
+                        <td className="text-center">
+                          <span className={`inline-block px-2 py-0.5 rounded border text-[8px] font-extrabold tracking-wider ${statusBadgeColor}`}>
+                            {statusLabel}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+
+            {/* Footer with signatures and disclaimer info */}
+            <div className="mt-8 pt-6 border-t border-slate-200 flex items-start justify-between text-[8px] text-slate-400 page-break-inside-avoid">
+              <div className="max-w-md">
+                <p className="leading-relaxed">
+                  * Dokumen ini merupakan ringkasan laporan Request for Quotation (RFQ) resmi yang dihasilkan secara otomatis oleh sistem administrasi e-Procurement PT Berkah Bintang Solusindo. Segala perubahan yang tidak diotorisasi merupakan pelanggaran.
+                </p>
+                <p className="mt-1 font-mono">
+                  Sistem ID: AI-BBS-PROC-2026 / ID-MD5-{filteredRfqsForAdmin.length}
+                </p>
+              </div>
+              <div className="flex gap-12 text-slate-700 mr-8">
+                <div className="text-center w-28">
+                  <p className="font-semibold uppercase text-[7px] text-slate-400 tracking-wider">Disiapkan Oleh,</p>
+                  <div className="h-12 border-b border-slate-300 mb-1" />
+                  <p className="font-bold text-[9px] text-slate-800">Admin BBS</p>
+                  <p className="text-[7px] text-slate-400">E-Procurement Administrator</p>
+                </div>
+                <div className="text-center w-28">
+                  <p className="font-semibold uppercase text-[7px] text-slate-400 tracking-wider">Disetujui Oleh,</p>
+                  <div className="h-12 border-b border-slate-300 mb-1" />
+                  <p className="font-bold text-[9px] text-slate-800">Direktur BBS</p>
+                  <p className="text-[7px] text-slate-400">Management Approval</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
       )}
 
       {/* OAUTH POPUP MODAL OVERLAY */}

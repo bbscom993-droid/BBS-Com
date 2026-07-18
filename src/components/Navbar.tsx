@@ -12,7 +12,8 @@ import {
   WifiOff,
   Database,
   AlertTriangle,
-  Store
+  Store,
+  Mail
 } from "lucide-react";
 import { CompanySettings } from "../types";
 
@@ -96,6 +97,7 @@ export default function Navbar({ currentTab, setCurrentTab, rfqCartCount, settin
     { id: "shop", label: "Toko Online", icon: Store },
     { id: "consult", label: "BBS Asisten AI", icon: Sparkles },
     { id: "rfq", label: "Buat RFQ", icon: ShoppingCart, badge: rfqCartCount > 0 ? rfqCartCount : undefined },
+    { id: "contact", label: "Kontak", icon: Mail },
   ];
 
   const handleNavClick = (tabId: string) => {
