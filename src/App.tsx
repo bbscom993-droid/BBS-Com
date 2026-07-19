@@ -556,9 +556,9 @@ export default function App() {
     headerLogoType: "image",
     logoImageUrl: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=120&h=120&fit=crop&auto=format&q=80",
     bankAccount: {
-      bankName: "Bank Mandiri",
-      accountNumber: "123-45-67890-1",
-      accountHolder: "PT Berkah Bintang Solusindo"
+      bankName: "SeaBank",
+      accountNumber: "901640383663",
+      accountHolder: "Arif Suharyadi"
     },
     customRfqStatuses: []
   });
@@ -6476,7 +6476,7 @@ export default function App() {
                           onChange={(e) => setCheckoutForm(prev => ({ ...prev, paymentMethod: e.target.value }))}
                           className="w-full bg-slate-950 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-indigo-500 cursor-pointer"
                         >
-                          <option value="bank_transfer">Transfer Bank Mandiri (Verifikasi Bukti Transfer)</option>
+                          <option value="bank_transfer">Transfer Bank {settings?.bankAccount?.bankName || "Mandiri"} (Verifikasi Bukti Transfer)</option>
                           <option value="virtual_account">Virtual Account Mandiri / BCA (Simulasi Instan)</option>
                           <option value="credit_card">Kartu Kredit Visa / Mastercard (Simulasi Instan Aman)</option>
                         </select>
@@ -8005,74 +8005,41 @@ export default function App() {
                               <Icons.Calendar className="h-4 w-4 text-indigo-400" />
                               <span>Periode:</span>
                             </div>
-                            <div className="flex items-center gap-2 flex-wrap" id="rfq_start_date_picker_container">
-                              {(() => {
-                                const isDateRangeInvalid = !!(adminRfqStartDate && adminRfqEndDate && new Date(adminRfqStartDate) > new Date(adminRfqEndDate));
-                                return (
-                                  <>
-                                    {/* Native select dropdown mapping to preset date logic */}
-                                    <div className="relative">
-                                      <select
-                                        id="rfq_date_preset_selector"
-                                        value={(() => {
-                                          if (!adminRfqStartDate || !adminRfqEndDate) return "custom";
-                                          const now = new Date();
-                                          const formatDate = (d: Date): string => {
-                                            const yyyy = d.getFullYear();
-                                            const mm = String(d.getMonth() + 1).padStart(2, '0');
-                                            const dd = String(d.getDate()).padStart(2, '0');
-                                            return `${yyyy}-${mm}-${dd}`;
-                                          };
+                            <div className="flex flex-col gap-1.5" id="rfq_start_date_picker_container">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                {(() => {
+                                  const isDateRangeInvalid = !!(adminRfqStartDate && adminRfqEndDate && new Date(adminRfqStartDate) > new Date(adminRfqEndDate));
+                                  const isRangeTooLong = (() => {
+                                    if (!adminRfqStartDate || !adminRfqEndDate) return false;
+                                    const start = new Date(adminRfqStartDate);
+                                    const end = new Date(adminRfqEndDate);
+                                    const diffDays = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+                                    return diffDays > 365;
+                                  })();
+                                  return (
+                                    <>
+                                      {/* Native select dropdown mapping to preset date logic */}
+                                      <div className="relative">
+                                        <select
+                                          id="rfq_date_preset_selector"
+                                          value={(() => {
+                                            if (!adminRfqStartDate || !adminRfqEndDate) return "custom";
+                                            const now = new Date();
+                                            const formatDate = (d: Date): string => {
+                                              const yyyy = d.getFullYear();
+                                              const mm = String(d.getMonth() + 1).padStart(2, '0');
+                                              const dd = String(d.getDate()).padStart(2, '0');
+                                              return `${yyyy}-${mm}-${dd}`;
+                                            };
 
-                                          const last7Start = formatDate(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
-                                          const last7End = formatDate(now);
-                                          if (adminRfqStartDate === last7Start && adminRfqEndDate === last7End) return "last7";
+                                            const last7Start = formatDate(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
+                                            const last7End = formatDate(now);
+                                            if (adminRfqStartDate === last7Start && adminRfqEndDate === last7End) return "last7";
 
-                                          const thisMonthStart = formatDate(new Date(now.getFullYear(), now.getMonth(), 1));
-                                          const thisMonthEnd = formatDate(new Date(now.getFullYear(), now.getMonth() + 1, 0));
-                                          if (adminRfqStartDate === thisMonthStart && adminRfqEndDate === thisMonthEnd) return "thisMonth";
+                                            const thisMonthStart = formatDate(new Date(now.getFullYear(), now.getMonth(), 1));
+                                            const thisMonthEnd = formatDate(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+                                            if (adminRfqStartDate === thisMonthStart && adminRfqEndDate === thisMonthEnd) return "thisMonth";
 
-                                          const currentQuarter = Math.floor(now.getMonth() / 3);
-                                          let startYear = now.getFullYear();
-                                          let endYear = now.getFullYear();
-                                          let startMonth = 0;
-                                          let endMonth = 0;
-                                          if (currentQuarter === 0) {
-                                            startYear -= 1;
-                                            endYear -= 1;
-                                            startMonth = 9;
-                                            endMonth = 11;
-                                          } else {
-                                            startMonth = (currentQuarter - 1) * 3;
-                                            endMonth = startMonth + 2;
-                                          }
-                                          const lastQuarterStart = formatDate(new Date(startYear, startMonth, 1));
-                                          const lastQuarterEnd = formatDate(new Date(endYear, endMonth + 1, 0));
-                                          if (adminRfqStartDate === lastQuarterStart && adminRfqEndDate === lastQuarterEnd) return "lastQuarter";
-
-                                          return "custom";
-                                        })()}
-                                        onChange={(e) => {
-                                          const val = e.target.value;
-                                          if (!val) return;
-                                          const now = new Date();
-                                          const formatDate = (d: Date): string => {
-                                            const yyyy = d.getFullYear();
-                                            const mm = String(d.getMonth() + 1).padStart(2, '0');
-                                            const dd = String(d.getDate()).padStart(2, '0');
-                                            return `${yyyy}-${mm}-${dd}`;
-                                          };
-
-                                          if (val === "last7") {
-                                            const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-                                            setAdminRfqStartDate(formatDate(start));
-                                            setAdminRfqEndDate(formatDate(now));
-                                          } else if (val === "thisMonth") {
-                                            const start = new Date(now.getFullYear(), now.getMonth(), 1);
-                                            const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-                                            setAdminRfqStartDate(formatDate(start));
-                                            setAdminRfqEndDate(formatDate(end));
-                                          } else if (val === "lastQuarter") {
                                             const currentQuarter = Math.floor(now.getMonth() / 3);
                                             let startYear = now.getFullYear();
                                             let endYear = now.getFullYear();
@@ -8087,58 +8054,173 @@ export default function App() {
                                               startMonth = (currentQuarter - 1) * 3;
                                               endMonth = startMonth + 2;
                                             }
-                                            const start = new Date(startYear, startMonth, 1);
-                                            const end = new Date(endYear, endMonth + 1, 0);
-                                            setAdminRfqStartDate(formatDate(start));
-                                            setAdminRfqEndDate(formatDate(end));
-                                          } else if (val === "custom") {
-                                            // Keep custom
-                                          }
-                                          try { playClickSound(); } catch {}
-                                        }}
-                                        className="bg-slate-950 border border-white/10 hover:border-indigo-500/40 rounded-xl pl-3 pr-8 py-1.5 text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs transition-all appearance-none cursor-pointer font-semibold select-none"
-                                        style={{
-                                          backgroundImage: `url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e")`,
-                                          backgroundPosition: 'right 0.75rem center',
-                                          backgroundSize: '1em',
-                                          backgroundRepeat: 'no-repeat'
-                                        }}
-                                      >
-                                        <option value="custom" className="bg-slate-950 text-slate-200">Custom</option>
-                                        <option value="last7" className="bg-slate-950 text-slate-200">Last 7 Days</option>
-                                        <option value="thisMonth" className="bg-slate-950 text-slate-200">This Month</option>
-                                        <option value="lastQuarter" className="bg-slate-950 text-slate-200">Last Quarter</option>
-                                      </select>
-                                    </div>
+                                            const lastQuarterStart = formatDate(new Date(startYear, startMonth, 1));
+                                            const lastQuarterEnd = formatDate(new Date(endYear, endMonth + 1, 0));
+                                            if (adminRfqStartDate === lastQuarterStart && adminRfqEndDate === lastQuarterEnd) return "lastQuarter";
 
-                                    <input
-                                      type="date"
-                                      id="rfq_start_date_picker"
-                                      value={adminRfqStartDate}
-                                      onChange={(e) => setAdminRfqStartDate(e.target.value)}
-                                      className={`bg-slate-950 border rounded-xl px-3 py-1.5 text-slate-200 focus:outline-none focus:ring-1 text-xs font-mono [color-scheme:dark] transition-all ${
-                                        isDateRangeInvalid
-                                          ? "border-rose-500 hover:border-rose-500/80 focus:ring-rose-500 focus:border-rose-500"
-                                          : "border-white/10 hover:border-indigo-500/40 focus:ring-indigo-500 focus:border-indigo-500"
-                                      }`}
-                                      title={isDateRangeInvalid ? "Peringatan: Tanggal mulai tidak boleh setelah tanggal akhir!" : "Tanggal Mulai"}
-                                    />
-                                    <span className="text-slate-500 font-medium">s/d</span>
-                                    <input
-                                      type="date"
-                                      id="rfq_end_date_picker"
-                                      value={adminRfqEndDate}
-                                      onChange={(e) => setAdminRfqEndDate(e.target.value)}
-                                      className={`bg-slate-950 border rounded-xl px-3 py-1.5 text-slate-200 focus:outline-none focus:ring-1 text-xs font-mono [color-scheme:dark] transition-all ${
-                                        isDateRangeInvalid
-                                          ? "border-rose-500 hover:border-rose-500/80 focus:ring-rose-500 focus:border-rose-500"
-                                          : "border-white/10 hover:border-indigo-500/40 focus:ring-indigo-500 focus:border-indigo-500"
-                                      }`}
-                                      title={isDateRangeInvalid ? "Peringatan: Tanggal akhir tidak boleh sebelum tanggal mulai!" : "Tanggal Akhir"}
-                                    />
-                                  </>
-                                );
-                              })()}
+                                            return "custom";
+                                          })()}
+                                          onChange={(e) => {
+                                            const val = e.target.value;
+                                            if (!val) return;
+                                            const now = new Date();
+                                            const formatDate = (d: Date): string => {
+                                              const yyyy = d.getFullYear();
+                                              const mm = String(d.getMonth() + 1).padStart(2, '0');
+                                              const dd = String(d.getDate()).padStart(2, '0');
+                                              return `${yyyy}-${mm}-${dd}`;
+                                            };
+
+                                            if (val === "last7") {
+                                              const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+                                              setAdminRfqStartDate(formatDate(start));
+                                              setAdminRfqEndDate(formatDate(now));
+                                            } else if (val === "thisMonth") {
+                                              const start = new Date(now.getFullYear(), now.getMonth(), 1);
+                                              const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+                                              setAdminRfqStartDate(formatDate(start));
+                                              setAdminRfqEndDate(formatDate(end));
+                                            } else if (val === "lastQuarter") {
+                                              const currentQuarter = Math.floor(now.getMonth() / 3);
+                                              let startYear = now.getFullYear();
+                                              let endYear = now.getFullYear();
+                                              let startMonth = 0;
+                                              let endMonth = 0;
+                                              if (currentQuarter === 0) {
+                                                startYear -= 1;
+                                                endYear -= 1;
+                                                startMonth = 9;
+                                                endMonth = 11;
+                                              } else {
+                                                startMonth = (currentQuarter - 1) * 3;
+                                                endMonth = startMonth + 2;
+                                              }
+                                              const start = new Date(startYear, startMonth, 1);
+                                              const end = new Date(endYear, endMonth + 1, 0);
+                                              setAdminRfqStartDate(formatDate(start));
+                                              setAdminRfqEndDate(formatDate(end));
+                                            } else if (val === "custom") {
+                                              // Keep custom
+                                            }
+                                            try { playClickSound(); } catch {}
+                                          }}
+                                          className="bg-slate-950 border border-white/10 hover:border-indigo-500/40 rounded-xl pl-3 pr-8 py-1.5 text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs transition-all appearance-none cursor-pointer font-semibold select-none"
+                                          style={{
+                                            backgroundImage: `url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e")`,
+                                            backgroundPosition: 'right 0.75rem center',
+                                            backgroundSize: '1em',
+                                            backgroundRepeat: 'no-repeat'
+                                          }}
+                                        >
+                                          <option value="custom" className="bg-slate-950 text-slate-200">Custom</option>
+                                          <option value="last7" className="bg-slate-950 text-slate-200">Last 7 Days</option>
+                                          <option value="thisMonth" className="bg-slate-950 text-slate-200">This Month</option>
+                                          <option value="lastQuarter" className="bg-slate-950 text-slate-200">Last Quarter</option>
+                                        </select>
+                                      </div>
+
+                                      <input
+                                        type="date"
+                                        id="rfq_start_date_picker"
+                                        value={adminRfqStartDate}
+                                        onChange={(e) => setAdminRfqStartDate(e.target.value)}
+                                        className={`bg-slate-950 border rounded-xl px-3 py-1.5 text-slate-200 focus:outline-none focus:ring-1 text-xs font-mono [color-scheme:dark] transition-all ${
+                                          isDateRangeInvalid
+                                            ? "border-rose-500 hover:border-rose-500/80 focus:ring-rose-500 focus:border-rose-500"
+                                            : isRangeTooLong
+                                            ? "border-amber-500/80 hover:border-amber-500 focus:ring-amber-500 focus:border-amber-500"
+                                            : "border-white/10 hover:border-indigo-500/40 focus:ring-indigo-500 focus:border-indigo-500"
+                                        }`}
+                                        title={
+                                          isDateRangeInvalid 
+                                            ? "Peringatan: Tanggal mulai tidak boleh setelah tanggal akhir!" 
+                                            : isRangeTooLong 
+                                            ? "Peringatan: Rentang waktu melebihi 365 hari!" 
+                                            : "Tanggal Mulai"
+                                        }
+                                      />
+                                      <span className="text-slate-500 font-medium">s/d</span>
+                                      <input
+                                        type="date"
+                                        id="rfq_end_date_picker"
+                                        value={adminRfqEndDate}
+                                        onChange={(e) => setAdminRfqEndDate(e.target.value)}
+                                        className={`bg-slate-950 border rounded-xl px-3 py-1.5 text-slate-200 focus:outline-none focus:ring-1 text-xs font-mono [color-scheme:dark] transition-all ${
+                                          isDateRangeInvalid
+                                            ? "border-rose-500 hover:border-rose-500/80 focus:ring-rose-500 focus:border-rose-500"
+                                            : isRangeTooLong
+                                            ? "border-amber-500/80 hover:border-amber-500 focus:ring-amber-500 focus:border-amber-500"
+                                            : "border-white/10 hover:border-indigo-500/40 focus:ring-indigo-500 focus:border-indigo-500"
+                                        }`}
+                                        title={
+                                          isDateRangeInvalid 
+                                            ? "Peringatan: Tanggal akhir tidak boleh sebelum tanggal mulai!" 
+                                            : isRangeTooLong 
+                                            ? "Peringatan: Rentang waktu melebihi 365 hari!" 
+                                            : "Tanggal Akhir"
+                                        }
+                                      />
+
+                                      {/* Dropdown Filter Kategori */}
+                                      <div className="relative">
+                                        <select
+                                          id="rfq_category_select"
+                                          value={adminRfqSubCategoryFilter}
+                                          onChange={(e) => {
+                                            setAdminRfqSubCategoryFilter(e.target.value);
+                                            try { playClickSound(); } catch {}
+                                          }}
+                                          className="bg-slate-950 border border-white/10 hover:border-indigo-500/40 rounded-xl pl-3 pr-8 py-1.5 text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs transition-all appearance-none cursor-pointer font-medium select-none"
+                                          style={{
+                                            backgroundImage: `url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23818cf8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e")`,
+                                            backgroundPosition: 'right 0.75rem center',
+                                            backgroundSize: '1em',
+                                            backgroundRepeat: 'no-repeat'
+                                          }}
+                                        >
+                                          <option value="" className="bg-slate-950 text-slate-400">Kategori: Semua</option>
+                                          <option value="Hardware" className="bg-slate-950 text-slate-200">🖥️ Hardware</option>
+                                          <option value="Network" className="bg-slate-950 text-slate-200">🌐 Network</option>
+                                          <option value="CCTV" className="bg-slate-950 text-slate-200">📹 CCTV</option>
+                                          <option value="Software" className="bg-slate-950 text-slate-200">💿 Software</option>
+                                        </select>
+                                      </div>
+
+                                      {/* Quick Reset Button */}
+                                      {(adminRfqStartDate || adminRfqEndDate) && (
+                                        <button
+                                          type="button"
+                                          id="rfq_date_quick_reset_btn"
+                                          onClick={() => {
+                                            setAdminRfqStartDate("");
+                                            setAdminRfqEndDate("");
+                                            try { playClickSound(); } catch {}
+                                          }}
+                                          className="bg-rose-950/20 hover:bg-rose-950/40 text-rose-300 hover:text-white border border-rose-500/30 hover:border-rose-500/50 rounded-xl px-2.5 py-1.5 text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer shadow-sm shadow-rose-500/5 select-none"
+                                          title="Reset Filter Tanggal"
+                                        >
+                                          <Icons.RotateCcw className="h-3.5 w-3.5 text-rose-400" />
+                                          <span>Reset</span>
+                                        </button>
+                                      )}
+                                    </>
+                                  );
+                                })()}
+
+                                {/* A4 Landscape Print Summary Button */}
+                                <button
+                                  type="button"
+                                  id="rfq_print_summary_btn"
+                                  onClick={handlePrintSummary}
+                                  className="bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 hover:text-white border border-indigo-500/30 hover:border-indigo-500/50 rounded-xl px-3 py-1.5 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm shadow-indigo-500/5"
+                                  title="Cetak Ringkasan RFQ terfilter (A4 Landscape)"
+                                >
+                                  <Icons.Printer className="h-3.5 w-3.5 text-indigo-400 animate-pulse" />
+                                  <span>Cetak Ringkasan</span>
+                                </button>
+                              </div>
+
+                              {/* Calculated duration display exactly below the fields */}
                               {adminRfqStartDate && adminRfqEndDate && (() => {
                                 const start = new Date(adminRfqStartDate);
                                 const end = new Date(adminRfqEndDate);
@@ -8147,55 +8229,27 @@ export default function App() {
                                 if (isNaN(diffDays)) return null;
                                 if (diffDays <= 0) {
                                   return (
-                                    <span className="text-[10px] font-bold text-rose-400 bg-rose-500/10 border border-rose-500/20 px-2 py-1 rounded-lg shrink-0">
-                                      Tanggal tidak valid
-                                    </span>
+                                    <div className="text-[10px] font-semibold text-rose-400 flex items-center gap-1.5 mt-0.5 animate-fade-in select-none">
+                                      <Icons.AlertCircle className="h-3.5 w-3.5 text-rose-400" />
+                                      <span>Tanggal tidak valid (tanggal mulai melebihi tanggal akhir)</span>
+                                    </div>
                                   );
                                 }
                                 return (
-                                  <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-lg flex items-center gap-1 font-mono shrink-0 animate-fade-in" id="rfq_date_duration_badge">
-                                    <Icons.Clock className="h-3 w-3 text-emerald-400 animate-pulse" />
-                                    <span>Durasi: {diffDays} Hari</span>
-                                  </span>
+                                  <div className="flex flex-col gap-1 mt-0.5">
+                                    <div className="text-[10px] font-medium text-slate-300 flex items-center gap-1.5 animate-fade-in select-none" id="rfq_date_duration_badge">
+                                      <Icons.Clock className="h-3 w-3 text-indigo-400 animate-pulse" />
+                                      <span>Rentang waktu pelaporan: <strong className="text-emerald-400 font-bold font-mono bg-emerald-500/10 px-1.5 py-0.5 rounded-md border border-emerald-500/20">{diffDays} Hari</strong> kalender</span>
+                                    </div>
+                                    {diffDays > 365 && (
+                                      <div className="text-[10px] font-bold text-amber-400 flex items-center gap-1.5 animate-fade-in select-none" id="rfq_date_duration_warning">
+                                        <Icons.AlertTriangle className="h-3.5 w-3.5 text-amber-400 animate-bounce" />
+                                        <span>Peringatan: Rentang tanggal terpilih melebihi 365 hari ({diffDays} hari)</span>
+                                      </div>
+                                    )}
+                                  </div>
                                 );
                               })()}
-
-                              {/* A4 Landscape Print Summary Button */}
-                              <button
-                                type="button"
-                                id="rfq_print_summary_btn"
-                                onClick={handlePrintSummary}
-                                className="bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 hover:text-white border border-indigo-500/30 hover:border-indigo-500/50 rounded-xl px-3 py-1.5 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm shadow-indigo-500/5"
-                                title="Cetak Ringkasan RFQ terfilter (A4 Landscape)"
-                              >
-                                <Icons.Printer className="h-3.5 w-3.5 text-indigo-400 animate-pulse" />
-                                <span>Cetak Ringkasan</span>
-                              </button>
-                            </div>
-
-                            {/* Category Filter Dropdown */}
-                            <div className="relative">
-                              <select
-                                id="rfq_category_select"
-                                value={adminRfqSubCategoryFilter}
-                                onChange={(e) => {
-                                  setAdminRfqSubCategoryFilter(e.target.value);
-                                  try { playClickSound(); } catch {}
-                                }}
-                                className="bg-slate-950 border border-white/10 hover:border-emerald-500/40 rounded-xl pl-3 pr-8 py-1.5 text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-xs transition-all appearance-none cursor-pointer font-medium select-none"
-                                style={{
-                                  backgroundImage: `url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2310b981' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e")`,
-                                  backgroundPosition: 'right 0.75rem center',
-                                  backgroundSize: '1em',
-                                  backgroundRepeat: 'no-repeat'
-                                }}
-                              >
-                                <option value="" className="bg-slate-950 text-slate-400">Kategori: Semua</option>
-                                <option value="Hardware" className="bg-slate-950 text-slate-200">🖥️ Hardware</option>
-                                <option value="Network" className="bg-slate-950 text-slate-200">🌐 Network</option>
-                                <option value="CCTV" className="bg-slate-950 text-slate-200">📹 CCTV</option>
-                                <option value="Software" className="bg-slate-950 text-slate-200">💿 Software</option>
-                              </select>
                             </div>
 
                             {/* Show Recent (Last 24 Hours) Filter Toggle */}
@@ -14957,7 +15011,7 @@ export default function App() {
                   {
                     id: 5,
                     question: "Metode pembayaran apa saja yang didukung oleh Berkah Bintang Solusindo?",
-                    answer: "Kami menerima pembayaran melalui transfer bank perusahaan (PT Berkah Bintang Solusindo) ke Bank Mandiri. Untuk pelanggan korporat yang telah bermitra, kami juga menyediakan opsi syarat pembayaran (Term of Payment/TOP) sesuai kesepakatan kontrak pengadaan."
+                    answer: `Kami menerima pembayaran melalui transfer bank perusahaan ke ${settings?.bankAccount?.bankName || 'Bank Mandiri'} (a/n ${settings?.bankAccount?.accountHolder || 'PT Berkah Bintang Solusindo'}). Untuk pelanggan korporat yang telah bermitra, kami juga menyediakan opsi syarat pembayaran (Term of Payment/TOP) sesuai kesepakatan kontrak pengadaan.`
                   }
                 ].map((faq) => {
                   const isOpen = activeFaqId === faq.id;

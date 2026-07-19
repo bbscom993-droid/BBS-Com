@@ -49,9 +49,9 @@ const DEFAULT_DB = {
     logoText: "BBS",
     motto: "Inovasi, Integritas & Pelayanan Terbaik",
     bankAccount: {
-      bankName: "Bank Mandiri",
-      accountNumber: "123-45-67890-1",
-      accountHolder: "PT Berkah Bintang Solusindo"
+      bankName: "SeaBank",
+      accountNumber: "901640383663",
+      accountHolder: "Arif Suharyadi"
     },
     customRfqStatuses: []
   },
@@ -110,6 +110,19 @@ async function seedFirestoreIfNeeded() {
   try {
     const configRef = adminDb.collection("settings").doc("config");
     const doc = await configRef.get();
+    if (doc.exists) {
+      const data = doc.data();
+      if (data && data.bankAccount && (data.bankAccount.accountNumber === "123-45-67890-1" || data.bankAccount.bankName === "Bank Mandiri")) {
+        console.log("[Firebase Seeding] Migrating placeholder bankAccount to SeaBank...");
+        await configRef.update({
+          bankAccount: {
+            bankName: "SeaBank",
+            accountNumber: "901640383663",
+            accountHolder: "Arif Suharyadi"
+          }
+        });
+      }
+    }
     if (!doc.exists) {
       console.log("[Firebase Seeding] Seeding default configurations...");
       await configRef.set(DEFAULT_DB.settings);
