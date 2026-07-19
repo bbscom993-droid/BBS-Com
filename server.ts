@@ -1282,37 +1282,17 @@ ${formattedHistory}
 
 BBS Consultant: (Lanjutkan tanggapan Anda yang sopan, ramah, profesional, bernilai tinggi, menggunakan bahasa Indonesia formal namun luwes, dan berikan rekomendasi spesifikasi barang serta estimasi budget bersaing jika relevan. Ajak mereka untuk memasukkan barang tersebut ke form RFQ di aplikasi untuk dibuatkan dokumen Penawaran Harga resmi)`;
 
-    let responseText = "";
-    try {
-      console.log("Attempting to connect with Hermes Agent (Antigravity)...");
-      const interaction = await aiClient.interactions.create({
-        agent: "antigravity-preview-05-2026",
-        input: prompt,
-        environment: "remote",
-        system_instruction: "Anda adalah asisten konsultan IT handal untuk Berkah Bintang Solusindo. Berikan jawaban dalam Bahasa Indonesia. Fokus pada solusi teknis yang bergaransi, harga kompetitif, pelayanan purna jual handal, dan pengerjaan oleh teknisi bersertifikat.",
-      }, { timeout: 120000 });
-
-      for (const step of interaction.steps) {
-        if (step.type === 'model_output') {
-          const textContent = step.content?.find(c => c.type === 'text');
-          if (textContent && textContent.text) {
-            responseText += textContent.text;
-          }
-        }
+    console.log("Calling Gemini API with model gemini-3.5-flash for IT Consultation...");
+    const response = await aiClient.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: prompt,
+      config: {
+        systemInstruction: "Anda adalah asisten konsultan IT handal untuk Berkah Bintang Solusindo. Berikan jawaban dalam Bahasa Indonesia. Fokus pada solusi teknis yang bergaransi, harga kompetitif, pelayanan purna jual handal, dan pengerjaan oleh teknisi bersertifikat.",
+        temperature: 0.7,
       }
-    } catch (agentErr) {
-      console.warn("Hermes Agent failed, falling back to standard Gemini model:", agentErr);
-      const response = await aiClient.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: prompt,
-        config: {
-          systemInstruction: "Anda adalah asisten konsultan IT handal untuk Berkah Bintang Solusindo. Berikan jawaban dalam Bahasa Indonesia. Fokus pada solusi teknis yang bergaransi, harga kompetitif, pelayanan purna jual handal, dan pengerjaan oleh teknisi bersertifikat.",
-          temperature: 0.7,
-        }
-      });
-      responseText = response.text || "";
-    }
+    });
 
+    const responseText = response.text || "Maaf, saya tidak dapat merumuskan tanggapan saat ini. Silakan coba lagi.";
     res.json({ text: responseText });
   } catch (err: any) {
     console.error("Gemini Consultation Error:", err);

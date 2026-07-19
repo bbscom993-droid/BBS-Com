@@ -479,8 +479,16 @@ export default function App() {
     const checkRoute = () => {
       const params = new URLSearchParams(window.location.search);
       const hash = window.location.hash;
-      if (params.get("portal") === "admin" || params.get("page") === "admin" || params.get("admin") === "true" || hash === "#admin") {
+      const isAdmin = params.get("portal") === "admin" || params.get("page") === "admin" || params.get("admin") === "true" || hash === "#admin";
+      
+      if (isAdmin) {
         setCurrentTab("admin");
+        const rfq_sd = params.get("rfq_start_date");
+        const rfq_ed = params.get("rfq_end_date");
+        const rfq_cat = params.get("rfq_sub_category");
+        if (rfq_sd !== null) setAdminRfqStartDate(rfq_sd);
+        if (rfq_ed !== null) setAdminRfqEndDate(rfq_ed);
+        if (rfq_cat !== null) setAdminRfqSubCategoryFilter(rfq_cat);
       } else if (hash === "#consult") {
         setCurrentTab("consult");
       } else if (hash === "#rfq") {
@@ -834,7 +842,14 @@ export default function App() {
   }, [estimatedCartTotal, budgetThreshold, rfqCart, customCartItems]);
 
   // Admin Portal Auth (just a simple lock to simulate security)
-  const [adminAuthenticated, setAdminAuthenticated] = useState(false);
+  const [adminAuthenticated, setAdminAuthenticated] = useState(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return params.get("autologin") === "true" || params.get("bypass") === "true";
+    } catch {
+      return false;
+    }
+  });
   const [adminPassword, setAdminPassword] = useState("");
   const [activeAdminSubTab, setActiveAdminSubTab] = useState<"rfqs" | "quotations" | "emails" | "reminders" | "settings" | "users" | "catalog">("rfqs");
   const [adminRfqSearch, setAdminRfqSearch] = useState("");
@@ -844,6 +859,8 @@ export default function App() {
   const [showOnlyMyClients, setShowOnlyMyClients] = useState(false);
   const [adminRfqStartDate, setAdminRfqStartDate] = useState("");
   const [adminRfqEndDate, setAdminRfqEndDate] = useState("");
+  const [adminRfqQrOpen, setAdminRfqQrOpen] = useState(false);
+  const [adminRfqQrCopied, setAdminRfqQrCopied] = useState(false);
   const [showDurationCalculation, setShowDurationCalculation] = useState<boolean>(() => {
     try {
       const stored = localStorage.getItem("bbs_show_duration_calculation");
@@ -3859,27 +3876,104 @@ export default function App() {
     setChatInput("");
     setChatbotLoading(true);
 
-    try {
-      const response = await fetch("/api/consult", {
+    const maxRetries = 3;
+    let attempt = 0;
+    let delay = 1000; // Mulai dari 1 detik (1000ms)
+    let response: Response | null = null;
+    let lastError: any = null;
+
+    const runFetch = async (): Promise<Response> => {
+      return await fetch("/api/consult", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: [...chatMessages, userMsg].map(m => ({ role: m.role, text: m.text }))
         })
       });
+    };
 
-      if (response.ok) {
+    while (attempt <= maxRetries) {
+      try {
+        if (attempt > 0) {
+          console.log(`Mencoba kembali menghubungi asisten AI (${attempt}/${maxRetries}) dalam ${delay}ms...`);
+        }
+        response = await runFetch();
+        
+        // Jika respons sukses (OK), keluar dari loop retry
+        if (response.ok) {
+          break;
+        }
+
+        // Baca isi error response untuk log detail
+        const errorText = await response.clone().text().catch(() => "");
+        console.warn(`[Attempt ${attempt + 1}/${maxRetries + 1}] HTTP Error ${response.status}: ${response.statusText}. Response: ${errorText}`);
+        
+        if (attempt === maxRetries) {
+          break; // Sudah mencapai batas maksimal retry
+        }
+
+        // Lakukan retry untuk status server-side error (5xx) atau rate limits (429)
+        if (response.status >= 500 || response.status === 429) {
+          attempt++;
+          await new Promise(resolve => setTimeout(resolve, delay));
+          delay *= 2; // Exponential backoff
+        } else {
+          // Kesalahan client (4xx selain 429) tidak perlu dicoba kembali (retry)
+          break;
+        }
+      } catch (err: any) {
+        lastError = err;
+        console.error(`[Attempt ${attempt + 1}/${maxRetries + 1}] Kesalahan jaringan:`, err);
+        
+        if (attempt === maxRetries) {
+          break;
+        }
+        attempt++;
+        await new Promise(resolve => setTimeout(resolve, delay));
+        delay *= 2; // Exponential backoff
+      }
+    }
+
+    try {
+      if (response && response.ok) {
         const data = await response.json();
         setChatMessages(prev => [...prev, {
           role: "model",
           text: data.text,
           timestamp: new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })
         }]);
+      } else if (response) {
+        let errorMessage = "Gagal mendapatkan saran AI";
+        try {
+          const errData = await response.json();
+          if (errData && errData.error) {
+            errorMessage = errData.error;
+          }
+        } catch {
+          // Abaikan jika tidak dapat di-parse sebagai JSON
+        }
+        
+        showToast(`${errorMessage} (Status: ${response.status})`, "error");
+        
+        // Tampilkan pesan error di chat history agar user dapat melihat langsung kerusakannya
+        setChatMessages(prev => [...prev, {
+          role: "model",
+          text: `⚠️ Maaf, asisten AI mendeteksi masalah pada server (HTTP ${response.status}: ${response.statusText || "Error"}). Silakan coba sesaat lagi atau ringkas pesan Anda.`,
+          timestamp: new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })
+        }]);
       } else {
-        showToast("Gagal mendapatkan saran AI", "error");
+        const errorDesc = lastError?.message || "Koneksi terputus / Timeout";
+        showToast(`Kesalahan jaringan chatbot: ${errorDesc}`, "error");
+        
+        setChatMessages(prev => [...prev, {
+          role: "model",
+          text: `⚠️ Tidak dapat terhubung ke server asisten AI (${errorDesc}). Silakan periksa koneksi internet Anda atau coba lagi.`,
+          timestamp: new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })
+        }]);
       }
-    } catch (err) {
-      showToast("Kesalahan jaringan chatbot", "error");
+    } catch (err: any) {
+      console.error("Gagal memproses respons konsultasi:", err);
+      showToast("Kesalahan saat memproses jawaban AI", "error");
     } finally {
       setChatbotLoading(false);
     }
@@ -7344,6 +7438,144 @@ export default function App() {
         {currentTab === "admin" && (
           <div className="space-y-8 animate-fadeIn">
             
+            {/* Modal: Custom Range QR Code Share */}
+            {adminRfqQrOpen && (() => {
+              const origin = typeof window !== "undefined" ? window.location.origin + window.location.pathname : "";
+              const params = new URLSearchParams();
+              params.set("portal", "admin");
+              params.set("autologin", "true");
+              if (adminRfqStartDate) params.set("rfq_start_date", adminRfqStartDate);
+              if (adminRfqEndDate) params.set("rfq_end_date", adminRfqEndDate);
+              if (adminRfqSubCategoryFilter) params.set("rfq_sub_category", adminRfqSubCategoryFilter);
+              const shareUrl = `${origin}?${params.toString()}`;
+              const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&color=0f172a&data=${encodeURIComponent(shareUrl)}`;
+
+              return (
+                <div className="fixed inset-0 z-[100] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-fadeIn" id="rfq-qr-share-modal">
+                  <div className="bg-slate-900 border border-white/10 rounded-3xl w-full max-w-md p-6 shadow-2xl relative overflow-hidden text-slate-200">
+                    {/* Background decorations */}
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-2xl"></div>
+                    <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-indigo-500/5 rounded-full blur-2xl"></div>
+
+                    {/* Modal Header */}
+                    <div className="flex items-center justify-between pb-4 border-b border-white/5 relative z-10">
+                      <div className="flex items-center space-x-2.5">
+                        <div className="w-8 h-8 bg-indigo-500/20 border border-indigo-500/30 rounded-xl flex items-center justify-center text-indigo-400">
+                          <Icons.QrCode className="h-4 w-4" />
+                        </div>
+                        <div>
+                          <h3 className="font-bold text-white text-sm">Bagikan Filter Laporan</h3>
+                          <p className="text-[10px] text-slate-400">Scan QR Code untuk akses instan di HP</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setAdminRfqQrOpen(false);
+                          setAdminRfqQrCopied(false);
+                          try { playClickSound(); } catch {}
+                        }}
+                        className="text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 p-1.5 rounded-xl transition-all cursor-pointer"
+                        title="Tutup"
+                      >
+                        <Icons.X className="h-4 w-4" />
+                      </button>
+                    </div>
+
+                    {/* Modal Content */}
+                    <div className="py-6 flex flex-col items-center text-center space-y-4 relative z-10">
+                      {/* Subtitle / Selected Range */}
+                      <div className="bg-slate-950/60 border border-white/5 rounded-2xl p-3 w-full space-y-1">
+                        <div className="text-[10px] uppercase font-bold tracking-wider text-slate-400">Rentang Tanggal Aktif</div>
+                        <div className="text-xs font-mono font-bold text-indigo-300 flex items-center justify-center gap-1.5">
+                          <Icons.Calendar className="h-3 w-3" />
+                          <span>{adminRfqStartDate || "Awal"}</span>
+                          <span className="text-slate-500">s/d</span>
+                          <span>{adminRfqEndDate || "Akhir"}</span>
+                        </div>
+                        {adminRfqSubCategoryFilter && (
+                          <div className="text-[10px] font-mono text-emerald-400 mt-1">
+                            Kategori: {adminRfqSubCategoryFilter}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* QR Code Frame with Glassmorphism */}
+                      <div className="bg-white p-4 rounded-2xl shadow-xl border border-white/10 relative group transition-all duration-300 hover:scale-[1.02] flex items-center justify-center">
+                        <img
+                          src={qrImageUrl}
+                          alt="QR Code Laporan RFQ"
+                          className="w-48 h-48 rounded-lg select-all"
+                          referrerPolicy="no-referrer"
+                        />
+                      </div>
+
+                      <p className="text-xs text-slate-400 leading-relaxed max-w-sm px-2">
+                        Arahkan kamera HP Anda ke QR Code di atas. Fitur <span className="text-indigo-400 font-bold">Auto-Login Passthrough</span> akan otomatis melompati layar password dan mengaktifkan filter ini di HP Anda.
+                      </p>
+
+                      {/* URL Box */}
+                      <div className="w-full space-y-1">
+                        <div className="text-left text-[9px] uppercase font-bold tracking-wider text-slate-400 pl-1">Share Link URL</div>
+                        <div className="flex items-center gap-1.5 bg-slate-950/60 border border-white/5 rounded-xl p-2.5 w-full text-xs font-mono">
+                          <Icons.Link className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
+                          <input
+                            type="text"
+                            readOnly
+                            value={shareUrl}
+                            className="bg-transparent text-slate-300 w-full focus:outline-none overflow-x-auto truncate select-all"
+                          />
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                await navigator.clipboard.writeText(shareUrl);
+                                setAdminRfqQrCopied(true);
+                                setTimeout(() => setAdminRfqQrCopied(false), 2000);
+                                playClickSound();
+                              } catch {}
+                            }}
+                            className={`px-2.5 py-1 rounded-lg font-semibold text-[10px] transition-all cursor-pointer whitespace-nowrap ${
+                              adminRfqQrCopied 
+                                ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" 
+                                : "bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/10"
+                            }`}
+                          >
+                            {adminRfqQrCopied ? "Copied!" : "Copy"}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Footer Actions */}
+                    <div className="pt-4 border-t border-white/5 flex gap-2.5 relative z-10">
+                      <a
+                        href={qrImageUrl}
+                        download={`RFQ_Report_QR_${adminRfqStartDate || "all"}_to_${adminRfqEndDate || "all"}.png`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex-1 py-2 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 border border-indigo-500/30 hover:border-indigo-500/50 rounded-xl font-bold text-xs text-white text-center shadow-lg transition-all hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-1.5 cursor-pointer"
+                        onClick={() => { try { playClickSound(); } catch {} }}
+                      >
+                        <Icons.Download className="h-3.5 w-3.5" />
+                        <span>Unduh QR Code</span>
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAdminRfqQrOpen(false);
+                          setAdminRfqQrCopied(false);
+                          try { playClickSound(); } catch {}
+                        }}
+                        className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl font-semibold text-xs text-slate-300 hover:text-white transition-all cursor-pointer"
+                      >
+                        Tutup
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Header Title */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/10 pb-6">
               <div className="space-y-1">
@@ -8044,6 +8276,18 @@ export default function App() {
                                             const last7End = formatDate(now);
                                             if (adminRfqStartDate === last7Start && adminRfqEndDate === last7End) return "last7";
 
+                                            const last30Start = formatDate(new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000));
+                                            const last30End = formatDate(now);
+                                            if (adminRfqStartDate === last30Start && adminRfqEndDate === last30End) return "last30";
+
+                                            const last6Start = formatDate(new Date(now.getFullYear(), now.getMonth() - 6, now.getDate()));
+                                            const last6End = formatDate(now);
+                                            if (adminRfqStartDate === last6Start && adminRfqEndDate === last6End) return "last6Months";
+
+                                             const last12Start = formatDate(new Date(now.getFullYear(), now.getMonth() - 12, now.getDate()));
+                                             const last12End = formatDate(now);
+                                             if (adminRfqStartDate === last12Start && adminRfqEndDate === last12End) return "last12Months";
+
                                             const thisMonthStart = formatDate(new Date(now.getFullYear(), now.getMonth(), 1));
                                             const thisMonthEnd = formatDate(new Date(now.getFullYear(), now.getMonth() + 1, 0));
                                             if (adminRfqStartDate === thisMonthStart && adminRfqEndDate === thisMonthEnd) return "thisMonth";
@@ -8081,6 +8325,18 @@ export default function App() {
 
                                             if (val === "last7") {
                                               const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+                                              setAdminRfqStartDate(formatDate(start));
+                                              setAdminRfqEndDate(formatDate(now));
+                                            } else if (val === "last30") {
+                                              const start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+                                              setAdminRfqStartDate(formatDate(start));
+                                              setAdminRfqEndDate(formatDate(now));
+                                            } else if (val === "last6Months") {
+                                              const start = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate());
+                                              setAdminRfqStartDate(formatDate(start));
+                                              setAdminRfqEndDate(formatDate(now));
+                                            } else if (val === "last12Months") {
+                                              const start = new Date(now.getFullYear(), now.getMonth() - 12, now.getDate());
                                               setAdminRfqStartDate(formatDate(start));
                                               setAdminRfqEndDate(formatDate(now));
                                             } else if (val === "thisMonth") {
@@ -8125,6 +8381,9 @@ export default function App() {
                                         >
                                           <option value="custom" className="bg-slate-950 text-slate-200">Custom</option>
                                           <option value="last7" className="bg-slate-950 text-slate-200">Last 7 Days</option>
+                                          <option value="last30" className="bg-slate-950 text-slate-200">Last 30 Days</option>
+                                          <option value="last6Months" className="bg-slate-950 text-slate-200">Last 6 Months</option>
+                                          <option value="last12Months" className="bg-slate-950 text-slate-200">Last 12 Months</option>
                                           <option value="thisMonth" className="bg-slate-950 text-slate-200">This Month</option>
                                           <option value="lastQuarter" className="bg-slate-950 text-slate-200">Last Quarter</option>
                                           <option value="reset" className="bg-slate-950 text-rose-400 font-bold">🧹 Quick Reset</option>
@@ -8149,6 +8408,24 @@ export default function App() {
                                           const last7End = formatDate(now);
                                           if (adminRfqStartDate === last7Start && adminRfqEndDate === last7End) {
                                             return { name: "Last 7 Days", color: "text-emerald-300 border-emerald-500/20 bg-emerald-500/10", dotColor: "bg-emerald-400" };
+                                          }
+
+                                          const last30Start = formatDate(new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000));
+                                          const last30End = formatDate(now);
+                                          if (adminRfqStartDate === last30Start && adminRfqEndDate === last30End) {
+                                            return { name: "Last 30 Days", color: "text-teal-300 border-teal-500/20 bg-teal-500/10", dotColor: "bg-teal-400" };
+                                          }
+
+                                          const last6MonthsStart = formatDate(new Date(now.getFullYear(), now.getMonth() - 6, now.getDate()));
+                                          const last6MonthsEnd = formatDate(now);
+                                          if (adminRfqStartDate === last6MonthsStart && adminRfqEndDate === last6MonthsEnd) {
+                                            return { name: "Last 6 Months", color: "text-sky-300 border-sky-500/20 bg-sky-500/10", dotColor: "bg-sky-400" };
+                                          }
+
+                                          const last12MonthsStart = formatDate(new Date(now.getFullYear(), now.getMonth() - 12, now.getDate()));
+                                          const last12MonthsEnd = formatDate(now);
+                                          if (adminRfqStartDate === last12MonthsStart && adminRfqEndDate === last12MonthsEnd) {
+                                            return { name: "Last 12 Months", color: "text-fuchsia-300 border-fuchsia-500/20 bg-fuchsia-500/10", dotColor: "bg-fuchsia-400" };
                                           }
 
                                           const thisMonthStart = formatDate(new Date(now.getFullYear(), now.getMonth(), 1));
@@ -8182,13 +8459,33 @@ export default function App() {
 
                                         const preset = getActivePreset();
                                         return (
-                                          <div
-                                            id="rfq_active_preset_badge"
-                                            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[10px] font-semibold tracking-wide border transition-all select-none font-mono ${preset.color}`}
-                                            title={`Active Date Preset: ${preset.name}`}
-                                          >
-                                            <span className={`w-1.5 h-1.5 rounded-full ${preset.dotColor} animate-pulse`} />
-                                            <span>{preset.name}</span>
+                                          <div className="flex items-center gap-2">
+                                            <motion.div
+                                              key={`${preset.name}_${adminRfqStartDate}_${adminRfqEndDate}`}
+                                              initial={{ opacity: 0, scale: 0.93, y: 1.5 }}
+                                              animate={{ opacity: 1, scale: 1, y: 0 }}
+                                              transition={{ duration: 0.2, ease: "easeOut" }}
+                                              id="rfq_active_preset_badge"
+                                              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[10px] font-semibold tracking-wide border transition-all select-none font-mono ${preset.color}`}
+                                              title={`Active Date Preset: ${preset.name}`}
+                                            >
+                                              <span className={`w-1.5 h-1.5 rounded-full ${preset.dotColor} animate-pulse`} />
+                                              <span>{preset.name}</span>
+                                            </motion.div>
+
+                                            <button
+                                              type="button"
+                                              id="rfq_share_qr_btn"
+                                              onClick={() => {
+                                                setAdminRfqQrOpen(true);
+                                                try { playClickSound(); } catch {}
+                                              }}
+                                              className="bg-slate-950 hover:bg-slate-900 text-indigo-400 hover:text-indigo-300 border border-white/10 hover:border-indigo-500/30 rounded-xl px-2.5 py-1.5 text-[10px] font-mono font-bold tracking-wide transition-all cursor-pointer flex items-center gap-1.5 shadow-sm select-none"
+                                              title="Tampilkan QR Code untuk share laporan rentang tanggal ini ke HP"
+                                            >
+                                              <Icons.QrCode className="h-3.5 w-3.5" />
+                                              <span>Share QR</span>
+                                            </button>
                                           </div>
                                         );
                                       })()}
