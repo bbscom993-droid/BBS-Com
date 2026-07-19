@@ -844,6 +844,14 @@ export default function App() {
   const [showOnlyMyClients, setShowOnlyMyClients] = useState(false);
   const [adminRfqStartDate, setAdminRfqStartDate] = useState("");
   const [adminRfqEndDate, setAdminRfqEndDate] = useState("");
+  const [showDurationCalculation, setShowDurationCalculation] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem("bbs_show_duration_calculation");
+      return stored !== "false";
+    } catch {
+      return true;
+    }
+  });
   const [adminRfqShowRecent, setAdminRfqShowRecent] = useState(false);
   const [adminRfqStatuses, setAdminRfqStatuses] = useState<string[]>(() => {
     try {
@@ -8099,6 +8107,9 @@ export default function App() {
                                               const end = new Date(endYear, endMonth + 1, 0);
                                               setAdminRfqStartDate(formatDate(start));
                                               setAdminRfqEndDate(formatDate(end));
+                                            } else if (val === "reset") {
+                                              setAdminRfqStartDate("");
+                                              setAdminRfqEndDate("");
                                             } else if (val === "custom") {
                                               // Keep custom
                                             }
@@ -8116,29 +8127,114 @@ export default function App() {
                                           <option value="last7" className="bg-slate-950 text-slate-200">Last 7 Days</option>
                                           <option value="thisMonth" className="bg-slate-950 text-slate-200">This Month</option>
                                           <option value="lastQuarter" className="bg-slate-950 text-slate-200">Last Quarter</option>
+                                          <option value="reset" className="bg-slate-950 text-rose-400 font-bold">🧹 Quick Reset</option>
                                         </select>
                                       </div>
 
-                                      <input
-                                        type="date"
-                                        id="rfq_start_date_picker"
-                                        value={adminRfqStartDate}
-                                        onChange={(e) => setAdminRfqStartDate(e.target.value)}
-                                        className={`bg-slate-950 border rounded-xl px-3 py-1.5 text-slate-200 focus:outline-none focus:ring-1 text-xs font-mono [color-scheme:dark] transition-all ${
-                                          isDateRangeInvalid
-                                            ? "border-rose-500 hover:border-rose-500/80 focus:ring-rose-500 focus:border-rose-500"
-                                            : isRangeTooLong
-                                            ? "border-amber-500/80 hover:border-amber-500 focus:ring-amber-500 focus:border-amber-500"
-                                            : "border-white/10 hover:border-indigo-500/40 focus:ring-indigo-500 focus:border-indigo-500"
-                                        }`}
-                                        title={
-                                          isDateRangeInvalid 
-                                            ? "Peringatan: Tanggal mulai tidak boleh setelah tanggal akhir!" 
-                                            : isRangeTooLong 
-                                            ? "Peringatan: Rentang waktu melebihi 365 hari!" 
-                                            : "Tanggal Mulai"
-                                        }
-                                      />
+                                      {/* Active Preset Info Badge */}
+                                      {(() => {
+                                        const getActivePreset = () => {
+                                          if (!adminRfqStartDate && !adminRfqEndDate) {
+                                            return { name: "All Time", color: "text-slate-400 border-white/5 bg-slate-950/40", dotColor: "bg-slate-500" };
+                                          }
+                                          const now = new Date();
+                                          const formatDate = (d: Date): string => {
+                                            const yyyy = d.getFullYear();
+                                            const mm = String(d.getMonth() + 1).padStart(2, '0');
+                                            const dd = String(d.getDate()).padStart(2, '0');
+                                            return `${yyyy}-${mm}-${dd}`;
+                                          };
+
+                                          const last7Start = formatDate(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
+                                          const last7End = formatDate(now);
+                                          if (adminRfqStartDate === last7Start && adminRfqEndDate === last7End) {
+                                            return { name: "Last 7 Days", color: "text-emerald-300 border-emerald-500/20 bg-emerald-500/10", dotColor: "bg-emerald-400" };
+                                          }
+
+                                          const thisMonthStart = formatDate(new Date(now.getFullYear(), now.getMonth(), 1));
+                                          const thisMonthEnd = formatDate(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+                                          if (adminRfqStartDate === thisMonthStart && adminRfqEndDate === thisMonthEnd) {
+                                            return { name: "This Month", color: "text-indigo-300 border-indigo-500/20 bg-indigo-500/10", dotColor: "bg-indigo-400" };
+                                          }
+
+                                          const currentQuarter = Math.floor(now.getMonth() / 3);
+                                          let startYear = now.getFullYear();
+                                          let endYear = now.getFullYear();
+                                          let startMonth = 0;
+                                          let endMonth = 0;
+                                          if (currentQuarter === 0) {
+                                            startYear -= 1;
+                                            endYear -= 1;
+                                            startMonth = 9;
+                                            endMonth = 11;
+                                          } else {
+                                            startMonth = (currentQuarter - 1) * 3;
+                                            endMonth = startMonth + 2;
+                                          }
+                                          const lastQuarterStart = formatDate(new Date(startYear, startMonth, 1));
+                                          const lastQuarterEnd = formatDate(new Date(endYear, endMonth + 1, 0));
+                                          if (adminRfqStartDate === lastQuarterStart && adminRfqEndDate === lastQuarterEnd) {
+                                            return { name: "Last Quarter", color: "text-purple-300 border-purple-500/20 bg-purple-500/10", dotColor: "bg-purple-400" };
+                                          }
+
+                                          return { name: "Custom Range", color: "text-amber-300 border-amber-500/20 bg-amber-500/10", dotColor: "bg-amber-400" };
+                                        };
+
+                                        const preset = getActivePreset();
+                                        return (
+                                          <div
+                                            id="rfq_active_preset_badge"
+                                            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[10px] font-semibold tracking-wide border transition-all select-none font-mono ${preset.color}`}
+                                            title={`Active Date Preset: ${preset.name}`}
+                                          >
+                                            <span className={`w-1.5 h-1.5 rounded-full ${preset.dotColor} animate-pulse`} />
+                                            <span>{preset.name}</span>
+                                          </div>
+                                        );
+                                      })()}
+
+                                      <div className="relative flex items-center gap-1">
+                                        <input
+                                          type="date"
+                                          id="rfq_start_date_picker"
+                                          value={adminRfqStartDate}
+                                          onChange={(e) => setAdminRfqStartDate(e.target.value)}
+                                          className={`bg-slate-950 border rounded-xl px-3 py-1.5 text-slate-200 focus:outline-none focus:ring-1 text-xs font-mono [color-scheme:dark] transition-all ${
+                                            isDateRangeInvalid
+                                              ? "border-rose-500 hover:border-rose-500/80 focus:ring-rose-500 focus:border-rose-500"
+                                              : isRangeTooLong
+                                              ? "border-amber-500/80 hover:border-amber-500 focus:ring-amber-500 focus:border-amber-500"
+                                              : "border-white/10 hover:border-indigo-500/40 focus:ring-indigo-500 focus:border-indigo-500"
+                                          }`}
+                                          title={
+                                            isDateRangeInvalid 
+                                              ? "Peringatan: Tanggal mulai tidak boleh setelah tanggal akhir!" 
+                                              : isRangeTooLong 
+                                              ? "Peringatan: Rentang waktu melebihi 365 hari!" 
+                                              : "Tanggal Mulai"
+                                          }
+                                        />
+                                        <button
+                                          type="button"
+                                          id="rfq_duration_toggle_btn"
+                                          onClick={() => {
+                                            const newVal = !showDurationCalculation;
+                                            setShowDurationCalculation(newVal);
+                                            try {
+                                              localStorage.setItem("bbs_show_duration_calculation", String(newVal));
+                                              playClickSound();
+                                            } catch {}
+                                          }}
+                                          className="bg-slate-950 hover:bg-slate-900 text-slate-400 hover:text-indigo-400 border border-white/10 hover:border-indigo-500/40 rounded-xl p-1.5 text-xs transition-all cursor-pointer flex items-center justify-center shadow-sm select-none shrink-0"
+                                          title={showDurationCalculation ? "Sembunyikan kalkulasi durasi" : "Tampilkan kalkulasi durasi"}
+                                        >
+                                          {showDurationCalculation ? (
+                                            <Icons.Eye className="h-3.5 w-3.5 text-indigo-400" />
+                                          ) : (
+                                            <Icons.EyeOff className="h-3.5 w-3.5 text-slate-500" />
+                                          )}
+                                        </button>
+                                      </div>
                                       <span className="text-slate-500 font-medium">s/d</span>
                                       <input
                                         type="date"
@@ -8187,17 +8283,18 @@ export default function App() {
                                       </div>
 
                                       {/* Quick Reset Button */}
-                                      {(adminRfqStartDate || adminRfqEndDate) && (
+                                      {(adminRfqStartDate || adminRfqEndDate || adminRfqSubCategoryFilter) && (
                                         <button
                                           type="button"
                                           id="rfq_date_quick_reset_btn"
                                           onClick={() => {
                                             setAdminRfqStartDate("");
                                             setAdminRfqEndDate("");
+                                            setAdminRfqSubCategoryFilter("");
                                             try { playClickSound(); } catch {}
                                           }}
                                           className="bg-rose-950/20 hover:bg-rose-950/40 text-rose-300 hover:text-white border border-rose-500/30 hover:border-rose-500/50 rounded-xl px-2.5 py-1.5 text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer shadow-sm shadow-rose-500/5 select-none"
-                                          title="Reset Filter Tanggal"
+                                          title="Reset Filter Tanggal & Sub-Kategori"
                                         >
                                           <Icons.RotateCcw className="h-3.5 w-3.5 text-rose-400" />
                                           <span>Reset</span>
@@ -8235,7 +8332,7 @@ export default function App() {
                                     </div>
                                   );
                                 }
-                                return (
+                                return showDurationCalculation ? (
                                   <div className="flex flex-col gap-1 mt-0.5">
                                     <div className="text-[10px] font-medium text-slate-300 flex items-center gap-1.5 animate-fade-in select-none" id="rfq_date_duration_badge">
                                       <Icons.Clock className="h-3 w-3 text-indigo-400 animate-pulse" />
@@ -8248,7 +8345,7 @@ export default function App() {
                                       </div>
                                     )}
                                   </div>
-                                );
+                                ) : null;
                               })()}
                             </div>
 
@@ -8280,11 +8377,12 @@ export default function App() {
                               onClick={() => {
                                 setAdminRfqStartDate("");
                                 setAdminRfqEndDate("");
+                                setAdminRfqSubCategoryFilter("");
                                 try { playClickSound(); } catch {}
                               }}
-                              disabled={!adminRfqStartDate && !adminRfqEndDate}
+                              disabled={!adminRfqStartDate && !adminRfqEndDate && !adminRfqSubCategoryFilter}
                               className={`px-3 py-1.5 rounded-xl font-bold transition-all text-xs flex items-center gap-1.5 cursor-pointer border ${
-                                !adminRfqStartDate && !adminRfqEndDate
+                                !adminRfqStartDate && !adminRfqEndDate && !adminRfqSubCategoryFilter
                                   ? "bg-slate-950/40 text-slate-600 border-white/5 cursor-not-allowed opacity-50"
                                   : "bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border-rose-500/20"
                               }`}
