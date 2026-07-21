@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "motion/react";
 import * as Icons from "lucide-react";
 import { jsPDF } from "jspdf";
 import "jspdf-autotable";
+import * as XLSX from "xlsx";
 import { 
   Laptop, 
   ShoppingCart, 
@@ -486,9 +487,11 @@ export default function App() {
         const rfq_sd = params.get("rfq_start_date");
         const rfq_ed = params.get("rfq_end_date");
         const rfq_cat = params.get("rfq_sub_category");
+        const rfq_search = params.get("rfq_search");
         if (rfq_sd !== null) setAdminRfqStartDate(rfq_sd);
         if (rfq_ed !== null) setAdminRfqEndDate(rfq_ed);
         if (rfq_cat !== null) setAdminRfqSubCategoryFilter(rfq_cat);
+        if (rfq_search !== null) setAdminRfqSearch(rfq_search);
       } else if (hash === "#consult") {
         setCurrentTab("consult");
       } else if (hash === "#rfq") {
@@ -861,6 +864,8 @@ export default function App() {
   const [adminRfqEndDate, setAdminRfqEndDate] = useState("");
   const [adminRfqQrOpen, setAdminRfqQrOpen] = useState(false);
   const [adminRfqQrCopied, setAdminRfqQrCopied] = useState(false);
+  const [adminRfqExportModalOpen, setAdminRfqExportModalOpen] = useState(false);
+  const [exportIncludeQr, setExportIncludeQr] = useState(true);
   const [showDurationCalculation, setShowDurationCalculation] = useState<boolean>(() => {
     try {
       const stored = localStorage.getItem("bbs_show_duration_calculation");
@@ -2018,6 +2023,127 @@ export default function App() {
     document.body.removeChild(link);
     
     showToast(`Ekspor CSV Berhasil! Mengunduh riwayat RFQ`, "success");
+  };
+
+  const exportRfqsToExcel = (exportType: "filtered" | "all") => {
+    const listToExport = exportType === "filtered" ? filteredRfqsForAdmin : rfqs;
+    if (listToExport.length === 0) {
+      showToast(`Tidak ada data RFQ ${exportType === "filtered" ? "terfilter" : "keseluruhan"} untuk diekspor`, "info");
+      return;
+    }
+
+    try {
+      // 1. Prepare data for Excel
+      const excelRows = listToExport.map((rfq) => {
+        const itemsDetail = rfq.items.map(item => `${item.name} (${item.quantity}x)`).join("; ");
+        let rfqValue = 0;
+        rfq.items.forEach((item) => {
+          const itemNameLower = item.name.toLowerCase();
+          const matched = catalogProducts.find((p) => {
+            const pNameLower = p.name.toLowerCase();
+            return pNameLower.includes(itemNameLower) || itemNameLower.includes(pNameLower);
+          });
+          // getNumericPrice helper gets the numeric price from range or returns a fallback
+          let price = matched ? getNumericPrice(matched.estimatedPriceRange) : 5000000;
+          if (price === 0) price = 5000000;
+          rfqValue += price * item.quantity;
+        });
+        const totalItemsCount = rfq.items.reduce((sum, item) => sum + item.quantity, 0);
+
+        const originUrl = typeof window !== "undefined" ? window.location.origin + window.location.pathname : "https://ais-pre-berlxqagrxrt5v55xbqzsl-42487289899.asia-east1.run.app";
+        const detailUrl = `${originUrl}?portal=admin&autologin=true&rfq_search=${encodeURIComponent(rfq.rfqNumber || "")}`;
+        const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&color=0f172a&data=${encodeURIComponent(detailUrl)}`;
+
+        const rowData: Record<string, any> = {
+          "No RFQ": rfq.rfqNumber || "-",
+          "Tanggal": rfq.date || "-",
+          "Nama Klien": rfq.clientName || "-",
+          "Perusahaan": rfq.companyName || "-",
+          "Email": rfq.email || "-",
+          "Telepon": rfq.phone || "-",
+          "Kategori Klien": rfq.clientCategory || "-",
+          "Status": rfq.status || "-",
+          "Daftar Item Perangkat": itemsDetail,
+          "Total Item": totalItemsCount,
+          "Estimasi Nilai RFQ (IDR)": rfqValue
+        };
+
+        if (exportIncludeQr) {
+          rowData["Link Detail RFQ"] = detailUrl;
+          rowData["Pindai QR Code (Buka Gambar)"] = qrCodeUrl;
+        }
+
+        return rowData;
+      });
+
+      // 2. Generate Workbook and Worksheet using XLSX
+      const worksheet = XLSX.utils.json_to_sheet(excelRows);
+      const workbook = XLSX.utils.book_new();
+      const sheetName = exportType === "filtered" ? "Laporan RFQ Terfilter" : "Semua Riwayat RFQ";
+      XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+
+      // Auto-fit column widths
+      if (excelRows.length > 0) {
+        const maxLens = Object.keys(excelRows[0]).map(key => {
+          let maxVal = key.length;
+          excelRows.forEach(row => {
+            const val = row[key as keyof typeof row]?.toString() || "";
+            if (val.length > maxVal) {
+              maxVal = val.length;
+            }
+          });
+          return { wch: Math.min(Math.max(maxVal + 2, 10), 50) };
+        });
+        worksheet["!cols"] = maxLens;
+      }
+
+      // 3. Write and trigger download with date and filter parameters
+      const dateStr = new Date().toISOString().slice(0, 10);
+      let fileName = "";
+      
+      if (exportType === "filtered") {
+        const filters: string[] = [];
+        
+        if (adminRfqSearch && adminRfqSearch.trim()) {
+          const cleanQuery = adminRfqSearch.trim().toLowerCase().replace(/[^a-z0-9]/g, "-").slice(0, 15);
+          filters.push(`q-${cleanQuery}`);
+        }
+        if (adminRfqStartDate || adminRfqEndDate) {
+          const startClean = adminRfqStartDate ? adminRfqStartDate.replace(/-/g, "") : "any";
+          const endClean = adminRfqEndDate ? adminRfqEndDate.replace(/-/g, "") : "any";
+          filters.push(`period-${startClean}-to-${endClean}`);
+        }
+        if (adminRfqStatuses && adminRfqStatuses.length > 0) {
+          filters.push(`status-${adminRfqStatuses.join("-")}`);
+        }
+        if (adminRfqClientFilter) {
+          const cleanClient = adminRfqClientFilter.toLowerCase().replace(/[^a-z0-9]/g, "-").slice(0, 15);
+          filters.push(`client-${cleanClient}`);
+        }
+        if (adminRfqCategoryFilter) {
+          filters.push(`cat-${adminRfqCategoryFilter.toLowerCase()}`);
+        }
+        if (adminRfqSubCategoryFilter) {
+          filters.push(`subcat-${adminRfqSubCategoryFilter.toLowerCase()}`);
+        }
+        if (adminRfqPriorityFilter) {
+          filters.push(`priority-${adminRfqPriorityFilter.toLowerCase()}`);
+        }
+        
+        const filterSuffix = filters.length > 0 ? `_${filters.join("_")}` : "_tanpa-filter";
+        fileName = `BBS_RFQ_Terfilter_${dateStr}${filterSuffix}.xlsx`;
+      } else {
+        fileName = `BBS_RFQ_Semua_Riwayat_${dateStr}.xlsx`;
+      }
+
+      XLSX.writeFile(workbook, fileName);
+
+      showToast(`Ekspor Excel Sukses! Mengunduh ${listToExport.length} RFQ`, "success");
+      try { playClickSound(); } catch {}
+    } catch (err: any) {
+      console.error("Gagal mengekspor Excel:", err);
+      showToast(`Gagal ekspor Excel: ${err.message || err}`, "error");
+    }
   };
 
   const filteredRfqsForAdmin = useMemo(() => {
@@ -7438,6 +7564,136 @@ export default function App() {
         {currentTab === "admin" && (
           <div className="space-y-8 animate-fadeIn">
             
+            {/* Modal: Export Settings */}
+            {adminRfqExportModalOpen && (
+              <div className="fixed inset-0 z-[100] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-fadeIn" id="rfq-export-settings-modal">
+                <div className="bg-slate-900 border border-white/10 rounded-3xl w-full max-w-md p-6 shadow-2xl relative overflow-hidden text-slate-200">
+                  {/* Background decorations */}
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl"></div>
+                  <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-emerald-500/5 rounded-full blur-2xl"></div>
+
+                  {/* Modal Header */}
+                  <div className="flex items-center justify-between pb-4 border-b border-white/5 relative z-10">
+                    <div className="flex items-center space-x-2.5">
+                      <div className="w-8 h-8 bg-emerald-500/20 border border-emerald-500/30 rounded-xl flex items-center justify-center text-emerald-400">
+                        <Icons.FileSpreadsheet className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-white text-sm">Pengaturan Ekspor Excel</h3>
+                        <p className="text-[10px] text-slate-400">Pilih rentang data laporan untuk diunduh</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setAdminRfqExportModalOpen(false);
+                        try { playClickSound(); } catch {}
+                      }}
+                      className="text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 p-1.5 rounded-xl transition-all cursor-pointer"
+                      title="Tutup"
+                    >
+                      <Icons.X className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  {/* Modal Content */}
+                  <div className="py-5 space-y-4 relative z-10">
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Silakan pilih cakupan data laporan yang ingin Anda ekspor ke dalam file format Excel spreadsheet (`.xlsx`):
+                    </p>
+
+                    {/* Include QR Code Option */}
+                    <div className="bg-slate-950/40 border border-white/5 rounded-2xl p-4 flex items-center justify-between">
+                      <div className="space-y-0.5 pr-2">
+                        <label htmlFor="include-qr-checkbox" className="font-semibold text-white text-xs block cursor-pointer select-none">
+                          Sertakan QR Code Pindai Perangkat
+                        </label>
+                        <p className="text-[10px] text-slate-400 leading-normal">
+                          Menambahkan kolom link deep-link & gambar QR Code untuk scan cepat via HP di lembar Excel.
+                        </p>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                        <input
+                          id="include-qr-checkbox"
+                          type="checkbox"
+                          checked={exportIncludeQr}
+                          onChange={(e) => {
+                            setExportIncludeQr(e.target.checked);
+                            try { playClickSound(); } catch {}
+                          }}
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-slate-800 rounded-full peer peer-focus:ring-2 peer-focus:ring-emerald-500/50 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500 peer-checked:after:bg-white peer-checked:after:border-transparent"></div>
+                      </label>
+                    </div>
+
+                    <div className="space-y-2.5">
+                      {/* Option 1: Filtered Data */}
+                      <button
+                        onClick={() => {
+                          exportRfqsToExcel("filtered");
+                          setAdminRfqExportModalOpen(false);
+                        }}
+                        className="w-full text-left bg-slate-950/60 hover:bg-emerald-500/10 border border-white/5 hover:border-emerald-500/30 rounded-2xl p-4 transition-all group flex items-start gap-3 cursor-pointer"
+                      >
+                        <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center shrink-0 border border-emerald-500/20 group-hover:bg-emerald-500/20">
+                          <Icons.Filter className="h-4 w-4" />
+                        </div>
+                        <div className="space-y-0.5">
+                          <div className="font-semibold text-white text-xs group-hover:text-emerald-300 transition-colors flex items-center gap-1.5">
+                            Ekspor Data Terfilter
+                            <span className="text-[10px] bg-emerald-500/15 text-emerald-400 px-1.5 py-0.5 rounded-full font-mono">
+                              {filteredRfqsForAdmin.length} RFQ
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-400 leading-normal">
+                            Hanya mengunduh data RFQ yang saat ini cocok dengan filter pencarian, status, klien, dan rentang tanggal yang aktif.
+                          </p>
+                        </div>
+                      </button>
+
+                      {/* Option 2: Complete Historical Data */}
+                      <button
+                        onClick={() => {
+                          exportRfqsToExcel("all");
+                          setAdminRfqExportModalOpen(false);
+                        }}
+                        className="w-full text-left bg-slate-950/60 hover:bg-indigo-500/10 border border-white/5 hover:border-indigo-500/30 rounded-2xl p-4 transition-all group flex items-start gap-3 cursor-pointer"
+                      >
+                        <div className="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center shrink-0 border border-indigo-500/20 group-hover:bg-indigo-500/20">
+                          <Icons.Database className="h-4 w-4" />
+                        </div>
+                        <div className="space-y-0.5">
+                          <div className="font-semibold text-white text-xs group-hover:text-indigo-300 transition-colors flex items-center gap-1.5">
+                            Ekspor Seluruh Riwayat
+                            <span className="text-[10px] bg-indigo-500/15 text-indigo-400 px-1.5 py-0.5 rounded-full font-mono">
+                              {rfqs.length} RFQ
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-400 leading-normal">
+                            Mengunduh seluruh database dokumen RFQ historis dari awal hingga sekarang tanpa menerapkan filter apa pun.
+                          </p>
+                        </div>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Modal Footer */}
+                  <div className="pt-4 border-t border-white/5 flex justify-end gap-2 relative z-10 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAdminRfqExportModalOpen(false);
+                        try { playClickSound(); } catch {}
+                      }}
+                      className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white transition-all cursor-pointer font-medium"
+                    >
+                      Batal
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Modal: Custom Range QR Code Share */}
             {adminRfqQrOpen && (() => {
               const origin = typeof window !== "undefined" ? window.location.origin + window.location.pathname : "";
@@ -8280,6 +8536,10 @@ export default function App() {
                                             const last30End = formatDate(now);
                                             if (adminRfqStartDate === last30Start && adminRfqEndDate === last30End) return "last30";
 
+                                            const last3MonthsStart = formatDate(new Date(now.getFullYear(), now.getMonth() - 3, now.getDate()));
+                                            const last3MonthsEnd = formatDate(now);
+                                            if (adminRfqStartDate === last3MonthsStart && adminRfqEndDate === last3MonthsEnd) return "last3Months";
+
                                             const last6Start = formatDate(new Date(now.getFullYear(), now.getMonth() - 6, now.getDate()));
                                             const last6End = formatDate(now);
                                             if (adminRfqStartDate === last6Start && adminRfqEndDate === last6End) return "last6Months";
@@ -8329,6 +8589,10 @@ export default function App() {
                                               setAdminRfqEndDate(formatDate(now));
                                             } else if (val === "last30") {
                                               const start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+                                              setAdminRfqStartDate(formatDate(start));
+                                              setAdminRfqEndDate(formatDate(now));
+                                            } else if (val === "last3Months") {
+                                              const start = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate());
                                               setAdminRfqStartDate(formatDate(start));
                                               setAdminRfqEndDate(formatDate(now));
                                             } else if (val === "last6Months") {
@@ -8382,6 +8646,7 @@ export default function App() {
                                           <option value="custom" className="bg-slate-950 text-slate-200">Custom</option>
                                           <option value="last7" className="bg-slate-950 text-slate-200">Last 7 Days</option>
                                           <option value="last30" className="bg-slate-950 text-slate-200">Last 30 Days</option>
+                                          <option value="last3Months" className="bg-slate-950 text-slate-200">Last 3 Months</option>
                                           <option value="last6Months" className="bg-slate-950 text-slate-200">Last 6 Months</option>
                                           <option value="last12Months" className="bg-slate-950 text-slate-200">Last 12 Months</option>
                                           <option value="thisMonth" className="bg-slate-950 text-slate-200">This Month</option>
@@ -8414,6 +8679,12 @@ export default function App() {
                                           const last30End = formatDate(now);
                                           if (adminRfqStartDate === last30Start && adminRfqEndDate === last30End) {
                                             return { name: "Last 30 Days", color: "text-teal-300 border-teal-500/20 bg-teal-500/10", dotColor: "bg-teal-400" };
+                                          }
+
+                                          const last3MonthsStart = formatDate(new Date(now.getFullYear(), now.getMonth() - 3, now.getDate()));
+                                          const last3MonthsEnd = formatDate(now);
+                                          if (adminRfqStartDate === last3MonthsStart && adminRfqEndDate === last3MonthsEnd) {
+                                            return { name: "Last 3 Months", color: "text-lime-300 border-lime-500/20 bg-lime-500/10", dotColor: "bg-lime-400" };
                                           }
 
                                           const last6MonthsStart = formatDate(new Date(now.getFullYear(), now.getMonth() - 6, now.getDate()));
@@ -8486,6 +8757,20 @@ export default function App() {
                                               <Icons.QrCode className="h-3.5 w-3.5" />
                                               <span>Share QR</span>
                                             </button>
+
+                                            <button
+                                              type="button"
+                                              id="rfq_export_excel_btn"
+                                              onClick={() => {
+                                                setAdminRfqExportModalOpen(true);
+                                                try { playClickSound(); } catch {}
+                                              }}
+                                              className="bg-slate-950 hover:bg-slate-900 text-emerald-400 hover:text-emerald-300 border border-white/10 hover:border-emerald-500/30 rounded-xl px-2.5 py-1.5 text-[10px] font-mono font-bold tracking-wide transition-all cursor-pointer flex items-center gap-1.5 shadow-sm select-none"
+                                              title="Pengaturan Ekspor Excel (Terfilter atau Semua Riwayat)"
+                                            >
+                                              <Icons.FileSpreadsheet className="h-3.5 w-3.5" />
+                                              <span>Ekspor Filtered</span>
+                                            </button>
                                           </div>
                                         );
                                       })()}
@@ -8511,6 +8796,19 @@ export default function App() {
                                               : "Tanggal Mulai"
                                           }
                                         />
+                                        <button
+                                          type="button"
+                                          id="rfq_immediate_export_excel_btn"
+                                          onClick={() => {
+                                            exportRfqsToExcel("filtered");
+                                            try { playClickSound(); } catch {}
+                                          }}
+                                          className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 hover:text-emerald-300 border border-emerald-500/20 hover:border-emerald-500/40 rounded-xl px-2.5 py-1.5 text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 shadow-sm select-none shrink-0"
+                                          title="Ekspor Langsung RFQ Terfilter (.xlsx)"
+                                        >
+                                          <Icons.FileSpreadsheet className="h-3.5 w-3.5 text-emerald-400" />
+                                          <span>Ekspor Instan</span>
+                                        </button>
                                         <button
                                           type="button"
                                           id="rfq_duration_toggle_btn"
