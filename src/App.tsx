@@ -2025,7 +2025,7 @@ export default function App() {
     showToast(`Ekspor CSV Berhasil! Mengunduh riwayat RFQ`, "success");
   };
 
-  const exportRfqsToExcel = (exportType: "filtered" | "all") => {
+  const exportRfqsToExcel = (exportType: "filtered" | "all", includeQr: boolean = exportIncludeQr) => {
     const listToExport = exportType === "filtered" ? filteredRfqsForAdmin : rfqs;
     if (listToExport.length === 0) {
       showToast(`Tidak ada data RFQ ${exportType === "filtered" ? "terfilter" : "keseluruhan"} untuk diekspor`, "info");
@@ -2068,7 +2068,7 @@ export default function App() {
           "Estimasi Nilai RFQ (IDR)": rfqValue
         };
 
-        if (exportIncludeQr) {
+        if (includeQr) {
           rowData["Link Detail RFQ"] = detailUrl;
           rowData["Pindai QR Code (Buka Gambar)"] = qrCodeUrl;
         }
@@ -7630,7 +7630,7 @@ export default function App() {
                       {/* Option 1: Filtered Data */}
                       <button
                         onClick={() => {
-                          exportRfqsToExcel("filtered");
+                          exportRfqsToExcel("filtered", exportIncludeQr);
                           setAdminRfqExportModalOpen(false);
                         }}
                         className="w-full text-left bg-slate-950/60 hover:bg-emerald-500/10 border border-white/5 hover:border-emerald-500/30 rounded-2xl p-4 transition-all group flex items-start gap-3 cursor-pointer"
@@ -7654,7 +7654,7 @@ export default function App() {
                       {/* Option 2: Complete Historical Data */}
                       <button
                         onClick={() => {
-                          exportRfqsToExcel("all");
+                          exportRfqsToExcel("all", exportIncludeQr);
                           setAdminRfqExportModalOpen(false);
                         }}
                         className="w-full text-left bg-slate-950/60 hover:bg-indigo-500/10 border border-white/5 hover:border-indigo-500/30 rounded-2xl p-4 transition-all group flex items-start gap-3 cursor-pointer"
