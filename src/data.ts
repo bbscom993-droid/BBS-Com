@@ -120,6 +120,7 @@ export const PRODUCT_CATALOG: ProductItem[] = [
     id: "prod_1",
     name: "Laptop Kantor Lenovo ThinkBook 14 G6",
     category: "Komputer & Laptop",
+    brand: "Lenovo",
     description: "Laptop tangguh bodi aluminium khusus bisnis berkinerja tinggi dengan keamanan fingerprint sensor.",
     estimatedPriceRange: "Rp 10.500.000 - Rp 14.500.000",
     specifications: [
@@ -137,6 +138,7 @@ export const PRODUCT_CATALOG: ProductItem[] = [
     id: "prod_2",
     name: "PC Desktop ASUS ExpertCenter D7 Mini Tower",
     category: "Komputer & Laptop",
+    brand: "ASUS",
     description: "PC desktop handal performa tinggi dengan ketahanan kelas militer (MIL-STD 810H) untuk produktivitas harian kantor.",
     estimatedPriceRange: "Rp 8.500.000 - Rp 12.000.000",
     specifications: [
@@ -154,6 +156,7 @@ export const PRODUCT_CATALOG: ProductItem[] = [
     id: "prod_3",
     name: "Server Rackmount Dell PowerEdge R250",
     category: "Server & Storage",
+    brand: "Dell",
     description: "Server rackmount 1U entry-level yang bertenaga, ideal untuk menangani kolaborasi file sharing, web hosting, dan database.",
     estimatedPriceRange: "Rp 26.500.000 - Rp 38.000.000",
     specifications: [
@@ -171,6 +174,7 @@ export const PRODUCT_CATALOG: ProductItem[] = [
     id: "prod_4",
     name: "Synology NAS Storage DS923+",
     category: "Server & Storage",
+    brand: "Synology",
     description: "Pusat penyimpanan data berkapasitas besar dan backup terpusat untuk keamanan file penting seluruh karyawan kantor.",
     estimatedPriceRange: "Rp 12.500.000 - Rp 18.000.000 (Tanpa HDD)",
     specifications: [
@@ -188,6 +192,7 @@ export const PRODUCT_CATALOG: ProductItem[] = [
     id: "prod_5",
     name: "Router Mikrotik RB5009UG+S+IN",
     category: "Infrastruktur Jaringan",
+    brand: "MikroTik",
     description: "Routerboard tangguh kelas enterprise berkecepatan tinggi dengan port SFP+ 10Gbps untuk manajemen bandwidth kantor besar.",
     estimatedPriceRange: "Rp 3.800.000 - Rp 4.500.000",
     specifications: [
@@ -205,6 +210,7 @@ export const PRODUCT_CATALOG: ProductItem[] = [
     id: "prod_6",
     name: "Access Point Ubiquiti UniFi U6-Lite",
     category: "Infrastruktur Jaringan",
+    brand: "Ubiquiti",
     description: "Access point Wi-Fi 6 indoor berdesain minimalis dengan jangkauan sinyal luas dan stabil untuk lingkungan padat pengguna.",
     estimatedPriceRange: "Rp 2.100.000 - Rp 2.500.000",
     specifications: [
@@ -222,6 +228,7 @@ export const PRODUCT_CATALOG: ProductItem[] = [
     id: "prod_7",
     name: "IP Camera Dome Hikvision DS-2CD1123G0-I",
     category: "CCTV & Security",
+    brand: "Hikvision",
     description: "Kamera pengawas indoor tipe dome tahan benturan (Vandal-Proof IK10) dengan gambar tajam siang dan malam.",
     estimatedPriceRange: "Rp 1.100.000 - Rp 1.400.000",
     specifications: [
@@ -239,6 +246,7 @@ export const PRODUCT_CATALOG: ProductItem[] = [
     id: "prod_8",
     name: "Lisensi Microsoft 365 Business Standard",
     category: "Software & Lisensi",
+    brand: "Microsoft",
     description: "Langganan lisensi produktivitas kerja kolaboratif lengkap dengan aplikasi desktop Office terbaru dan cloud email premium.",
     estimatedPriceRange: "Rp 195.000 - Rp 230.000 / User / Bulan",
     specifications: [

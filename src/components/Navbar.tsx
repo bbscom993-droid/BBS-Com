@@ -95,7 +95,7 @@ export default function Navbar({ currentTab, setCurrentTab, rfqCartCount, settin
   const navItems = [
     { id: "landing", label: "Beranda", icon: Home },
     { id: "shop", label: "Toko Online", icon: Store },
-    { id: "consult", label: "BBS Asisten AI", icon: Sparkles },
+    { id: "consult", label: "Konsultasi Team BBS", icon: Sparkles },
     { id: "rfq", label: "Buat RFQ", icon: ShoppingCart, badge: rfqCartCount > 0 ? rfqCartCount : undefined },
     { id: "contact", label: "Kontak", icon: Mail },
   ];

@@ -851,6 +851,7 @@ export default function App() {
     id: string;
     name: string;
     category: string;
+    brand: string;
     description: string;
     estimatedPriceRange: string;
     icon: string;
@@ -861,6 +862,7 @@ export default function App() {
     id: "",
     name: "",
     category: "Server & Storage",
+    brand: "",
     description: "",
     estimatedPriceRange: "Rp 5.000.000 - Rp 10.000.000",
     icon: "Server",
@@ -872,6 +874,7 @@ export default function App() {
   const [isAddingCatalog, setIsAddingCatalog] = useState(false);
   const [adminCatalogSearch, setAdminCatalogSearch] = useState("");
   const [adminCatalogCategory, setAdminCatalogCategory] = useState("Semua");
+  const [adminCatalogBrand, setAdminCatalogBrand] = useState("Semua");
 
   const [rfqCart, setRfqCart] = useState<{ product: ProductItem; quantity: number }[]>(() => {
     try {
@@ -1990,7 +1993,7 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState<ConsultMessage[]>([
     {
       role: "model",
-      text: "Halo! Selamat datang di Berkah Bintang Solusindo (BBS). Saya adalah Asisten Konsultan IT Anda. Ada kebutuhan perangkat keras, server, instalasi jaringan, sistem CCTV, atau kontrak maintenance yang bisa saya bantu rekomendasikan hari ini?",
+      text: "Halo! Selamat datang di Berkah Bintang Solusindo (BBS). Saya adalah Konsultan IT dari Team BBS. Ada kebutuhan perangkat keras, server, instalasi jaringan, sistem CCTV, atau kontrak maintenance yang bisa kami bantu rekomendasikan hari ini?",
       timestamp: new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })
     }
   ]);
@@ -2097,6 +2100,7 @@ export default function App() {
   const [catalogSearch, setCatalogSearch] = useState("");
   const [catalogSkuSearch, setCatalogSkuSearch] = useState("");
   const [catalogCategory, setCatalogCategory] = useState("Semua");
+  const [catalogBrand, setCatalogBrand] = useState("Semua");
   const [catalogSort, setCatalogSort] = useState<"none" | "best-match" | "popularity" | "low-to-high" | "high-to-low">("none");
   const [isSortDropdownOpen, setIsSortDropdownOpen] = useState(false);
   const sortDropdownRef = useRef<HTMLDivElement>(null);
@@ -2105,11 +2109,15 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const cat = params.get("category");
+    const brand = params.get("brand");
     const search = params.get("search");
     const sort = params.get("sort");
     
     if (cat) {
       setCatalogCategory(cat);
+    }
+    if (brand) {
+      setCatalogBrand(brand);
     }
     if (search) {
       setCatalogSearch(search);
@@ -4471,7 +4479,7 @@ export default function App() {
     while (attempt <= maxRetries) {
       try {
         if (attempt > 0) {
-          console.log(`Mencoba kembali menghubungi asisten AI (${attempt}/${maxRetries}) dalam ${delay}ms...`);
+          console.log(`Mencoba kembali menghubungi sistem Team BBS (${attempt}/${maxRetries}) dalam ${delay}ms...`);
         }
         response = await runFetch();
         
@@ -4534,7 +4542,7 @@ export default function App() {
         // Tampilkan pesan error di chat history agar user dapat melihat langsung kerusakannya
         setChatMessages(prev => [...prev, {
           role: "model",
-          text: `⚠️ Maaf, asisten AI mendeteksi masalah pada server (HTTP ${response.status}: ${response.statusText || "Error"}). Silakan coba sesaat lagi atau ringkas pesan Anda.`,
+          text: `⚠️ Maaf, sistem Team BBS mendeteksi masalah pada server (HTTP ${response.status}: ${response.statusText || "Error"}). Silakan coba sesaat lagi atau ringkas pesan Anda.`,
           timestamp: new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })
         }]);
       } else {
@@ -4543,7 +4551,7 @@ export default function App() {
         
         setChatMessages(prev => [...prev, {
           role: "model",
-          text: `⚠️ Tidak dapat terhubung ke server asisten AI (${errorDesc}). Silakan periksa koneksi internet Anda atau coba lagi.`,
+          text: `⚠️ Tidak dapat terhubung ke sistem Team BBS (${errorDesc}). Silakan periksa koneksi internet Anda atau coba lagi.`,
           timestamp: new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })
         }]);
       }
@@ -4904,11 +4912,14 @@ export default function App() {
 
   // Filter products catalog
   const filteredProducts = catalogProducts.filter(product => {
+    const pBrand = product.brand || product.vendor || "";
     const matchSearch = product.name.toLowerCase().includes(catalogSearch.toLowerCase()) || 
-                        product.description.toLowerCase().includes(catalogSearch.toLowerCase());
+                        product.description.toLowerCase().includes(catalogSearch.toLowerCase()) ||
+                        pBrand.toLowerCase().includes(catalogSearch.toLowerCase());
     const matchSku = !catalogSkuSearch.trim() || (product.sku && product.sku.toLowerCase().includes(catalogSkuSearch.toLowerCase().trim()));
     const matchCat = catalogCategory === "Semua" || product.category === catalogCategory;
-    return matchSearch && matchSku && matchCat;
+    const matchBrand = catalogBrand === "Semua" || pBrand === catalogBrand;
+    return matchSearch && matchSku && matchCat && matchBrand;
   }).sort((a, b) => {
     if (catalogSort === "low-to-high") {
       return getNumericPrice(a.estimatedPriceRange) - getNumericPrice(b.estimatedPriceRange);
@@ -4940,13 +4951,21 @@ export default function App() {
   });
 
   const uniqueCategories = ["Semua", ...Array.from(new Set(catalogProducts.map(p => p.category)))];
+  const uniqueBrands = ["Semua", ...Array.from(new Set(catalogProducts.map(p => p.brand || p.vendor).filter((b): b is string => !!b && b.trim() !== ""))).sort()];
 
   // Filter admin products catalog
   const filteredAdminCatalog = catalogProducts.filter(item => {
-    const matchQ = item.name.toLowerCase().includes(adminCatalogSearch.toLowerCase()) || 
-                   item.description.toLowerCase().includes(adminCatalogSearch.toLowerCase());
+    const query = adminCatalogSearch.toLowerCase().trim();
+    const itemBrand = item.brand || item.vendor || "";
+    const matchQ = !query || 
+                   item.name.toLowerCase().includes(query) || 
+                   item.description.toLowerCase().includes(query) ||
+                   itemBrand.toLowerCase().includes(query) ||
+                   (item.sku && item.sku.toLowerCase().includes(query)) ||
+                   (item.serialNumber && item.serialNumber.toLowerCase().includes(query));
     const matchC = adminCatalogCategory === "Semua" || item.category === adminCatalogCategory;
-    return matchQ && matchC;
+    const matchB = adminCatalogBrand === "Semua" || itemBrand === adminCatalogBrand;
+    return matchQ && matchC && matchB;
   });
 
   // Computed values for Bulk QR label printing and validation
@@ -5107,7 +5126,7 @@ export default function App() {
                     className="px-8 py-4 bg-white/5 border border-white/10 hover:bg-white/10 text-slate-200 rounded-xl font-bold backdrop-blur-sm transition-all duration-300 flex items-center justify-center space-x-2 text-base cursor-pointer transform hover:-translate-y-0.5"
                   >
                     <Sparkles className="h-5 w-5 text-indigo-400" />
-                    <span>Konsultasi BBS Asisten AI</span>
+                    <span>Konsultasi Team BBS</span>
                   </button>
                 </div>
               </div>
@@ -5211,7 +5230,7 @@ export default function App() {
                     <div className="flex items-start gap-3 p-3 bg-white/5 border border-white/5 rounded-xl">
                       <div className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center text-slate-300 font-bold text-xs">2</div>
                       <div className="flex-1">
-                        <p className="text-xs font-bold text-slate-200">BBS AI Memproses & Merancang Quotation</p>
+                        <p className="text-xs font-bold text-slate-200">BBS Memproses & Merancang Quotation</p>
                         <p className="text-[10px] text-slate-400 mt-0.5">Sistem secara instan menganalisis, memilih model brand terbaik, dan menyusun harga.</p>
                       </div>
                     </div>
@@ -6460,13 +6479,32 @@ export default function App() {
                     ))}
                   </div>
 
-                  {(catalogSearch !== "" || catalogSkuSearch !== "" || catalogCategory !== "Semua" || catalogSort !== "none") && (
+                  {uniqueBrands.length > 1 && (
+                    <select
+                      id="public_catalog_brand_filter"
+                      value={catalogBrand}
+                      onChange={(e) => {
+                        setCatalogBrand(e.target.value);
+                        try { playClickSound(); } catch {}
+                      }}
+                      className="bg-slate-900/60 border border-white/10 hover:border-indigo-500/40 rounded-xl px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-all font-semibold cursor-pointer shadow-sm"
+                      title="Filter Berdasarkan Brand / Vendor Perangkat IT"
+                    >
+                      <option value="Semua">Brand / Vendor: Semua</option>
+                      {uniqueBrands.filter(b => b !== "Semua").map(brand => (
+                        <option key={brand} value={brand} className="bg-slate-950 text-slate-200">🏷️ {brand}</option>
+                      ))}
+                    </select>
+                  )}
+
+                  {(catalogSearch !== "" || catalogSkuSearch !== "" || catalogCategory !== "Semua" || catalogBrand !== "Semua" || catalogSort !== "none") && (
                     <button
                       type="button"
                       onClick={() => {
                         setCatalogSearch("");
                         setCatalogSkuSearch("");
                         setCatalogCategory("Semua");
+                        setCatalogBrand("Semua");
                         setCatalogSort("none");
                         showToast("Filter dan pencarian katalog telah di-reset ke default.", "success");
                       }}
@@ -6632,11 +6670,11 @@ export default function App() {
               <div className="absolute top-[-50px] right-[-50px] w-64 h-64 bg-indigo-500/15 rounded-full blur-3xl pointer-events-none"></div>
               <div className="space-y-3 max-w-xl text-center md:text-left">
                 <div className="inline-block px-2.5 py-0.5 bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-[10px] font-mono rounded-md uppercase tracking-widest font-bold">
-                  BBS AI CONSULTANT
+                  TEAM BBS CONSULTANT
                 </div>
                 <h3 className="text-2xl sm:text-3xl font-extrabold text-white">Bingung Spesifikasi Perangkat yang Dibutuhkan?</h3>
                 <p className="text-sm text-slate-300 leading-relaxed">
-                  Konsultasikan gratis dengan AI Assistant khusus kami. Kami merekomendasikan tipe processor, jumlah access point wifi, sudut pandang CCTV, lisensi software, serta kalkulasi penawaran.
+                  Konsultasikan gratis dengan Team Konsultan BBS kami. Kami merekomendasikan tipe processor, jumlah access point wifi, sudut pandang CCTV, lisensi software, serta kalkulasi penawaran.
                 </p>
               </div>
 
@@ -6645,7 +6683,7 @@ export default function App() {
                 className="px-8 py-4 bg-white text-slate-900 hover:bg-slate-100 rounded-xl font-bold shadow-lg transition-all flex items-center space-x-2 shrink-0 cursor-pointer transform hover:scale-[1.02]"
               >
                 <Sparkles className="h-5 w-5 text-indigo-600" />
-                <span>Mulai Konsultasi AI</span>
+                <span>Konsultasi Team BBS</span>
               </button>
             </div>
 
@@ -6683,7 +6721,7 @@ export default function App() {
                   <h5 className="font-bold text-white text-xs uppercase tracking-wider">Navigasi Cepat</h5>
                   <div className="flex flex-col space-y-2 text-xs">
                     <button onClick={() => setCurrentTab("landing")} className="text-left text-slate-300 hover:text-indigo-400 transition-colors">Halaman Beranda</button>
-                    <button onClick={() => setCurrentTab("consult")} className="text-left text-slate-300 hover:text-indigo-400 transition-colors">Konsultasi AI</button>
+                    <button onClick={() => setCurrentTab("consult")} className="text-left text-slate-300 hover:text-indigo-400 transition-colors">Konsultasi Team BBS</button>
                     <button onClick={() => setCurrentTab("rfq")} className="text-left text-slate-300 hover:text-indigo-400 transition-colors">Buat Penawaran RFQ</button>
                     <button onClick={() => setCurrentTab("contact")} className="text-left text-slate-300 hover:text-indigo-400 transition-colors">Hubungi Kami (Kontak)</button>
                   </div>
@@ -7243,9 +7281,9 @@ export default function App() {
             <div>
               <div className="inline-flex items-center space-x-2 px-3 py-1 bg-indigo-500/10 border border-indigo-500/20 rounded-full text-indigo-300 text-[11px] font-semibold uppercase tracking-wider mb-2">
                 <Sparkles className="h-3 w-3 text-indigo-400" />
-                <span>Teknologi BBS Generative AI</span>
+                <span>Sistem Konsultasi Team BBS</span>
               </div>
-              <h2 className="text-3xl font-extrabold text-white">Asisten Konsultan Procurement IT</h2>
+              <h2 className="text-3xl font-extrabold text-white">Konsultan Procurement IT - Team BBS</h2>
               <p className="text-slate-400 text-sm mt-1">
                 Tanyakan rekomendasi spesifikasi, perancangan topologi jaringan LAN, jumlah titik CCTV ideal, atau penyusunan anggaran pengadaan kantor Anda secara instan.
               </p>
@@ -7356,7 +7394,7 @@ export default function App() {
                     </form>
                   ) : (
                     <>
-                      <p className="text-xs text-slate-400 leading-relaxed">Pilih topik cepat di bawah ini untuk didiskusikan langsung dengan AI atau buat sendiri:</p>
+                      <p className="text-xs text-slate-400 leading-relaxed">Pilih topik cepat di bawah ini untuk didiskusikan langsung dengan Team BBS atau buat sendiri:</p>
                       
                       <div className="space-y-2.5 max-h-[350px] overflow-y-auto pr-1">
                         {quickTopics.map((topic) => (
@@ -7395,7 +7433,7 @@ export default function App() {
                     <span>Langkah Selanjutnya?</span>
                   </h5>
                   <p className="text-[10px] text-slate-400 leading-relaxed">
-                    Jika spesifikasi yang disarankan AI sudah sesuai, silakan masuk ke tab <strong>"Buat RFQ"</strong> untuk mengirimkan data permintaan resmi agar tim sales kami memproses penawaran harga formal.
+                    Jika spesifikasi yang disarankan Team BBS sudah sesuai, silakan masuk ke tab <strong>"Buat RFQ"</strong> untuk mengirimkan data permintaan resmi agar tim sales kami memproses penawaran harga formal.
                   </p>
                 </div>
               </div>
@@ -7413,7 +7451,7 @@ export default function App() {
                       <span className="absolute bottom-0 right-0 block h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-slate-900"></span>
                     </div>
                     <div>
-                      <h4 className="text-sm font-bold text-white">AI Procurement Consultant</h4>
+                      <h4 className="text-sm font-bold text-white">Team BBS Procurement Consultant</h4>
                       <p className="text-[10px] text-slate-400">Berkah Bintang Solusindo Expert System</p>
                     </div>
                   </div>
@@ -7423,7 +7461,7 @@ export default function App() {
                     onClick={() => setChatMessages([
                       {
                         role: "model",
-                        text: "Halo! Selamat datang di Berkah Bintang Solusindo (BBS). Saya adalah Asisten Konsultan IT Anda. Ada kebutuhan perangkat keras, server, instalasi jaringan, sistem CCTV, atau kontrak maintenance yang bisa saya bantu rekomendasikan hari ini?",
+                        text: "Halo! Selamat datang di Berkah Bintang Solusindo (BBS). Saya adalah Konsultan IT dari Team BBS. Ada kebutuhan perangkat keras, server, instalasi jaringan, sistem CCTV, atau kontrak maintenance yang bisa kami bantu rekomendasikan hari ini?",
                         timestamp: new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })
                       }
                     ])}
@@ -14778,6 +14816,7 @@ export default function App() {
                               id: "",
                               name: "",
                               category: "Server & Storage",
+                              brand: "",
                               description: "",
                               estimatedPriceRange: "Rp 5.000.000 - Rp 10.000.000",
                               icon: "Server",
@@ -14857,7 +14896,7 @@ export default function App() {
                           }}
                           className="space-y-4"
                         >
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div>
                               <label className="block text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1">Nama Perangkat / Barang *</label>
                               <input
@@ -14867,6 +14906,17 @@ export default function App() {
                                 value={catalogForm.name}
                                 onChange={(e) => setCatalogForm({ ...catalogForm, name: e.target.value })}
                                 className="w-full px-3.5 py-2 bg-slate-950 border border-white/10 rounded-xl text-xs focus:outline-none text-slate-100 placeholder-slate-600 focus:border-indigo-500"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1">Brand / Vendor Perangkat</label>
+                              <input
+                                type="text"
+                                placeholder="Contoh: Lenovo, ASUS, Dell, Cisco, Hikvision"
+                                value={catalogForm.brand}
+                                onChange={(e) => setCatalogForm({ ...catalogForm, brand: e.target.value })}
+                                className="w-full px-3.5 py-2 bg-slate-950 border border-white/10 rounded-xl text-xs focus:outline-none text-slate-100 placeholder-slate-600 focus:border-indigo-500 font-semibold"
                               />
                             </div>
 
@@ -15012,7 +15062,7 @@ export default function App() {
                             <Icons.Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500" />
                             <input
                               type="text"
-                              placeholder="Cari nama atau deskripsi..."
+                              placeholder="Cari nama, brand, atau deskripsi..."
                               value={adminCatalogSearch}
                               onChange={(e) => setAdminCatalogSearch(e.target.value)}
                               className="w-full pl-9 pr-3 py-1.5 bg-slate-950 border border-white/5 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500/50"
@@ -15020,9 +15070,21 @@ export default function App() {
                           </div>
 
                           <select
+                            value={adminCatalogBrand}
+                            onChange={(e) => setAdminCatalogBrand(e.target.value)}
+                            className="px-3 py-1.5 bg-slate-950 border border-white/5 rounded-xl text-xs text-slate-300 focus:outline-none focus:border-indigo-500/50 cursor-pointer font-semibold"
+                            title="Filter berdasarkan Brand / Vendor"
+                          >
+                            <option value="Semua">Semua Brand / Vendor</option>
+                            {uniqueBrands.filter(b => b !== "Semua").map((brand) => (
+                              <option key={brand} value={brand}>🏷️ {brand}</option>
+                            ))}
+                          </select>
+
+                          <select
                             value={adminCatalogCategory}
                             onChange={(e) => setAdminCatalogCategory(e.target.value)}
-                            className="px-3 py-1.5 bg-slate-950 border border-white/5 rounded-xl text-xs text-slate-300 focus:outline-none focus:border-indigo-500/50"
+                            className="px-3 py-1.5 bg-slate-950 border border-white/5 rounded-xl text-xs text-slate-300 focus:outline-none focus:border-indigo-500/50 cursor-pointer font-semibold"
                           >
                             <option value="Semua">Semua Kategori</option>
                             <option value="Komputer & Laptop">Komputer & Laptop</option>
@@ -15056,6 +15118,7 @@ export default function App() {
                             <tr className="border-b border-white/5 bg-white/5 text-[10px] text-slate-400 uppercase tracking-widest font-extrabold">
                               <th className="py-3 px-5 text-center w-12">No</th>
                               <th className="py-3 px-4">Nama Perangkat</th>
+                              <th className="py-3 px-4">Brand / Vendor</th>
                               <th className="py-3 px-4">Kategori</th>
                               <th className="py-3 px-4">Rentang Estimasi Harga</th>
                               <th className="py-3 px-4 max-w-xs">Detail Spesifikasi Utama</th>
@@ -15065,13 +15128,14 @@ export default function App() {
                           <tbody className="divide-y divide-white/5">
                             {filteredAdminCatalog.length === 0 ? (
                               <tr>
-                                <td colSpan={6} className="py-12 text-center text-slate-500 text-xs">
-                                  Tidak ada item katalog yang sesuai dengan pencarian Anda.
+                                <td colSpan={7} className="py-12 text-center text-slate-500 text-xs">
+                                  Tidak ada item katalog yang sesuai dengan pencarian atau filter Anda.
                                 </td>
                               </tr>
                             ) : (
                               filteredAdminCatalog.map((item, idx) => {
                                 const ItemIcon = (Icons as any)[item.icon || "Package"] || Icons.Package;
+                                const brandName = item.brand || item.vendor;
                                 return (
                                   <tr key={item.id} className="hover:bg-white/5 text-xs text-slate-300 transition-colors">
                                     <td className="py-4 px-5 text-center font-mono font-bold text-slate-500">{idx + 1}</td>
@@ -15091,6 +15155,16 @@ export default function App() {
                                           )}
                                         </div>
                                       </div>
+                                    </td>
+                                    <td className="py-4 px-4">
+                                      {brandName ? (
+                                        <span className="inline-flex items-center gap-1 bg-indigo-500/10 text-indigo-300 text-[10px] font-bold px-2 py-0.5 rounded-md border border-indigo-500/20">
+                                          <Icons.Tag className="h-2.5 w-2.5 text-indigo-400" />
+                                          <span>{brandName}</span>
+                                        </span>
+                                      ) : (
+                                        <span className="text-[10px] text-slate-600 font-mono italic">-</span>
+                                      )}
                                     </td>
                                     <td className="py-4 px-4">
                                       <span className="inline-block bg-slate-800 text-slate-300 text-[10px] font-bold px-2 py-0.5 rounded-full border border-white/5">
@@ -15129,6 +15203,7 @@ export default function App() {
                                               id: item.id,
                                               name: item.name,
                                               category: item.category,
+                                              brand: item.brand || item.vendor || "",
                                               description: item.description,
                                               estimatedPriceRange: item.estimatedPriceRange,
                                               icon: item.icon || "Package",

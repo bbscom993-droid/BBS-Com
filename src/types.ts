@@ -11,6 +11,8 @@ export interface ProductItem {
   id: string;
   name: string;
   category: string;
+  brand?: string;
+  vendor?: string;
   description: string;
   estimatedPriceRange: string;
   specifications: string[];
