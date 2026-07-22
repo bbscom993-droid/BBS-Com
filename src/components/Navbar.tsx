@@ -113,61 +113,25 @@ export default function Navbar({ currentTab, setCurrentTab, rfqCartCount, settin
           <div className="flex items-center space-x-3">
             <div className="flex items-center cursor-pointer" onClick={() => handleNavClick("landing")}>
               <div className="flex-shrink-0 flex items-center space-x-3">
-                <div className="p-2 bg-gradient-to-tr from-indigo-600 to-cyan-500 rounded-lg shadow-lg shadow-indigo-500/20 text-white">
-                  <Laptop className="h-6 w-6 animate-pulse" id="logo_icon" />
+                {/* Visual design resembling the uploaded BBS logo */}
+                <div className="flex items-center space-x-2 bg-slate-900/40 px-3 py-1.5 rounded-xl border border-white/5 shadow-inner">
+                  {/* "BBS." Block */}
+                  <div className="flex items-baseline font-sans font-black text-xl tracking-tighter text-white select-none">
+                    <span>BBS</span>
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500 ml-0.5 shadow-[0_0_8px_#f59e0b]" />
+                  </div>
+                  {/* Vertical separator */}
+                  <div className="h-4 w-[1px] bg-white/15" />
+                  {/* "Berkah Bintang Solusindo" Stacked */}
+                  <div className="flex flex-col leading-tight">
+                    <span className="font-sans font-extrabold text-[10px] text-white tracking-wide uppercase">
+                      Berkah Bintang
+                    </span>
+                    <span className="font-sans font-bold text-[9px] text-slate-400 uppercase tracking-wider">
+                      Solusindo
+                    </span>
+                  </div>
                 </div>
-                <div>
-                  <span className="font-sans font-extrabold text-lg tracking-tight text-white block leading-tight border border-[#f32323] px-2 py-0.5 rounded-lg">
-                    Berkah Bintang <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-cyan-400">Solusindo</span>
-                  </span>
-                  <span className="font-mono text-[9px] text-slate-400 block uppercase tracking-[0.15em] font-medium mt-0.5">
-                    IT & Procurement Solutions
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Live Connection & Cache Status Badge */}
-            <div className="flex items-center gap-1.5 select-none shrink-0" id="connection_cache_badges">
-              {isOnline ? (
-                <div 
-                  onClick={updateCacheStatus}
-                  title="Anda terhubung ke internet. Klik untuk memperbarui status cache."
-                  className="group flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[9px] font-extrabold text-emerald-400 cursor-pointer hover:bg-emerald-500/20 transition-all"
-                >
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0 shadow-[0_0_4px_rgba(52,211,153,0.5)] animate-pulse" />
-                  <Wifi className="h-2.5 w-2.5 text-emerald-400" />
-                  <span className="hidden sm:inline">Online</span>
-                </div>
-              ) : (
-                <div 
-                  onClick={updateCacheStatus}
-                  title="Internet terputus. Portal bekerja dalam mode offline menggunakan data cache."
-                  className="group flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-[9px] font-extrabold text-amber-400 cursor-pointer hover:bg-amber-500/20 transition-all shadow-[0_0_8px_rgba(245,158,11,0.2)]"
-                >
-                  <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0 animate-pulse" />
-                  <WifiOff className="h-2.5 w-2.5 text-amber-400 animate-bounce" />
-                  <span>Offline (Cached)</span>
-                </div>
-              )}
-
-              {/* Cache Status Badge */}
-              <div 
-                onClick={updateCacheStatus}
-                className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-extrabold cursor-pointer transition-all ${
-                  cacheState.cachedCount > 0 
-                    ? "bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 hover:bg-indigo-500/20" 
-                    : "bg-slate-500/10 border border-slate-500/20 text-slate-400 hover:bg-slate-500/20"
-                }`}
-                title="Jumlah data & aset aplikasi yang tersimpan di browser untuk akses offline."
-              >
-                <Database className={`h-2.5 w-2.5 ${cacheState.isChecking ? 'animate-spin' : ''}`} />
-                <span>
-                  {cacheState.cachedCount > 0 ? `${cacheState.cachedCount} Aset` : 'Cache Kosong'}
-                </span>
-                {cacheState.hasServiceWorker && (
-                  <span className="text-[8px] opacity-60 hidden md:inline">• SW Aktif</span>
-                )}
               </div>
             </div>
           </div>

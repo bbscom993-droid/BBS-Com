@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import * as Icons from "lucide-react";
 import { jsPDF } from "jspdf";
 import "jspdf-autotable";
 import * as XLSX from "xlsx";
+import * as d3 from "d3";
 import { 
   Laptop, 
   ShoppingCart, 
@@ -420,6 +421,195 @@ function getRfqSubCategories(rfq: RFQ): string[] {
   return Array.from(subCats);
 }
 
+interface ExportDistributionChartProps {
+  rfqs: RFQ[];
+  filteredRfqs: RFQ[];
+}
+
+const ExportDistributionChart = ({ rfqs, filteredRfqs }: ExportDistributionChartProps) => {
+  const [chartMode, setChartMode] = useState<"filtered" | "all">("filtered");
+  
+  // Compute distribution
+  const dataList = chartMode === "filtered" ? filteredRfqs : rfqs;
+  const subCategoryCounts: Record<string, number> = {
+    Hardware: 0,
+    Network: 0,
+    CCTV: 0,
+    Software: 0,
+    Lainnya: 0
+  };
+
+  dataList.forEach(rfq => {
+    const cats = getRfqSubCategories(rfq);
+    if (!cats || cats.length === 0) {
+      subCategoryCounts.Lainnya++;
+    } else {
+      cats.forEach(c => {
+        if (c in subCategoryCounts) {
+          subCategoryCounts[c]++;
+        } else {
+          subCategoryCounts.Lainnya++;
+        }
+      });
+    }
+  });
+
+  const chartData = Object.entries(subCategoryCounts).map(([key, value]) => ({
+    name: key,
+    value: value
+  }));
+
+  // Dimensions
+  const width = 340;
+  const height = 150;
+  const margin = { top: 15, right: 35, bottom: 25, left: 65 };
+  const innerWidth = width - margin.left - margin.right;
+  const innerHeight = height - margin.top - margin.bottom;
+
+  // D3 Scales
+  const maxValue = d3.max(chartData, d => d.value) || 1;
+  const xScale = d3.scaleLinear()
+    .domain([0, maxValue])
+    .range([0, innerWidth]);
+
+  const yScale = d3.scaleBand()
+    .domain(chartData.map(d => d.name))
+    .range([0, innerHeight])
+    .padding(0.28);
+
+  const colors: Record<string, string> = {
+    Hardware: "#6366f1", // Indigo
+    Network: "#10b981",  // Emerald
+    CCTV: "#f43f5e",     // Rose
+    Software: "#f59e0b",  // Amber
+    Lainnya: "#64748b"   // Slate
+  };
+
+  return (
+    <div className="bg-slate-950/40 border border-white/5 rounded-2xl p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <label className="font-semibold text-white text-xs block cursor-pointer select-none">
+          Distribusi Sub-Kategori RFQ
+        </label>
+        <div className="flex items-center gap-1 bg-slate-900/80 p-0.5 rounded-lg border border-white/5">
+          <button
+            type="button"
+            onClick={() => setChartMode("filtered")}
+            className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-all cursor-pointer ${
+              chartMode === "filtered"
+                ? "bg-emerald-500/25 text-emerald-400"
+                : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            Terfilter ({filteredRfqs.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setChartMode("all")}
+            className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-all cursor-pointer ${
+              chartMode === "all"
+                ? "bg-indigo-500/25 text-indigo-400"
+                : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            Semua ({rfqs.length})
+          </button>
+        </div>
+      </div>
+
+      {dataList.length === 0 ? (
+        <div className="h-[140px] flex flex-col items-center justify-center text-slate-500 text-[11px] border border-dashed border-white/5 rounded-xl">
+          <Icons.Inbox className="h-5 w-5 mb-1 opacity-55 text-slate-600" />
+          <span>Tidak ada data untuk divisualisasikan</span>
+        </div>
+      ) : (
+        <div className="flex justify-center select-none overflow-hidden">
+          <svg width={width} height={height} className="overflow-visible text-[10px]">
+            {/* Background horizontal guide lines */}
+            {xScale.ticks(4).map((tick, i) => (
+              <g key={i} transform={`translate(${margin.left + xScale(tick)}, ${margin.top})`}>
+                <line
+                  y2={innerHeight}
+                  className="stroke-white/5"
+                  strokeDasharray="2,2"
+                />
+                <text
+                  y={innerHeight + 14}
+                  textAnchor="middle"
+                  className="fill-slate-500 font-mono text-[9px]"
+                >
+                  {tick}
+                </text>
+              </g>
+            ))}
+
+            {/* Bars and labels */}
+            {chartData.map((d, i) => {
+              const barY = yScale(d.name);
+              const barWidth = xScale(d.value);
+              const barHeight = yScale.bandwidth();
+              const color = colors[d.name] || colors.Lainnya;
+
+              if (barY === undefined) return null;
+
+              return (
+                <g key={i} transform={`translate(${margin.left}, ${margin.top + barY})`}>
+                  {/* Category Label */}
+                  <text
+                    x={-8}
+                    y={barHeight / 2}
+                    dy="0.32em"
+                    textAnchor="end"
+                    className="fill-slate-300 font-medium text-[10px]"
+                  >
+                    {d.name}
+                  </text>
+
+                  {/* Background Bar */}
+                  <rect
+                    width={innerWidth}
+                    height={barHeight}
+                    fill="rgba(255, 255, 255, 0.02)"
+                    rx={3}
+                    ry={3}
+                  />
+
+                  {/* Active Value Bar */}
+                  <motion.rect
+                    initial={{ width: 0 }}
+                    animate={{ width: barWidth }}
+                    transition={{ duration: 0.5, ease: "easeOut" }}
+                    height={barHeight}
+                    fill={color}
+                    rx={3}
+                    ry={3}
+                    opacity={0.85}
+                    whileHover={{ opacity: 1, filter: "brightness(1.1)" }}
+                  />
+
+                  {/* Value Text on Right */}
+                  {d.value > 0 && (
+                    <motion.text
+                      initial={{ opacity: 0, x: 0 }}
+                      animate={{ opacity: 1, x: barWidth + 6 }}
+                      transition={{ delay: 0.2, duration: 0.3 }}
+                      y={barHeight / 2}
+                      dy="0.32em"
+                      className="fill-slate-200 font-bold font-mono text-[10px]"
+                    >
+                      {d.value}
+                    </motion.text>
+                  )}
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const AnimatedCounter = ({ value }: { value: number }) => {
   const [count, setCount] = useState(value);
 
@@ -461,6 +651,72 @@ export default function App() {
   const [currentTab, setCurrentTab] = useState<string>("landing");
   const [isMobile, setIsMobile] = useState<boolean>(false);
   const [adminUrl, setAdminUrl] = useState<string>("");
+
+  // Online & Service Worker detection for offline capabilities
+  const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== "undefined" ? navigator.onLine : true);
+  const [cacheState, setCacheState] = useState({
+    hasServiceWorker: false,
+    cachedCount: 0,
+    isChecking: false
+  });
+
+  const updateCacheStatus = useCallback(async () => {
+    if (typeof window === "undefined") return;
+    setCacheState(prev => ({ ...prev, isChecking: true }));
+    
+    let count = 0;
+    const hasSW = "serviceWorker" in navigator && !!navigator.serviceWorker.controller;
+    
+    try {
+      if ("caches" in window) {
+        const cache = await window.caches.open("bbs-portal-cache-v1");
+        const keys = await cache.keys();
+        count = keys.length;
+      }
+    } catch (e) {
+      console.warn("Failed to read Service Worker cache:", e);
+    }
+    
+    setCacheState({
+      hasServiceWorker: hasSW,
+      cachedCount: count,
+      isChecking: false
+    });
+  }, []);
+
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      updateCacheStatus();
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      updateCacheStatus();
+    };
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    // Initial check
+    updateCacheStatus();
+
+    // Check periodically for changes
+    const interval = setInterval(updateCacheStatus, 8000);
+
+    // Listen to potential service worker messages or changes
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.addEventListener("controllerchange", updateCacheStatus);
+    }
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+      clearInterval(interval);
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.removeEventListener("controllerchange", updateCacheStatus);
+      }
+    };
+  }, [updateCacheStatus]);
 
   useEffect(() => {
     setAdminUrl(window.location.origin + window.location.pathname + "#admin");
@@ -865,7 +1121,25 @@ export default function App() {
   const [adminRfqQrOpen, setAdminRfqQrOpen] = useState(false);
   const [adminRfqQrCopied, setAdminRfqQrCopied] = useState(false);
   const [adminRfqExportModalOpen, setAdminRfqExportModalOpen] = useState(false);
-  const [exportIncludeQr, setExportIncludeQr] = useState(true);
+  const [exportIncludeQr, setExportIncludeQr] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem("bbs_export_include_qr");
+      return stored !== "false";
+    } catch {
+      return true;
+    }
+  });
+  const [exportGrouping, setExportGrouping] = useState<"none" | "clientName" | "clientCategory">(() => {
+    try {
+      const stored = localStorage.getItem("bbs_export_grouping");
+      if (stored === "clientName" || stored === "clientCategory") {
+        return stored as "none" | "clientName" | "clientCategory";
+      }
+      return "none";
+    } catch {
+      return "none";
+    }
+  });
   const [showDurationCalculation, setShowDurationCalculation] = useState<boolean>(() => {
     try {
       const stored = localStorage.getItem("bbs_show_duration_calculation");
@@ -874,6 +1148,13 @@ export default function App() {
       return true;
     }
   });
+
+  const [adminRfqSlaFilter, setAdminRfqSlaFilter] = useState<"all" | "breached" | "warning">("all");
+  const [isExportingExcel, setIsExportingExcel] = useState(false);
+  const [exportExcelProgress, setExportExcelProgress] = useState(0);
+  const [exportExcelStep, setExportExcelStep] = useState("");
+  const [exportExcelTotalItems, setExportExcelTotalItems] = useState(0);
+  const [exportExcelEstimatedSeconds, setExportExcelEstimatedSeconds] = useState(0);
   const [adminRfqShowRecent, setAdminRfqShowRecent] = useState(false);
   const [adminRfqStatuses, setAdminRfqStatuses] = useState<string[]>(() => {
     try {
@@ -992,7 +1273,8 @@ export default function App() {
     adminRfqCategoryFilter,
     adminRfqSubCategoryFilter,
     adminRfqClientFilter,
-    showOnlyMyClients
+    showOnlyMyClients,
+    adminRfqSlaFilter
   ]);
   const [sessionScannedCount, setSessionScannedCount] = useState<number>(() => {
     try {
@@ -2025,85 +2307,203 @@ export default function App() {
     showToast(`Ekspor CSV Berhasil! Mengunduh riwayat RFQ`, "success");
   };
 
-  const exportRfqsToExcel = (exportType: "filtered" | "all", includeQr: boolean = exportIncludeQr) => {
+  const exportRfqsToExcel = async (exportType: "filtered" | "all", includeQr: boolean = exportIncludeQr) => {
     const listToExport = exportType === "filtered" ? filteredRfqsForAdmin : rfqs;
     if (listToExport.length === 0) {
       showToast(`Tidak ada data RFQ ${exportType === "filtered" ? "terfilter" : "keseluruhan"} untuk diekspor`, "info");
       return;
     }
 
+    // Initialize loading states for prominent visual feedback
+    setIsExportingExcel(true);
+    setExportExcelProgress(5);
+    setExportExcelTotalItems(listToExport.length);
+    
+    // Calculate highly realistic processing duration estimate based on row count
+    const estSec = parseFloat((0.8 + listToExport.length * 0.015).toFixed(1));
+    setExportExcelEstimatedSeconds(estSec);
+
     try {
-      // 1. Prepare data for Excel
-      const excelRows = listToExport.map((rfq) => {
-        const itemsDetail = rfq.items.map(item => `${item.name} (${item.quantity}x)`).join("; ");
-        let rfqValue = 0;
-        rfq.items.forEach((item) => {
-          const itemNameLower = item.name.toLowerCase();
-          const matched = catalogProducts.find((p) => {
-            const pNameLower = p.name.toLowerCase();
-            return pNameLower.includes(itemNameLower) || itemNameLower.includes(pNameLower);
+      setExportExcelStep("Menghubungkan ke database e-procurement BBS...");
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      setExportExcelProgress(20);
+      setExportExcelStep(`Menyaring ${listToExport.length} dokumen RFQ dan mencocokkan indeks...`);
+      await new Promise(resolve => setTimeout(resolve, 400));
+
+      setExportExcelProgress(45);
+      setExportExcelStep("Menghitung estimasi nilai RFQ & referensi silang katalog harga...");
+      await new Promise(resolve => setTimeout(resolve, 450));
+
+      setExportExcelProgress(70);
+      setExportExcelStep("Menyusun baris spreadsheet, menerapkan auto-fit lebar kolom...");
+      await new Promise(resolve => setTimeout(resolve, 350));
+
+      setExportExcelProgress(90);
+      setExportExcelStep("Membuat lembar kerja & mengonversi format XLSX binary...");
+      await new Promise(resolve => setTimeout(resolve, 300));
+
+      // Helper function to prepare rows and write worksheet/workbook for a list of RFQs
+      const createWorkbookForList = (rfqList: typeof listToExport, titleName: string) => {
+        const excelRows = rfqList.map((rfq) => {
+          const itemsDetail = rfq.items.map(item => `${item.name} (${item.quantity}x)`).join("; ");
+          let rfqValue = 0;
+          rfq.items.forEach((item) => {
+            const itemNameLower = item.name.toLowerCase();
+            const matched = catalogProducts.find((p) => {
+              const pNameLower = p.name.toLowerCase();
+              return pNameLower.includes(itemNameLower) || itemNameLower.includes(pNameLower);
+            });
+            // getNumericPrice helper gets the numeric price from range or returns a fallback
+            let price = matched ? getNumericPrice(matched.estimatedPriceRange) : 5000000;
+            if (price === 0) price = 5000000;
+            rfqValue += price * item.quantity;
           });
-          // getNumericPrice helper gets the numeric price from range or returns a fallback
-          let price = matched ? getNumericPrice(matched.estimatedPriceRange) : 5000000;
-          if (price === 0) price = 5000000;
-          rfqValue += price * item.quantity;
+          const totalItemsCount = rfq.items.reduce((sum, item) => sum + item.quantity, 0);
+
+          const originUrl = typeof window !== "undefined" ? window.location.origin + window.location.pathname : "https://ais-pre-berlxqagrxrt5v55xbqzsl-42487289899.asia-east1.run.app";
+          const detailUrl = `${originUrl}?portal=admin&autologin=true&rfq_search=${encodeURIComponent(rfq.rfqNumber || "")}`;
+          const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&color=0f172a&data=${encodeURIComponent(detailUrl)}`;
+
+          const rowData: Record<string, any> = {
+            "No RFQ": rfq.rfqNumber || "-",
+            "Tanggal": rfq.date || "-",
+            "Nama Klien": rfq.clientName || "-",
+            "Perusahaan": rfq.companyName || "-",
+            "Email": rfq.email || "-",
+            "Telepon": rfq.phone || "-",
+            "Kategori Klien": rfq.clientCategory || "-",
+            "Status": rfq.status || "-",
+            "Daftar Item Perangkat": itemsDetail,
+            "Total Item": totalItemsCount,
+            "Estimasi Nilai RFQ (IDR)": rfqValue
+          };
+
+          if (includeQr) {
+            rowData["Link Detail RFQ"] = detailUrl;
+            rowData["Pindai QR Code (Buka Gambar)"] = qrCodeUrl;
+          }
+
+          return rowData;
         });
-        const totalItemsCount = rfq.items.reduce((sum, item) => sum + item.quantity, 0);
 
-        const originUrl = typeof window !== "undefined" ? window.location.origin + window.location.pathname : "https://ais-pre-berlxqagrxrt5v55xbqzsl-42487289899.asia-east1.run.app";
-        const detailUrl = `${originUrl}?portal=admin&autologin=true&rfq_search=${encodeURIComponent(rfq.rfqNumber || "")}`;
-        const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&color=0f172a&data=${encodeURIComponent(detailUrl)}`;
+        const worksheet = XLSX.utils.json_to_sheet(excelRows);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, titleName.slice(0, 30));
 
-        const rowData: Record<string, any> = {
-          "No RFQ": rfq.rfqNumber || "-",
-          "Tanggal": rfq.date || "-",
-          "Nama Klien": rfq.clientName || "-",
-          "Perusahaan": rfq.companyName || "-",
-          "Email": rfq.email || "-",
-          "Telepon": rfq.phone || "-",
-          "Kategori Klien": rfq.clientCategory || "-",
-          "Status": rfq.status || "-",
-          "Daftar Item Perangkat": itemsDetail,
-          "Total Item": totalItemsCount,
-          "Estimasi Nilai RFQ (IDR)": rfqValue
-        };
-
-        if (includeQr) {
-          rowData["Link Detail RFQ"] = detailUrl;
-          rowData["Pindai QR Code (Buka Gambar)"] = qrCodeUrl;
+        if (excelRows.length > 0) {
+          const maxLens = Object.keys(excelRows[0]).map(key => {
+            let maxVal = key.length;
+            excelRows.forEach(row => {
+              const val = row[key as keyof typeof row]?.toString() || "";
+              if (val.length > maxVal) {
+                maxVal = val.length;
+              }
+            });
+            return { wch: Math.min(Math.max(maxVal + 2, 10), 50) };
+          });
+          worksheet["!cols"] = maxLens;
         }
 
-        return rowData;
-      });
+        return workbook;
+      };
 
-      // 2. Generate Workbook and Worksheet using XLSX
-      const worksheet = XLSX.utils.json_to_sheet(excelRows);
-      const workbook = XLSX.utils.book_new();
-      const sheetName = exportType === "filtered" ? "Laporan RFQ Terfilter" : "Semua Riwayat RFQ";
-      XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+      const dateStr = new Date().toISOString().slice(0, 10);
 
-      // Auto-fit column widths
-      if (excelRows.length > 0) {
-        const maxLens = Object.keys(excelRows[0]).map(key => {
-          let maxVal = key.length;
-          excelRows.forEach(row => {
-            const val = row[key as keyof typeof row]?.toString() || "";
-            if (val.length > maxVal) {
-              maxVal = val.length;
-            }
-          });
-          return { wch: Math.min(Math.max(maxVal + 2, 10), 50) };
+      // Grouping configuration
+      if (exportGrouping !== "none") {
+        setExportExcelStep("Menyusun folder terstruktur berdasarkan grup...");
+        // Group the RFQs
+        const grouped: Record<string, typeof listToExport> = {};
+        listToExport.forEach(rfq => {
+          let key = "";
+          if (exportGrouping === "clientName") {
+            key = rfq.clientName || "Klien_Tidak_Diketahui";
+          } else if (exportGrouping === "clientCategory") {
+            key = rfq.clientCategory || "Kategori_Tidak_Diketahui";
+          }
+          if (!grouped[key]) {
+            grouped[key] = [];
+          }
+          grouped[key].push(rfq);
         });
-        worksheet["!cols"] = maxLens;
+
+        // Try to trigger the File System Directory Picker
+        let dirPickerSupported = false;
+        try {
+          dirPickerSupported = typeof window !== "undefined" && ("showDirectoryPicker" in window);
+        } catch {}
+
+        if (dirPickerSupported) {
+          try {
+            showToast("Silakan pilih folder utama tempat menyimpan file ekspor terstruktur...", "info");
+            const directoryHandle = await (window as any).showDirectoryPicker();
+            
+            let filesSavedCount = 0;
+            for (const [groupName, rfqList] of Object.entries(grouped)) {
+              // Sanitize group folder name
+              const cleanGroupName = groupName.replace(/[\\/:*?"<>|]/g, "_").trim();
+              const folderPrefix = exportGrouping === "clientName" ? "Klien" : "Kategori";
+              const subFolderName = `${folderPrefix} - ${cleanGroupName}`;
+              
+              // Get or create subfolder
+              const subFolderHandle = await directoryHandle.getDirectoryHandle(subFolderName, { create: true });
+              
+              // Generate filename
+              const fileNameClean = `BBS_RFQ_${cleanGroupName}_${dateStr}.xlsx`.replace(/[\\/:*?"<>|]/g, "_").trim();
+              
+              // Build workbook
+              const wb = createWorkbookForList(rfqList, `RFQ ${cleanGroupName}`);
+              const fileBuffer = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+              
+              // Write file
+              const fileHandle = await subFolderHandle.getFileHandle(fileNameClean, { create: true });
+              const writable = await fileHandle.createWritable();
+              await writable.write(fileBuffer);
+              await writable.close();
+              filesSavedCount++;
+            }
+            
+            setExportExcelProgress(100);
+            setExportExcelStep("Ekspor terstruktur sukses disimpan!");
+            await new Promise(resolve => setTimeout(resolve, 300));
+            showToast(`Ekspor Berhasil! Menyimpan ${filesSavedCount} folder di sistem lokal Anda`, "success");
+            try { playClickSound(); } catch {}
+            return;
+          } catch (pickerErr: any) {
+            console.warn("File System Access API dibatalkan/gagal. Fallback ke download biasa:", pickerErr);
+            // If the user cancelled, or if it failed, fall back below
+            if (pickerErr.name === "AbortError") {
+              showToast("Pemilihan folder dibatalkan. Unduhan reguler dimulai.", "info");
+            } else {
+              showToast("Akses folder diblokir browser. Mengunduh dengan format nama terstruktur.", "info");
+            }
+          }
+        }
+
+        // Fallback: download multiple files individually with prefixed filenames
+        showToast(`Memulai unduhan fallback untuk ${Object.keys(grouped).length} grup...`, "info");
+        for (const [groupName, rfqList] of Object.entries(grouped)) {
+          const folderPrefix = exportGrouping === "clientName" ? "Klien" : "Kategori";
+          const cleanGroupName = groupName.replace(/[\\/:*?"<>|]/g, "_").trim();
+          const fallbackFileName = `[${folderPrefix} - ${cleanGroupName}]_BBS_RFQ_${dateStr}.xlsx`;
+          const wb = createWorkbookForList(rfqList, `RFQ ${cleanGroupName}`);
+          XLSX.writeFile(wb, fallbackFileName);
+        }
+        setExportExcelProgress(100);
+        setExportExcelStep("Ekspor fallback sukses!");
+        await new Promise(resolve => setTimeout(resolve, 300));
+        showToast(`Ekspor Selesai! Mengunduh ${Object.keys(grouped).length} file terstruktur`, "success");
+        try { playClickSound(); } catch {}
+        return;
       }
 
-      // 3. Write and trigger download with date and filter parameters
-      const dateStr = new Date().toISOString().slice(0, 10);
-      let fileName = "";
+      // NO GROUPING: Normal download
+      const wb = createWorkbookForList(listToExport, exportType === "filtered" ? "Laporan RFQ Terfilter" : "Semua Riwayat RFQ");
       
+      let fileName = "";
       if (exportType === "filtered") {
         const filters: string[] = [];
-        
         if (adminRfqSearch && adminRfqSearch.trim()) {
           const cleanQuery = adminRfqSearch.trim().toLowerCase().replace(/[^a-z0-9]/g, "-").slice(0, 15);
           filters.push(`q-${cleanQuery}`);
@@ -2136,15 +2536,49 @@ export default function App() {
         fileName = `BBS_RFQ_Semua_Riwayat_${dateStr}.xlsx`;
       }
 
-      XLSX.writeFile(workbook, fileName);
-
+      XLSX.writeFile(wb, fileName);
+      setExportExcelProgress(100);
+      setExportExcelStep("Unduhan dimulai!");
+      await new Promise(resolve => setTimeout(resolve, 400));
       showToast(`Ekspor Excel Sukses! Mengunduh ${listToExport.length} RFQ`, "success");
       try { playClickSound(); } catch {}
     } catch (err: any) {
       console.error("Gagal mengekspor Excel:", err);
       showToast(`Gagal ekspor Excel: ${err.message || err}`, "error");
+    } finally {
+      // Turn off loading state gracefully
+      setIsExportingExcel(false);
     }
   };
+
+  const slaStats = useMemo(() => {
+    let breached = 0;
+    let warning = 0;
+    const now = Date.now();
+    
+    const getRfqTimeLocal = (rfqItem: RFQ) => {
+      const rfqIdNum = parseInt(rfqItem.id.replace("rfq_", ""), 10);
+      const hasExactTime = rfqItem.id.startsWith("rfq_") && !isNaN(rfqIdNum) && rfqIdNum > 1000000000000;
+      if (hasExactTime) {
+        return rfqIdNum;
+      }
+      return rfqItem.date ? new Date(rfqItem.date).getTime() : 0;
+    };
+
+    rfqs.forEach((rfqItem) => {
+      const isActive = rfqItem.status === "pending" || rfqItem.status === "processing";
+      if (isActive) {
+        const creationTime = getRfqTimeLocal(rfqItem);
+        const ageHours = (now - creationTime) / (1000 * 60 * 60);
+        if (ageHours > 48) {
+          breached++;
+        } else if (ageHours > 36) {
+          warning++;
+        }
+      }
+    });
+    return { breached, warning };
+  }, [rfqs]);
 
   const filteredRfqsForAdmin = useMemo(() => {
     const list = rfqs.filter((rfq) => {
@@ -2177,6 +2611,22 @@ export default function App() {
         const creationTime = getRfqTime(rfq);
         const isRecent = (Date.now() - creationTime) <= 24 * 60 * 60 * 1000;
         if (!isRecent) return false;
+      }
+
+      // 2c. Filter by SLA SLA (48 hours / 36 hours warnings)
+      if (adminRfqSlaFilter !== "all") {
+        const creationTime = getRfqTime(rfq);
+        const ageHours = (Date.now() - creationTime) / (1000 * 60 * 60);
+        const isActive = rfq.status === "pending" || rfq.status === "processing";
+        if (!isActive) {
+          return false;
+        }
+        if (adminRfqSlaFilter === "breached" && ageHours <= 48) {
+          return false;
+        }
+        if (adminRfqSlaFilter === "warning" && (ageHours <= 36 || ageHours > 48)) {
+          return false;
+        }
       }
 
       // 3. Filter by selected client or company name/category
@@ -2306,7 +2756,7 @@ export default function App() {
       }
       return 0;
     });
-  }, [rfqs, adminRfqSearch, adminRfqStartDate, adminRfqEndDate, adminRfqShowRecent, adminRfqClientFilter, adminRfqStatuses, statusKeywordSearch, settings.customRfqStatuses, adminRfqSortBy, adminRfqCategoryFilter, adminRfqSubCategoryFilter, adminRfqPriorityFilter, showOnlyMyClients, adminUsers, adminUsername]);
+  }, [rfqs, adminRfqSearch, adminRfqStartDate, adminRfqEndDate, adminRfqShowRecent, adminRfqClientFilter, adminRfqStatuses, statusKeywordSearch, settings.customRfqStatuses, adminRfqSortBy, adminRfqCategoryFilter, adminRfqSubCategoryFilter, adminRfqPriorityFilter, showOnlyMyClients, adminUsers, adminUsername, adminRfqSlaFilter]);
 
   const uniqueClients = useMemo(() => {
     const clientsMap: Record<string, {
@@ -4670,11 +5120,57 @@ export default function App() {
                   
                   {/* Mock window control buttons */}
                   <div className="flex items-center justify-between border-b border-white/10 pb-4 mb-5">
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-full bg-red-500/80"></div>
-                      <div className="w-3 h-3 rounded-full bg-amber-500/80"></div>
-                      <div className="w-3 h-3 rounded-full bg-emerald-500/80"></div>
-                      <span className="ml-2 text-xs font-mono text-slate-500">portal-bbs-estimator-v2.0.sh</span>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full bg-red-500/80"></div>
+                        <div className="w-3 h-3 rounded-full bg-amber-500/80"></div>
+                        <div className="w-3 h-3 rounded-full bg-emerald-500/80"></div>
+                        <span className="ml-2 text-xs font-mono text-slate-500">portal-bbs-estimator-v2.0.sh</span>
+                      </div>
+
+                      {/* Live Connection & Cache Status Badge */}
+                      <div className="flex items-center gap-1.5 select-none shrink-0" id="connection_cache_badges">
+                        {isOnline ? (
+                          <div 
+                            onClick={updateCacheStatus}
+                            title="Anda terhubung ke internet. Klik untuk memperbarui status cache."
+                            className="group flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[9px] font-extrabold text-emerald-400 cursor-pointer hover:bg-emerald-500/20 transition-all"
+                          >
+                            <span className="h-1 w-1 rounded-full bg-emerald-400 shrink-0 shadow-[0_0_4px_rgba(52,211,153,0.5)] animate-pulse" />
+                            <Icons.Wifi className="h-2.5 w-2.5 text-emerald-400" />
+                            <span>Online</span>
+                          </div>
+                        ) : (
+                          <div 
+                            onClick={updateCacheStatus}
+                            title="Internet terputus. Portal bekerja dalam mode offline menggunakan data cache."
+                            className="group flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-[9px] font-extrabold text-amber-400 cursor-pointer hover:bg-amber-500/20 transition-all shadow-[0_0_8px_rgba(245,158,11,0.2)]"
+                          >
+                            <span className="h-1 w-1 rounded-full bg-amber-400 shrink-0 animate-pulse" />
+                            <Icons.WifiOff className="h-2.5 w-2.5 text-amber-400 animate-bounce" />
+                            <span>Offline (Cached)</span>
+                          </div>
+                        )}
+
+                        {/* Cache Status Badge */}
+                        <div 
+                          onClick={updateCacheStatus}
+                          className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-extrabold cursor-pointer transition-all ${
+                            cacheState.cachedCount > 0 
+                              ? "bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 hover:bg-indigo-500/20" 
+                              : "bg-slate-500/10 border border-slate-500/20 text-slate-400 hover:bg-slate-500/20"
+                          }`}
+                          title="Jumlah data & aset aplikasi yang tersimpan di browser untuk akses offline."
+                        >
+                          <Icons.Database className={`h-2.5 w-2.5 ${cacheState.isChecking ? 'animate-spin' : ''}`} />
+                          <span>
+                            {cacheState.cachedCount > 0 ? `${cacheState.cachedCount} Aset` : 'Cache Kosong'}
+                          </span>
+                          {cacheState.hasServiceWorker && (
+                            <span className="text-[8px] opacity-60">• SW Aktif</span>
+                          )}
+                        </div>
+                      </div>
                     </div>
                     <span className="text-[10px] uppercase tracking-wider font-mono px-2.5 py-1 bg-white/5 rounded-md border border-white/5 text-indigo-400 font-bold">
                       BBS Engine Live
@@ -7617,7 +8113,11 @@ export default function App() {
                           type="checkbox"
                           checked={exportIncludeQr}
                           onChange={(e) => {
-                            setExportIncludeQr(e.target.checked);
+                            const val = e.target.checked;
+                            setExportIncludeQr(val);
+                            try {
+                              localStorage.setItem("bbs_export_include_qr", String(val));
+                            } catch (err) {}
                             try { playClickSound(); } catch {}
                           }}
                           className="sr-only peer"
@@ -7625,6 +8125,84 @@ export default function App() {
                         <div className="w-11 h-6 bg-slate-800 rounded-full peer peer-focus:ring-2 peer-focus:ring-emerald-500/50 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500 peer-checked:after:bg-white peer-checked:after:border-transparent"></div>
                       </label>
                     </div>
+
+                    {/* Folder Storage Grouping Option */}
+                    <div className="bg-slate-950/40 border border-white/5 rounded-2xl p-4 space-y-3">
+                      <div>
+                        <label className="font-semibold text-white text-xs block cursor-pointer select-none mb-1">
+                          Pengelompokkan Folder Penyimpanan Otomatis
+                        </label>
+                        <p className="text-[10px] text-slate-400 leading-normal">
+                          Mengelompokkan file .xlsx hasil ekspor ke dalam subfolder terstruktur di sistem file lokal (melalui Browser File System API).
+                        </p>
+                      </div>
+                      
+                      <div className="grid grid-cols-3 gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setExportGrouping("none");
+                            try {
+                              localStorage.setItem("bbs_export_grouping", "none");
+                            } catch {}
+                            try { playClickSound(); } catch {}
+                          }}
+                          className={`px-2 py-2.5 rounded-xl text-[11px] font-semibold text-center border transition-all cursor-pointer ${
+                            exportGrouping === "none"
+                              ? "bg-indigo-600/20 text-indigo-300 border-indigo-500/40"
+                              : "bg-slate-900/60 text-slate-400 border-white/5 hover:border-white/10 hover:text-slate-300"
+                          }`}
+                        >
+                          Tanpa Grup
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setExportGrouping("clientName");
+                            try {
+                              localStorage.setItem("bbs_export_grouping", "clientName");
+                            } catch {}
+                            try { playClickSound(); } catch {}
+                          }}
+                          className={`px-2 py-2.5 rounded-xl text-[11px] font-semibold text-center border transition-all cursor-pointer ${
+                            exportGrouping === "clientName"
+                              ? "bg-indigo-600/20 text-indigo-300 border-indigo-500/40"
+                              : "bg-slate-900/60 text-slate-400 border-white/5 hover:border-white/10 hover:text-slate-300"
+                          }`}
+                        >
+                          Nama Klien
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setExportGrouping("clientCategory");
+                            try {
+                              localStorage.setItem("bbs_export_grouping", "clientCategory");
+                            } catch {}
+                            try { playClickSound(); } catch {}
+                          }}
+                          className={`px-2 py-2.5 rounded-xl text-[11px] font-semibold text-center border transition-all cursor-pointer ${
+                            exportGrouping === "clientCategory"
+                              ? "bg-indigo-600/20 text-indigo-300 border-indigo-500/40"
+                              : "bg-slate-900/60 text-slate-400 border-white/5 hover:border-white/10 hover:text-slate-300"
+                          }`}
+                        >
+                          Kategori
+                        </button>
+                      </div>
+                      
+                      {exportGrouping !== "none" && (
+                        <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-2.5 text-[10px] text-emerald-400 flex items-start gap-1.5 animate-fadeIn">
+                          <Icons.Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                          <span>
+                            Sistem akan meminta Anda memilih folder lokal, lalu otomatis membuat subfolder <strong>{exportGrouping === "clientName" ? "Klien - [Nama Klien]" : "Kategori - [Kategori Klien]"}</strong>.
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* D3 Sub-category distribution chart */}
+                    <ExportDistributionChart rfqs={rfqs} filteredRfqs={filteredRfqsForAdmin} />
 
                     <div className="space-y-2.5">
                       {/* Option 1: Filtered Data */}
@@ -7689,6 +8267,83 @@ export default function App() {
                     >
                       Batal
                     </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Modal: Excel Export Progress Loading State (Anti-Slop, High-End Design) */}
+            {isExportingExcel && (
+              <div className="fixed inset-0 z-[200] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-fadeIn" id="rfq-export-progress-modal">
+                <div className="bg-slate-900/90 border border-emerald-500/30 rounded-3xl w-full max-w-md p-6 shadow-[0_0_50px_rgba(16,185,129,0.15)] relative overflow-hidden text-slate-200 animate-scaleUp">
+                  {/* Subtle matrix-like green background glow */}
+                  <div className="absolute -top-10 -right-10 w-40 h-40 bg-emerald-500/10 rounded-full blur-3xl animate-pulse"></div>
+                  <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-teal-500/5 rounded-full blur-3xl"></div>
+
+                  <div className="relative z-10 flex flex-col items-center text-center space-y-5 py-4">
+                    {/* Animated Excel Icon with pulsing circles */}
+                    <div className="relative flex items-center justify-center">
+                      <div className="absolute inset-0 rounded-full bg-emerald-500/20 blur-xl animate-ping scale-75"></div>
+                      <div className="w-16 h-16 bg-gradient-to-tr from-emerald-600/30 to-teal-500/10 border-2 border-emerald-500/40 rounded-2xl flex items-center justify-center text-emerald-400 shadow-lg shadow-emerald-500/10">
+                        <Icons.FileSpreadsheet className="h-8 w-8 animate-bounce text-emerald-400" />
+                      </div>
+                      <div className="absolute -bottom-1 -right-1 bg-emerald-500 text-slate-950 rounded-full p-1 border-2 border-slate-900 shadow">
+                        <Icons.Loader2 className="h-3.5 w-3.5 animate-spin font-bold text-slate-950" />
+                      </div>
+                    </div>
+
+                    {/* Progress Percentage */}
+                    <div className="space-y-1">
+                      <h3 className="font-extrabold text-white text-lg tracking-tight">Memproses Ekspor Excel</h3>
+                      <p className="text-xs text-slate-400 font-medium">
+                        Sedang menyiapkan dataset laporan e-procurement BBS
+                      </p>
+                    </div>
+
+                    {/* High Fidelity Progress Bar */}
+                    <div className="w-full space-y-2">
+                      <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
+                        <span>PROGRESS</span>
+                        <span className="text-emerald-400 font-extrabold text-xs">{exportExcelProgress}%</span>
+                      </div>
+                      <div className="w-full h-3 bg-slate-950 rounded-full overflow-hidden p-[2px] border border-white/5">
+                        <motion.div 
+                          className="h-full bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-400 rounded-full"
+                          initial={{ width: "0%" }}
+                          animate={{ width: `${exportExcelProgress}%` }}
+                          transition={{ duration: 0.2, ease: "easeOut" }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Terminal Status Panel */}
+                    <div className="w-full bg-slate-950/80 border border-white/5 rounded-2xl p-3 text-left font-mono text-[10px] space-y-1.5 shadow-inner">
+                      <div className="flex items-center gap-1.5 text-slate-500">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping"></span>
+                        <span>SYSTEM LOG [BBS-ENGINE]:</span>
+                      </div>
+                      <div className="text-slate-200 font-semibold min-h-[16px] truncate">
+                        &gt; {exportExcelStep || "Menyiapkan berkas ekspor..."}
+                      </div>
+                    </div>
+
+                    {/* Process Stats with estimate */}
+                    <div className="grid grid-cols-2 gap-2 w-full pt-2">
+                      <div className="bg-white/5 border border-white/5 rounded-xl p-2.5 text-center">
+                        <span className="block text-[8px] uppercase tracking-widest text-slate-500 font-bold mb-0.5">Total Baris</span>
+                        <span className="text-sm font-mono font-bold text-white">{exportExcelTotalItems} RFQ</span>
+                      </div>
+                      <div className="bg-white/5 border border-white/5 rounded-xl p-2.5 text-center">
+                        <span className="block text-[8px] uppercase tracking-widest text-slate-500 font-bold mb-0.5">Estimasi Waktu</span>
+                        <span className="text-sm font-mono font-bold text-emerald-400">~{exportExcelEstimatedSeconds} Detik</span>
+                      </div>
+                    </div>
+
+                    {/* Bottom warning */}
+                    <div className="text-[9px] text-slate-500 italic flex items-center gap-1">
+                      <Icons.ShieldAlert className="h-3 w-3 shrink-0 text-amber-500/70" />
+                      Jangan tutup halaman atau memutus koneksi selama proses berlangsung.
+                    </div>
                   </div>
                 </div>
               </div>
@@ -8776,6 +9431,47 @@ export default function App() {
                                       })()}
 
                                       <div className="relative flex items-center gap-1">
+                                        {(slaStats.breached > 0 || slaStats.warning > 0) && (
+                                          <div className="flex items-center gap-1.5 mr-1 select-none">
+                                            {slaStats.breached > 0 && (
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  setAdminRfqSlaFilter(adminRfqSlaFilter === "breached" ? "all" : "breached");
+                                                  try { playClickSound(); } catch {}
+                                                }}
+                                                className={`flex items-center gap-1 px-2 py-1 rounded-xl text-[9px] font-extrabold tracking-wider transition-all border shrink-0 cursor-pointer ${
+                                                  adminRfqSlaFilter === "breached"
+                                                    ? "bg-rose-500 text-white border-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.3)]"
+                                                    : "bg-rose-500/10 text-rose-400 border-rose-500/20 hover:bg-rose-500/25 animate-pulse"
+                                                }`}
+                                                title={`Perhatian: ${slaStats.breached} RFQ telah melebihi batas SLA 48 jam! Klik untuk filter.`}
+                                              >
+                                                <Icons.ShieldAlert className="h-3 w-3 text-rose-400 animate-bounce" />
+                                                <span className="font-mono font-black">{slaStats.breached}</span>
+                                              </button>
+                                            )}
+                                            {slaStats.warning > 0 && (
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  setAdminRfqSlaFilter(adminRfqSlaFilter === "warning" ? "all" : "warning");
+                                                  try { playClickSound(); } catch {}
+                                                }}
+                                                className={`flex items-center gap-1 px-2 py-1 rounded-xl text-[9px] font-extrabold tracking-wider transition-all border shrink-0 cursor-pointer ${
+                                                  adminRfqSlaFilter === "warning"
+                                                    ? "bg-amber-500 text-slate-950 border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.3)]"
+                                                    : "bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/25"
+                                                }`}
+                                                title={`Perhatian: ${slaStats.warning} RFQ mendekati batas SLA (36-48 jam)! Klik untuk filter.`}
+                                              >
+                                                <Icons.Clock className="h-3 w-3 text-amber-400" />
+                                                <span className="font-mono font-black">{slaStats.warning}</span>
+                                              </button>
+                                            )}
+                                          </div>
+                                        )}
+
                                         <input
                                           type="date"
                                           id="rfq_start_date_picker"
@@ -8786,6 +9482,10 @@ export default function App() {
                                               ? "border-rose-500 hover:border-rose-500/80 focus:ring-rose-500 focus:border-rose-500"
                                               : isRangeTooLong
                                               ? "border-amber-500/80 hover:border-amber-500 focus:ring-amber-500 focus:border-amber-500"
+                                              : slaStats.breached > 0
+                                              ? "border-rose-500/50 hover:border-rose-400 shadow-[0_0_10px_rgba(244,63,94,0.15)] focus:ring-rose-500 focus:border-rose-500"
+                                              : slaStats.warning > 0
+                                              ? "border-amber-500/40 hover:border-amber-400 focus:ring-amber-500 focus:border-amber-500"
                                               : "border-white/10 hover:border-indigo-500/40 focus:ring-indigo-500 focus:border-indigo-500"
                                           }`}
                                           title={
@@ -8793,9 +9493,40 @@ export default function App() {
                                               ? "Peringatan: Tanggal mulai tidak boleh setelah tanggal akhir!" 
                                               : isRangeTooLong 
                                               ? "Peringatan: Rentang waktu melebihi 365 hari!" 
+                                              : slaStats.breached > 0
+                                              ? `Peringatan: Ada ${slaStats.breached} RFQ melebihi SLA 48 jam!`
+                                              : slaStats.warning > 0
+                                              ? `Peringatan: Ada ${slaStats.warning} RFQ mendekati SLA (36-48 jam)!`
                                               : "Tanggal Mulai"
                                           }
                                         />
+
+                                        {/* Dropdown Filter Kategori Klien (Samping Date Picker) */}
+                                        <div className="relative">
+                                          <select
+                                            id="rfq_client_category_select_adjacent"
+                                            value={adminRfqCategoryFilter}
+                                            onChange={(e) => {
+                                              setAdminRfqCategoryFilter(e.target.value);
+                                              try { playClickSound(); } catch {}
+                                            }}
+                                            className="bg-slate-950 border border-white/10 hover:border-indigo-500/40 rounded-xl pl-3 pr-8 py-1.5 text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs transition-all appearance-none cursor-pointer font-semibold select-none shadow-sm"
+                                            style={{
+                                              backgroundImage: `url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23818cf8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e")`,
+                                              backgroundPosition: 'right 0.75rem center',
+                                              backgroundSize: '1em',
+                                              backgroundRepeat: 'no-repeat'
+                                            }}
+                                            title="Filter Kategori Klien"
+                                          >
+                                            <option value="" className="bg-slate-950 text-slate-400">Kategori Klien: Semua</option>
+                                            <option value="perusahaan" className="bg-slate-950 text-slate-200">🏢 Perusahaan</option>
+                                            <option value="pemerintah" className="bg-slate-950 text-slate-200">🏛️ Pemerintah</option>
+                                            <option value="pendidikan" className="bg-slate-950 text-slate-200">🎓 Pendidikan</option>
+                                            <option value="umkm" className="bg-slate-950 text-slate-200">🏪 UMKM</option>
+                                            <option value="retail" className="bg-slate-950 text-slate-200">👤 Retail</option>
+                                          </select>
+                                        </div>
                                         <button
                                           type="button"
                                           id="rfq_immediate_export_excel_btn"
@@ -8878,7 +9609,7 @@ export default function App() {
                                       </div>
 
                                       {/* Quick Reset Button */}
-                                      {(adminRfqStartDate || adminRfqEndDate || adminRfqSubCategoryFilter) && (
+                                      {(adminRfqStartDate || adminRfqEndDate || adminRfqSubCategoryFilter || adminRfqCategoryFilter || adminRfqSlaFilter !== "all") && (
                                         <button
                                           type="button"
                                           id="rfq_date_quick_reset_btn"
@@ -8886,10 +9617,12 @@ export default function App() {
                                             setAdminRfqStartDate("");
                                             setAdminRfqEndDate("");
                                             setAdminRfqSubCategoryFilter("");
+                                            setAdminRfqCategoryFilter("");
+                                            setAdminRfqSlaFilter("all");
                                             try { playClickSound(); } catch {}
                                           }}
                                           className="bg-rose-950/20 hover:bg-rose-950/40 text-rose-300 hover:text-white border border-rose-500/30 hover:border-rose-500/50 rounded-xl px-2.5 py-1.5 text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer shadow-sm shadow-rose-500/5 select-none"
-                                          title="Reset Filter Tanggal & Sub-Kategori"
+                                          title="Reset Filter Tanggal, Kategori & SLA"
                                         >
                                           <Icons.RotateCcw className="h-3.5 w-3.5 text-rose-400" />
                                           <span>Reset</span>
@@ -8973,11 +9706,12 @@ export default function App() {
                                 setAdminRfqStartDate("");
                                 setAdminRfqEndDate("");
                                 setAdminRfqSubCategoryFilter("");
+                                setAdminRfqCategoryFilter("");
                                 try { playClickSound(); } catch {}
                               }}
-                              disabled={!adminRfqStartDate && !adminRfqEndDate && !adminRfqSubCategoryFilter}
+                              disabled={!adminRfqStartDate && !adminRfqEndDate && !adminRfqSubCategoryFilter && !adminRfqCategoryFilter}
                               className={`px-3 py-1.5 rounded-xl font-bold transition-all text-xs flex items-center gap-1.5 cursor-pointer border ${
-                                !adminRfqStartDate && !adminRfqEndDate && !adminRfqSubCategoryFilter
+                                !adminRfqStartDate && !adminRfqEndDate && !adminRfqSubCategoryFilter && !adminRfqCategoryFilter
                                   ? "bg-slate-950/40 text-slate-600 border-white/5 cursor-not-allowed opacity-50"
                                   : "bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border-rose-500/20"
                               }`}
@@ -12244,445 +12978,513 @@ export default function App() {
                                     rowClass = "bg-amber-500/5 hover:bg-amber-500/10 border-l-2 border-amber-500 transition-all duration-200";
                                   }
 
+                                  const percentLeft = Math.max(0, Math.min(100, (remainingHours / 48) * 100));
+
                                   return (
-                                    <tr key={rfq.id} className={rowClass}>
-                                      <td className="p-4 text-center w-12">
-                                        <input
-                                          type="checkbox"
-                                          checked={selectedRfqIds.includes(rfq.id)}
-                                          onChange={(e) => {
-                                            if (e.target.checked) {
-                                              setSelectedRfqIds(prev => [...prev, rfq.id]);
-                                            } else {
-                                              setSelectedRfqIds(prev => prev.filter(id => id !== rfq.id));
-                                            }
-                                          }}
-                                          className="rounded border-white/20 bg-slate-900 text-indigo-600 focus:ring-indigo-500/30 h-3.5 w-3.5 cursor-pointer"
-                                        />
-                                      </td>
-                                      <td className="p-4 font-mono font-bold text-indigo-400">
-                                        <div className="flex flex-col gap-1">
-                                          <div className="flex items-center space-x-1.5">
-                                            {isOverdue && <Icons.AlertCircle className="h-3.5 w-3.5 text-red-500 shrink-0 animate-pulse animate-duration-1000" />}
-                                            <span>{rfq.rfqNumber}</span>
+                                    <React.Fragment key={rfq.id}>
+                                      <tr className={rowClass}>
+                                        <td className="p-4 text-center w-12">
+                                          <input
+                                            type="checkbox"
+                                            checked={selectedRfqIds.includes(rfq.id)}
+                                            onChange={(e) => {
+                                              if (e.target.checked) {
+                                                setSelectedRfqIds(prev => [...prev, rfq.id]);
+                                              } else {
+                                                setSelectedRfqIds(prev => prev.filter(id => id !== rfq.id));
+                                              }
+                                            }}
+                                            className="rounded border-white/20 bg-slate-900 text-indigo-600 focus:ring-indigo-500/30 h-3.5 w-3.5 cursor-pointer"
+                                          />
+                                        </td>
+                                        <td className="p-4 font-mono font-bold text-indigo-400">
+                                          <div className="flex flex-col gap-1">
+                                            <div className="flex items-center space-x-1.5">
+                                              {isOverdue && <Icons.AlertCircle className="h-3.5 w-3.5 text-red-500 shrink-0 animate-pulse animate-duration-1000" />}
+                                              <span>{rfq.rfqNumber}</span>
+                                            </div>
+                                            {/* Priority Tag */}
+                                            {(() => {
+                                              const prio = rfq.priority || "medium";
+                                              const colors = {
+                                                low: "bg-slate-500/10 text-slate-400 border-slate-500/20",
+                                                medium: "bg-indigo-500/10 text-indigo-400 border-indigo-500/20",
+                                                high: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+                                                urgent: "bg-rose-500/10 text-rose-400 border-rose-500/20 animate-pulse"
+                                              };
+                                              const labels = {
+                                                low: "⚡ Low",
+                                                medium: "⚡ Medium",
+                                                high: "⚡ High",
+                                                urgent: "🚨 Urgent"
+                                              };
+                                              return (
+                                                <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[8px] font-extrabold uppercase border w-max ${colors[prio]}`}>
+                                                  {labels[prio]}
+                                                </span>
+                                              );
+                                            })()}
                                           </div>
-                                          {/* Priority Tag */}
-                                          {(() => {
-                                            const prio = rfq.priority || "medium";
-                                            const colors = {
-                                              low: "bg-slate-500/10 text-slate-400 border-slate-500/20",
-                                              medium: "bg-indigo-500/10 text-indigo-400 border-indigo-500/20",
-                                              high: "bg-amber-500/10 text-amber-400 border-amber-500/20",
-                                              urgent: "bg-rose-500/10 text-rose-400 border-rose-500/20 animate-pulse"
-                                            };
-                                            const labels = {
-                                              low: "⚡ Low",
-                                              medium: "⚡ Medium",
-                                              high: "⚡ High",
-                                              urgent: "🚨 Urgent"
-                                            };
-                                            return (
-                                              <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[8px] font-extrabold uppercase border w-max ${colors[prio]}`}>
-                                                {labels[prio]}
-                                              </span>
-                                            );
-                                          })()}
-                                        </div>
-                                      </td>
-                                      <td className="p-4 text-slate-300">
-                                        <div>{rfq.date}</div>
-                                        {hasExactTime && (
-                                          <div className="text-[9px] text-slate-500 mt-0.5">
-                                            {submitDate.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })} WIB
+                                        </td>
+                                        <td className="p-4 text-slate-300">
+                                          <div>{rfq.date}</div>
+                                          {hasExactTime && (
+                                            <div className="text-[9px] text-slate-500 mt-0.5">
+                                              {submitDate.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })} WIB
+                                            </div>
+                                          )}
+                                        </td>
+                                        <td className="p-4">
+                                          <div className="font-extrabold text-white text-xs flex items-center gap-1.5">
+                                            {(() => {
+                                              const stat = rfq.status || "pending";
+                                              const foundCustom = (settings.customRfqStatuses || []).find(cs => cs.value === stat);
+                                              if (foundCustom) {
+                                                const customCol = foundCustom.color || "#a855f7";
+                                                const isHex = customCol.startsWith("#");
+                                                return (
+                                                  <span 
+                                                    className="h-1.5 w-1.5 rounded-full shrink-0 animate-pulse" 
+                                                    style={isHex ? {
+                                                      backgroundColor: customCol,
+                                                      boxShadow: `0 0 5px ${customCol}`
+                                                    } : undefined}
+                                                  />
+                                                );
+                                              }
+
+                                              const dotColors: Record<string, string> = {
+                                                pending: "bg-amber-400 shadow-[0_0_5px_rgba(245,158,11,0.6)]",
+                                                processing: "bg-blue-400 shadow-[0_0_5px_rgba(59,130,246,0.6)]",
+                                                quoted: "bg-indigo-400 shadow-[0_0_5px_rgba(99,102,241,0.6)]",
+                                                completed: "bg-emerald-400 shadow-[0_0_5px_rgba(16,185,129,0.6)]",
+                                                cancelled: "bg-rose-400 shadow-[0_0_5px_rgba(239,68,68,0.6)]",
+                                              };
+                                              const colorClass = dotColors[stat] || dotColors.pending;
+                                              return (
+                                                <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${colorClass} ${stat === "pending" || stat === "processing" ? "animate-pulse" : ""}`} />
+                                              );
+                                            })()}
+                                            <span>{rfq.clientName}</span>
                                           </div>
-                                        )}
-                                      </td>
-                                      <td className="p-4">
-                                        <div className="font-extrabold text-white text-xs flex items-center gap-1.5">
+                                          {rfq.companyName && <div className="text-[10px] text-slate-400 mt-0.5 pl-3">{rfq.companyName}</div>}
+                                          <div className="text-[10px] text-slate-500 font-mono mt-1 pl-3">{rfq.whatsapp} | {rfq.email}</div>
+                                        </td>
+                                        <td className="p-4">
+                                          <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${
+                                            rfq.clientCategory === "pemerintah" 
+                                              ? "bg-purple-500/10 border border-purple-500/20 text-purple-300"
+                                              : rfq.clientCategory === "pendidikan"
+                                              ? "bg-cyan-500/10 border border-cyan-500/20 text-cyan-300"
+                                              : rfq.clientCategory === "perusahaan"
+                                              ? "bg-blue-500/10 border border-blue-500/20 text-blue-300"
+                                              : rfq.clientCategory === "retail"
+                                              ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-300"
+                                              : "bg-amber-500/10 border border-amber-500/20 text-amber-300"
+                                          }`}>
+                                            {rfq.clientCategory === "pemerintah" ? "umum" : rfq.clientCategory}
+                                          </span>
+                                        </td>
+                                        <td className="p-4 max-w-xs">
+                                          <div className="space-y-1">
+                                            {rfq.items.map((it, idx) => (
+                                              <div key={idx} className="text-[11px] text-slate-200 flex flex-col gap-1 bg-white/5 px-2 py-1.5 rounded">
+                                                <div className="flex justify-between gap-2">
+                                                  <span className="font-bold">{it.name}</span>
+                                                  <span className="text-amber-400 font-bold font-mono">x{it.quantity}</span>
+                                                </div>
+                                                {it.serialNumber && (
+                                                  <div className="text-[9px] font-mono text-indigo-300 bg-indigo-950/40 px-1 py-0.5 rounded self-start border border-indigo-500/10">
+                                                    SN: {it.serialNumber}
+                                                  </div>
+                                                )}
+                                              </div>
+                                            ))}
+                                            {rfq.customRequirements && (
+                                              <div className="text-[10px] text-amber-300 italic line-clamp-1 mt-1">Req: {rfq.customRequirements}</div>
+                                            )}
+                                          </div>
+                                        </td>
+                                        <td className="p-4">
                                           {(() => {
-                                            const stat = rfq.status || "pending";
-                                            const foundCustom = (settings.customRfqStatuses || []).find(cs => cs.value === stat);
+                                            const status = rfq.status || "pending";
+                                            const foundCustom = (settings.customRfqStatuses || []).find(cs => cs.value === status);
+                                            
                                             if (foundCustom) {
                                               const customCol = foundCustom.color || "#a855f7";
                                               const isHex = customCol.startsWith("#");
+                                              
+                                              // Determine colors based on preset or hexadecimal
+                                              let bg = "bg-purple-500/15";
+                                              let border = "border-purple-500/30";
+                                              let text = "text-purple-400";
+                                              let dot = "bg-purple-400";
+                                              
+                                              if (isHex) {
+                                                // Hexadecimal status tag - apply inline style below, fallback values here
+                                                bg = "";
+                                                border = "";
+                                                text = "";
+                                                dot = "";
+                                              } else {
+                                                // Color string matching presets
+                                                const mapping: Record<string, { bg: string; text: string; border: string; dot: string }> = {
+                                                  purple: { bg: "bg-purple-500/15", text: "text-purple-400", border: "border-purple-500/30", dot: "bg-purple-400" },
+                                                  violet: { bg: "bg-violet-500/15", text: "text-violet-400", border: "border-violet-500/30", dot: "bg-violet-400" },
+                                                  pink: { bg: "bg-pink-500/15", text: "text-pink-400", border: "border-pink-500/30", dot: "bg-pink-400" },
+                                                  cyan: { bg: "bg-cyan-500/15", text: "text-cyan-400", border: "border-cyan-500/30", dot: "bg-cyan-400" },
+                                                  amber: { bg: "bg-amber-500/15", text: "text-amber-400", border: "border-amber-500/30", dot: "bg-amber-400" },
+                                                  blue: { bg: "bg-blue-500/15", text: "text-blue-400", border: "border-blue-500/30", dot: "bg-blue-400" },
+                                                  emerald: { bg: "bg-emerald-500/15", text: "text-emerald-400", border: "border-emerald-500/30", dot: "bg-emerald-400" }
+                                                };
+                                                const map = mapping[customCol] || mapping.purple;
+                                                bg = map.bg;
+                                                border = map.border;
+                                                text = map.text;
+                                                dot = map.dot;
+                                              }
+
                                               return (
                                                 <span 
-                                                  className="h-1.5 w-1.5 rounded-full shrink-0 animate-pulse" 
+                                                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border ${bg} ${border} ${text}`}
                                                   style={isHex ? {
-                                                    backgroundColor: customCol,
-                                                    boxShadow: `0 0 5px ${customCol}`
+                                                    backgroundColor: `${customCol}15`,
+                                                    borderColor: `${customCol}30`,
+                                                    color: customCol
                                                   } : undefined}
-                                                />
+                                                >
+                                                  <span 
+                                                    className={`h-1.5 w-1.5 rounded-full animate-pulse ${dot}`} 
+                                                    style={isHex ? {
+                                                      backgroundColor: customCol,
+                                                      boxShadow: `0 0 5px ${customCol}`
+                                                    } : undefined}
+                                                  />
+                                                  <span>{foundCustom.label}</span>
+                                                </span>
                                               );
                                             }
 
-                                            const dotColors: Record<string, string> = {
-                                              pending: "bg-amber-400 shadow-[0_0_5px_rgba(245,158,11,0.6)]",
-                                              processing: "bg-blue-400 shadow-[0_0_5px_rgba(59,130,246,0.6)]",
-                                              quoted: "bg-indigo-400 shadow-[0_0_5px_rgba(99,102,241,0.6)]",
-                                              completed: "bg-emerald-400 shadow-[0_0_5px_rgba(16,185,129,0.6)]",
-                                              cancelled: "bg-rose-400 shadow-[0_0_5px_rgba(239,68,68,0.6)]",
+                                            const statusConfigs: Record<string, { bg: string; text: string; border: string; label: string; dot: string }> = {
+                                              pending: {
+                                                bg: "bg-amber-500/15",
+                                                text: "text-amber-400",
+                                                border: "border-amber-500/30",
+                                                label: "Menunggu Proposal",
+                                                dot: "bg-amber-400"
+                                              },
+                                              processing: {
+                                                bg: "bg-blue-500/15",
+                                                text: "text-blue-400",
+                                                border: "border-blue-500/30",
+                                                label: "Sedang Diproses",
+                                                dot: "bg-blue-400"
+                                              },
+                                              quoted: {
+                                                bg: "bg-indigo-500/15",
+                                                text: "text-indigo-400",
+                                                border: "border-indigo-500/30",
+                                                label: "Sudah Di-Quoted",
+                                                dot: "bg-indigo-400"
+                                              },
+                                              completed: {
+                                                bg: "bg-emerald-500/15",
+                                                text: "text-emerald-400",
+                                                border: "border-emerald-500/30",
+                                                label: "Selesai",
+                                                dot: "bg-emerald-400"
+                                              },
+                                              cancelled: {
+                                                bg: "bg-rose-500/15",
+                                                text: "text-rose-400",
+                                                border: "border-rose-500/30",
+                                                label: "Dibatalkan",
+                                                dot: "bg-rose-400"
+                                              }
                                             };
-                                            const colorClass = dotColors[stat] || dotColors.pending;
+                                            const cfg = statusConfigs[status] || statusConfigs.pending;
                                             return (
-                                              <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${colorClass} ${stat === "pending" || stat === "processing" ? "animate-pulse" : ""}`} />
+                                              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border ${cfg.bg} ${cfg.border} ${cfg.text}`}>
+                                                <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot} ${status === "pending" || status === "processing" ? "animate-pulse" : ""}`} />
+                                                <span>{cfg.label}</span>
+                                              </span>
                                             );
                                           })()}
-                                          <span>{rfq.clientName}</span>
-                                        </div>
-                                        {rfq.companyName && <div className="text-[10px] text-slate-400 mt-0.5 pl-3">{rfq.companyName}</div>}
-                                        <div className="text-[10px] text-slate-500 font-mono mt-1 pl-3">{rfq.whatsapp} | {rfq.email}</div>
-                                      </td>
-                                      <td className="p-4">
-                                        <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${
-                                          rfq.clientCategory === "pemerintah" 
-                                            ? "bg-purple-500/10 border border-purple-500/20 text-purple-300"
-                                            : rfq.clientCategory === "pendidikan"
-                                            ? "bg-cyan-500/10 border border-cyan-500/20 text-cyan-300"
-                                            : rfq.clientCategory === "perusahaan"
-                                            ? "bg-blue-500/10 border border-blue-500/20 text-blue-300"
-                                            : rfq.clientCategory === "retail"
-                                            ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-300"
-                                            : "bg-amber-500/10 border border-amber-500/20 text-amber-300"
-                                        }`}>
-                                          {rfq.clientCategory === "pemerintah" ? "umum" : rfq.clientCategory}
-                                        </span>
-                                      </td>
-                                      <td className="p-4 max-w-xs">
-                                        <div className="space-y-1">
-                                          {rfq.items.map((it, idx) => (
-                                            <div key={idx} className="text-[11px] text-slate-200 flex flex-col gap-1 bg-white/5 px-2 py-1.5 rounded">
-                                              <div className="flex justify-between gap-2">
-                                                <span className="font-bold">{it.name}</span>
-                                                <span className="text-amber-400 font-bold font-mono">x{it.quantity}</span>
-                                              </div>
-                                              {it.serialNumber && (
-                                                <div className="text-[9px] font-mono text-indigo-300 bg-indigo-950/40 px-1 py-0.5 rounded self-start border border-indigo-500/10">
-                                                  SN: {it.serialNumber}
-                                                </div>
-                                              )}
-                                            </div>
-                                          ))}
-                                          {rfq.customRequirements && (
-                                            <div className="text-[10px] text-amber-300 italic line-clamp-1 mt-1">Req: {rfq.customRequirements}</div>
-                                          )}
-                                        </div>
-                                      </td>
-                                      <td className="p-4">
-                                        {(() => {
-                                          const status = rfq.status || "pending";
-                                          const foundCustom = (settings.customRfqStatuses || []).find(cs => cs.value === status);
-                                          
-                                          if (foundCustom) {
-                                            const customCol = foundCustom.color || "#a855f7";
-                                            const isHex = customCol.startsWith("#");
+                                        </td>
+                                        <td className="p-4 text-center">
+                                          {(() => {
+                                            const statusChangeDate = getLatestStatusChangeTime(rfq);
+                                            const now = new Date();
+                                            const timeInStatusMs = now.getTime() - statusChangeDate.getTime();
+                                            const timeInStatusHours = Math.max(0, timeInStatusMs / (1000 * 60 * 60));
                                             
-                                            // Determine colors based on preset or hexadecimal
-                                            let bg = "bg-purple-500/15";
-                                            let border = "border-purple-500/30";
-                                            let text = "text-purple-400";
-                                            let dot = "bg-purple-400";
+                                            const formatTimeInStatus = (hours: number): string => {
+                                              if (hours < 1) {
+                                                const mins = Math.max(1, Math.round(hours * 60));
+                                                return `${mins}m`;
+                                              }
+                                              if (hours < 24) {
+                                                const h = Math.floor(hours);
+                                                const m = Math.round((hours % 1) * 60);
+                                                return m > 0 ? `${h}j ${m}m` : `${h}j`;
+                                              }
+                                              const d = Math.floor(hours / 24);
+                                              const h = Math.floor(hours % 24);
+                                              return h > 0 ? `${d}h ${h}j` : `${d}h`;
+                                            };
+
+                                            // Detect if it is a bottleneck
+                                            const status = rfq.status || "pending";
+                                            const isPendingOrProcessing = status === "pending" || status === "processing";
                                             
-                                            if (isHex) {
-                                              // Hexadecimal status tag - apply inline style below, fallback values here
-                                              bg = "";
-                                              border = "";
-                                              text = "";
-                                              dot = "";
-                                            } else {
-                                              // Color string matching presets
-                                              const mapping: Record<string, { bg: string; text: string; border: string; dot: string }> = {
-                                                purple: { bg: "bg-purple-500/15", text: "text-purple-400", border: "border-purple-500/30", dot: "bg-purple-400" },
-                                                violet: { bg: "bg-violet-500/15", text: "text-violet-400", border: "border-violet-500/30", dot: "bg-violet-400" },
-                                                pink: { bg: "bg-pink-500/15", text: "text-pink-400", border: "border-pink-500/30", dot: "bg-pink-400" },
-                                                cyan: { bg: "bg-cyan-500/15", text: "text-cyan-400", border: "border-cyan-500/30", dot: "bg-cyan-400" },
-                                                amber: { bg: "bg-amber-500/15", text: "text-amber-400", border: "border-amber-500/30", dot: "bg-amber-400" },
-                                                blue: { bg: "bg-blue-500/15", text: "text-blue-400", border: "border-blue-500/30", dot: "bg-blue-400" },
-                                                emerald: { bg: "bg-emerald-500/15", text: "text-emerald-400", border: "border-emerald-500/30", dot: "bg-emerald-400" }
-                                              };
-                                              const map = mapping[customCol] || mapping.purple;
-                                              bg = map.bg;
-                                              border = map.border;
-                                              text = map.text;
-                                              dot = map.dot;
+                                            let badgeClass = "bg-white/5 border border-white/10 text-slate-300";
+                                            let dotColor = "bg-slate-400";
+                                            let titleText = "Waktu di status saat ini";
+                                            
+                                            if (isPendingOrProcessing) {
+                                              if (timeInStatusHours >= 24) {
+                                                badgeClass = "bg-red-500/10 border border-red-500/30 text-red-400 animate-pulse";
+                                                dotColor = "bg-red-500 shadow-[0_0_5px_rgba(239,68,68,0.6)]";
+                                                titleText = "Sangat lambat! Berada di status ini lebih dari 24 jam (Bottleneck)";
+                                              } else if (timeInStatusHours >= 12) {
+                                                badgeClass = "bg-amber-500/10 border border-amber-500/30 text-amber-400";
+                                                dotColor = "bg-amber-500 shadow-[0_0_5px_rgba(245,158,11,0.6)]";
+                                                titleText = "Perhatian! Berada di status ini lebih dari 12 jam";
+                                              } else {
+                                                badgeClass = "bg-indigo-500/10 border border-indigo-500/20 text-indigo-400";
+                                                dotColor = "bg-indigo-500";
+                                                titleText = "Status aman, di bawah 12 jam";
+                                              }
+                                            } else if (status === "quoted" && timeInStatusHours >= 48) {
+                                              badgeClass = "bg-pink-500/10 border border-pink-500/30 text-pink-400";
+                                              dotColor = "bg-pink-500 shadow-[0_0_5px_rgba(236,72,153,0.6)]";
+                                              titleText = "Sudah di-quote selama lebih dari 48 jam, silakan follow up klien";
                                             }
 
                                             return (
                                               <span 
-                                                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border ${bg} ${border} ${text}`}
-                                                style={isHex ? {
-                                                  backgroundColor: `${customCol}15`,
-                                                  borderColor: `${customCol}30`,
-                                                  color: customCol
-                                                } : undefined}
+                                                className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold font-mono ${badgeClass}`}
+                                                title={titleText}
                                               >
-                                                <span 
-                                                  className={`h-1.5 w-1.5 rounded-full animate-pulse ${dot}`} 
-                                                  style={isHex ? {
-                                                    backgroundColor: customCol,
-                                                    boxShadow: `0 0 5px ${customCol}`
-                                                  } : undefined}
-                                                />
-                                                <span>{foundCustom.label}</span>
+                                                <span className={`h-1.5 w-1.5 rounded-full ${dotColor}`} />
+                                                <span>{formatTimeInStatus(timeInStatusHours)}</span>
                                               </span>
                                             );
-                                          }
+                                          })()}
+                                        </td>
+                                        <td className="p-4">
 
-                                          const statusConfigs: Record<string, { bg: string; text: string; border: string; label: string; dot: string }> = {
-                                            pending: {
-                                              bg: "bg-amber-500/15",
-                                              text: "text-amber-400",
-                                              border: "border-amber-500/30",
-                                              label: "Menunggu Proposal",
-                                              dot: "bg-amber-400"
-                                            },
-                                            processing: {
-                                              bg: "bg-blue-500/15",
-                                              text: "text-blue-400",
-                                              border: "border-blue-500/30",
-                                              label: "Sedang Diproses",
-                                              dot: "bg-blue-400"
-                                            },
-                                            quoted: {
-                                              bg: "bg-indigo-500/15",
-                                              text: "text-indigo-400",
-                                              border: "border-indigo-500/30",
-                                              label: "Sudah Di-Quoted",
-                                              dot: "bg-indigo-400"
-                                            },
-                                            completed: {
-                                              bg: "bg-emerald-500/15",
-                                              text: "text-emerald-400",
-                                              border: "border-emerald-500/30",
-                                              label: "Selesai",
-                                              dot: "bg-emerald-400"
-                                            },
-                                            cancelled: {
-                                              bg: "bg-rose-500/15",
-                                              text: "text-rose-400",
-                                              border: "border-rose-500/30",
-                                              label: "Dibatalkan",
-                                              dot: "bg-rose-400"
-                                            }
-                                          };
-                                          const cfg = statusConfigs[status] || statusConfigs.pending;
-                                          return (
-                                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border ${cfg.bg} ${cfg.border} ${cfg.text}`}>
-                                              <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot} ${status === "pending" || status === "processing" ? "animate-pulse" : ""}`} />
-                                              <span>{cfg.label}</span>
-                                            </span>
-                                          );
-                                        })()}
-                                      </td>
-                                      <td className="p-4 text-center">
-                                        {(() => {
-                                          const statusChangeDate = getLatestStatusChangeTime(rfq);
-                                          const now = new Date();
-                                          const timeInStatusMs = now.getTime() - statusChangeDate.getTime();
-                                          const timeInStatusHours = Math.max(0, timeInStatusMs / (1000 * 60 * 60));
-                                          
-                                          const formatTimeInStatus = (hours: number): string => {
-                                            if (hours < 1) {
-                                              const mins = Math.max(1, Math.round(hours * 60));
-                                              return `${mins}m`;
-                                            }
-                                            if (hours < 24) {
-                                              const h = Math.floor(hours);
-                                              const m = Math.round((hours % 1) * 60);
-                                              return m > 0 ? `${h}j ${m}m` : `${h}j`;
-                                            }
-                                            const d = Math.floor(hours / 24);
-                                            const h = Math.floor(hours % 24);
-                                            return h > 0 ? `${d}h ${h}j` : `${d}h`;
-                                          };
-
-                                          // Detect if it is a bottleneck
-                                          const status = rfq.status || "pending";
-                                          const isPendingOrProcessing = status === "pending" || status === "processing";
-                                          
-                                          let badgeClass = "bg-white/5 border border-white/10 text-slate-300";
-                                          let dotColor = "bg-slate-400";
-                                          let titleText = "Waktu di status saat ini";
-                                          
-                                          if (isPendingOrProcessing) {
-                                            if (timeInStatusHours >= 24) {
-                                              badgeClass = "bg-red-500/10 border border-red-500/30 text-red-400 animate-pulse";
-                                              dotColor = "bg-red-500 shadow-[0_0_5px_rgba(239,68,68,0.6)]";
-                                              titleText = "Sangat lambat! Berada di status ini lebih dari 24 jam (Bottleneck)";
-                                            } else if (timeInStatusHours >= 12) {
-                                              badgeClass = "bg-amber-500/10 border border-amber-500/30 text-amber-400";
-                                              dotColor = "bg-amber-500 shadow-[0_0_5px_rgba(245,158,11,0.6)]";
-                                              titleText = "Perhatian! Berada di status ini lebih dari 12 jam";
-                                            } else {
-                                              badgeClass = "bg-indigo-500/10 border border-indigo-500/20 text-indigo-400";
-                                              dotColor = "bg-indigo-500";
-                                              titleText = "Status aman, di bawah 12 jam";
-                                            }
-                                          } else if (status === "quoted" && timeInStatusHours >= 48) {
-                                            badgeClass = "bg-pink-500/10 border border-pink-500/30 text-pink-400";
-                                            dotColor = "bg-pink-500 shadow-[0_0_5px_rgba(236,72,153,0.6)]";
-                                            titleText = "Sudah di-quote selama lebih dari 48 jam, silakan follow up klien";
-                                          }
-
-                                          return (
-                                            <span 
-                                              className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold font-mono ${badgeClass}`}
-                                              title={titleText}
-                                            >
-                                              <span className={`h-1.5 w-1.5 rounded-full ${dotColor}`} />
-                                              <span>{formatTimeInStatus(timeInStatusHours)}</span>
-                                            </span>
-                                           );
-                                         })()}
-                                       </td>
-                                       <td className="p-4">
-
-                                        <div className="flex flex-col gap-2 min-w-[150px] max-w-[220px]">
-                                          {/* Admin Note preview & edit trigger */}
-                                          {rfq.notes ? (
-                                            <div 
-                                              onClick={() => setSelectedNotesRfq(rfq)}
-                                              className="bg-indigo-500/10 hover:bg-indigo-500/15 border border-indigo-500/20 rounded-xl p-2.5 text-[10px] text-slate-300 leading-normal flex items-start gap-1.5 cursor-pointer transition-all duration-200 shadow-sm"
-                                              title="Klik untuk ubah catatan atau prioritas"
-                                            >
-                                              <Icons.FileText className="h-3.5 w-3.5 text-indigo-400 shrink-0 mt-0.5" />
-                                              <div className="flex-1">
-                                                <div className="font-extrabold text-indigo-300 text-[9px] uppercase tracking-wider mb-0.5">Catatan Admin</div>
-                                                <p className="line-clamp-2 italic text-slate-200 font-medium">"{rfq.notes}"</p>
+                                          <div className="flex flex-col gap-2 min-w-[150px] max-w-[220px]">
+                                            {/* Admin Note preview & edit trigger */}
+                                            {rfq.notes ? (
+                                              <div 
+                                                onClick={() => setSelectedNotesRfq(rfq)}
+                                                className="bg-indigo-500/10 hover:bg-indigo-500/15 border border-indigo-500/20 rounded-xl p-2.5 text-[10px] text-slate-300 leading-normal flex items-start gap-1.5 cursor-pointer transition-all duration-200 shadow-sm"
+                                                title="Klik untuk ubah catatan atau prioritas"
+                                              >
+                                                <Icons.FileText className="h-3.5 w-3.5 text-indigo-400 shrink-0 mt-0.5" />
+                                                <div className="flex-1">
+                                                  <div className="font-extrabold text-indigo-300 text-[9px] uppercase tracking-wider mb-0.5">Catatan Admin</div>
+                                                  <p className="line-clamp-2 italic text-slate-200 font-medium">"{rfq.notes}"</p>
+                                                </div>
                                               </div>
+                                            ) : (
+                                              <button
+                                                onClick={() => setSelectedNotesRfq(rfq)}
+                                                className="text-[10px] text-slate-400 hover:text-white font-bold flex items-center gap-1.5 px-2 py-1.5 bg-white/5 border border-white/5 hover:border-white/10 rounded-xl transition-all self-start cursor-pointer"
+                                              >
+                                                <Icons.Plus className="h-3 w-3 text-slate-500" />
+                                                <span>Tambah Catatan Admin</span>
+                                              </button>
+                                            )}
+
+                                            {/* Comments Thread preview */}
+                                            {rfq.internalComments && rfq.internalComments.length > 0 ? (
+                                              (() => {
+                                                const totalComments = rfq.internalComments.length;
+                                                const readCount = readCommentsMap[rfq.id] || 0;
+                                                const unreadCount = Math.max(0, totalComments - readCount);
+
+                                                return (
+                                                  <div className="flex flex-col gap-1 mt-1">
+                                                    <button
+                                                      onClick={() => setSelectedCommentRfq(rfq)}
+                                                      className="text-[10px] text-slate-400 hover:text-slate-300 font-bold flex items-center gap-1.5 self-start transition-colors relative"
+                                                    >
+                                                      <div className="relative">
+                                                        <Icons.MessageSquare className="h-3 w-3 text-slate-500 shrink-0" />
+                                                        {unreadCount > 0 && (
+                                                          <span className="absolute -top-1.5 -right-1.5 flex h-2 w-2">
+                                                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                                                            <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
+                                                          </span>
+                                                        )}
+                                                      </div>
+                                                      <span>{totalComments} Komentar</span>
+                                                      {unreadCount > 0 && (
+                                                        <span className="px-1.5 py-0.5 text-[8px] leading-none font-extrabold bg-rose-500 text-white rounded-full">
+                                                          {unreadCount} Baru
+                                                        </span>
+                                                      )}
+                                                    </button>
+                                                    <div className="text-[10px] text-slate-300 bg-white/5 p-1.5 rounded-xl border border-white/5 leading-normal">
+                                                      <div className="flex items-center gap-1 mb-0.5">
+                                                        <span className="font-bold text-indigo-300">@{rfq.internalComments[totalComments - 1].author.split(" ")[0]}</span>
+                                                        <span className="text-[8px] text-slate-500">
+                                                          ({new Date(rfq.internalComments[totalComments - 1].timestamp).toLocaleDateString("id-ID", { day: "numeric", month: "short" })})
+                                                        </span>
+                                                      </div>
+                                                      <p className="line-clamp-2 text-slate-400 italic">
+                                                        "{rfq.internalComments[totalComments - 1].text}"
+                                                      </p>
+                                                    </div>
+                                                  </div>
+                                                );
+                                              })()
+                                            ) : (
+                                              <button
+                                                onClick={() => setSelectedCommentRfq(rfq)}
+                                                className="text-[10px] text-slate-500 hover:text-slate-300 font-semibold flex items-center gap-1 py-1 transition-colors self-start cursor-pointer pl-1"
+                                              >
+                                                <Icons.MessageSquare className="h-3 w-3 shrink-0 text-slate-600" />
+                                                <span>Tulis Komentar...</span>
+                                              </button>
+                                            )}
+                                          </div>
+                                        </td>
+                                        <td className="p-4 text-center">
+                                          {isQuoted ? (
+                                            <div className="inline-flex items-center space-x-1 px-2 py-1 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+                                              <Icons.CheckCircle className="h-3.5 w-3.5" />
+                                              <span className="font-bold text-[10px] uppercase">Terpenuhi</span>
+                                            </div>
+                                          ) : isOverdue ? (
+                                            <div className="inline-flex flex-col items-center p-1.5 rounded bg-red-500/15 border border-red-500/30 text-red-400">
+                                              <span className="font-extrabold text-[10px] uppercase tracking-wide">⚠️ SLA Lewat</span>
+                                              <span className="text-[9px] font-mono font-bold mt-0.5 text-red-300">
+                                                -{Math.abs(Math.round(remainingHours))} jam
+                                              </span>
+                                            </div>
+                                          ) : isWarning ? (
+                                            <div className="inline-flex flex-col items-center p-1.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-400">
+                                              <span className="font-bold text-[10px] uppercase">⏳ Segera</span>
+                                              <span className="text-[9px] font-mono font-bold mt-0.5 text-amber-300">
+                                                Sisa {Math.round(remainingHours)}j
+                                              </span>
+                                            </div>
+                                          ) : (
+                                            <div className="inline-flex flex-col items-center p-1.5 rounded bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
+                                              <span className="font-bold text-[10px] uppercase">Aman</span>
+                                              <span className="text-[9px] font-mono font-bold mt-0.5 text-indigo-300">
+                                                Sisa {Math.round(remainingHours)}j
+                                              </span>
+                                            </div>
+                                          )}
+                                        </td>
+                                        <td className="p-4 text-center">
+                                          {rfq.status === "quoted" ? (
+                                            <div className="flex items-center justify-center space-x-2">
+                                              <button
+                                                onClick={() => {
+                                                  const quote = quotations.find(q => q.rfqId === rfq.id || q.id === rfq.generatedQuotationId);
+                                                  if (quote) {
+                                                    setSelectedQuotation(quote);
+                                                  } else {
+                                                    showToast("File surat penawaran tidak ditemukan", "error");
+                                                  }
+                                                }}
+                                                className="px-3 py-1.5 bg-indigo-500/10 hover:bg-indigo-600 border border-indigo-500/25 hover:border-indigo-500 text-indigo-300 hover:text-white rounded-lg font-bold transition-all flex items-center space-x-1 cursor-pointer"
+                                              >
+                                                <FileText className="h-3.5 w-3.5" />
+                                                <span>Buka Surat Penawaran</span>
+                                              </button>
                                             </div>
                                           ) : (
                                             <button
-                                              onClick={() => setSelectedNotesRfq(rfq)}
-                                              className="text-[10px] text-slate-400 hover:text-white font-bold flex items-center gap-1.5 px-2 py-1.5 bg-white/5 border border-white/5 hover:border-white/10 rounded-xl transition-all self-start cursor-pointer"
+                                              onClick={() => generateQuotationWithAI(rfq.id)}
+                                              disabled={generatingQuoteId !== null}
+                                              className="px-4 py-2 bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 disabled:from-indigo-950 disabled:to-indigo-950 text-white rounded-xl font-bold transition-all shadow-md flex items-center space-x-1.5 mx-auto cursor-pointer"
                                             >
-                                              <Icons.Plus className="h-3 w-3 text-slate-500" />
-                                              <span>Tambah Catatan Admin</span>
+                                              {generatingQuoteId === rfq.id ? (
+                                                <>
+                                                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                                  <span>AI Menyusun...</span>
+                                                </>
+                                              ) : (
+                                                <>
+                                                  <Sparkles className="h-3.5 w-3.5 text-amber-300 animate-pulse" />
+                                                  <span>Generate Proposal (AI)</span>
+                                                </>
+                                              )}
                                             </button>
                                           )}
+                                        </td>
+                                      </tr>
 
-                                          {/* Comments Thread preview */}
-                                          {rfq.internalComments && rfq.internalComments.length > 0 ? (
-                                            (() => {
-                                              const totalComments = rfq.internalComments.length;
-                                              const readCount = readCommentsMap[rfq.id] || 0;
-                                              const unreadCount = Math.max(0, totalComments - readCount);
-
-                                              return (
-                                                <div className="flex flex-col gap-1 mt-1">
-                                                  <button
-                                                    onClick={() => setSelectedCommentRfq(rfq)}
-                                                    className="text-[10px] text-slate-400 hover:text-slate-300 font-bold flex items-center gap-1.5 self-start transition-colors relative"
-                                                  >
-                                                    <div className="relative">
-                                                      <Icons.MessageSquare className="h-3 w-3 text-slate-500 shrink-0" />
-                                                      {unreadCount > 0 && (
-                                                        <span className="absolute -top-1.5 -right-1.5 flex h-2 w-2">
-                                                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-                                                          <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
-                                                        </span>
-                                                      )}
-                                                    </div>
-                                                    <span>{totalComments} Komentar</span>
-                                                    {unreadCount > 0 && (
-                                                      <span className="px-1.5 py-0.5 text-[8px] leading-none font-extrabold bg-rose-500 text-white rounded-full">
-                                                        {unreadCount} Baru
-                                                      </span>
-                                                    )}
-                                                  </button>
-                                                  <div className="text-[10px] text-slate-300 bg-white/5 p-1.5 rounded-xl border border-white/5 leading-normal">
-                                                    <div className="flex items-center gap-1 mb-0.5">
-                                                      <span className="font-bold text-indigo-300">@{rfq.internalComments[totalComments - 1].author.split(" ")[0]}</span>
-                                                      <span className="text-[8px] text-slate-500">
-                                                        ({new Date(rfq.internalComments[totalComments - 1].timestamp).toLocaleDateString("id-ID", { day: "numeric", month: "short" })})
-                                                      </span>
-                                                    </div>
-                                                    <p className="line-clamp-2 text-slate-400 italic">
-                                                      "{rfq.internalComments[totalComments - 1].text}"
-                                                    </p>
-                                                  </div>
-                                                </div>
-                                              );
-                                            })()
-                                          ) : (
-                                            <button
-                                              onClick={() => setSelectedCommentRfq(rfq)}
-                                              className="text-[10px] text-slate-500 hover:text-slate-300 font-semibold flex items-center gap-1 py-1 transition-colors self-start cursor-pointer pl-1"
-                                            >
-                                              <Icons.MessageSquare className="h-3 w-3 shrink-0 text-slate-600" />
-                                              <span>Tulis Komentar...</span>
-                                            </button>
-                                          )}
-                                        </div>
-                                      </td>
-                                      <td className="p-4 text-center">
-                                        {isQuoted ? (
-                                          <div className="inline-flex items-center space-x-1 px-2 py-1 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
-                                            <Icons.CheckCircle className="h-3.5 w-3.5" />
-                                            <span className="font-bold text-[10px] uppercase">Terpenuhi</span>
+                                      {/* Real-time SLA Progress Bar Ribbon Row (Anti-Slop, High-End Professional Design) */}
+                                      <tr className="bg-slate-950/40 border-b border-white/5 select-none" id={`rfq-sla-bar-${rfq.id}`}>
+                                        <td colSpan={11} className="p-0 border-none">
+                                          <div className="w-full">
+                                            {/* Beautiful thin 3px visual indicator bar */}
+                                            <div className="w-full h-1 bg-slate-950/80 overflow-hidden relative">
+                                              <div 
+                                                className={`h-full transition-all duration-1000 ${
+                                                  isQuoted 
+                                                    ? "bg-gradient-to-r from-emerald-600 to-teal-500" 
+                                                    : isOverdue 
+                                                    ? "bg-gradient-to-r from-red-600 via-rose-500 to-red-600 animate-pulse" 
+                                                    : isWarning 
+                                                    ? "bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500" 
+                                                    : "bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-400"
+                                                }`}
+                                                style={{ width: isQuoted ? "100%" : `${percentLeft}%` }}
+                                                title={isQuoted ? "SLA Terpenuhi" : `Sisa SLA: ${percentLeft.toFixed(1)}%`}
+                                              />
+                                            </div>
+                                            {/* Subtext info ribbon with custom metrics */}
+                                            <div className="px-4 py-1.5 flex flex-wrap items-center justify-between text-[10px] font-mono text-slate-400">
+                                              <div className="flex items-center gap-2">
+                                                <span className="text-[9px] uppercase tracking-wider text-slate-500 font-extrabold">SLA Tracker:</span>
+                                                {isQuoted ? (
+                                                  <span className="text-emerald-400 font-bold flex items-center gap-1">
+                                                    <Icons.CheckCircle className="h-3 w-3 text-emerald-400 shrink-0" />
+                                                    SLA Terpenuhi &bull; Selesai Tepat Waktu
+                                                  </span>
+                                                ) : isOverdue ? (
+                                                  <span className="text-rose-400 font-black flex items-center gap-1 animate-pulse">
+                                                    <Icons.ShieldAlert className="h-3.5 w-3.5 text-rose-500 shrink-0" />
+                                                    Atensi Khusus: SLA Terlampaui -{Math.abs(Math.round(remainingHours))} jam!
+                                                  </span>
+                                                ) : isWarning ? (
+                                                  <span className="text-amber-400 font-bold flex items-center gap-1">
+                                                    <Icons.Clock className="h-3 w-3 text-amber-400 shrink-0" />
+                                                    Mendesak: Sisa {remainingHours.toFixed(1)} jam lagi!
+                                                  </span>
+                                                ) : (
+                                                  <span className="text-emerald-400 font-bold flex items-center gap-1">
+                                                    <Icons.Timer className="h-3 w-3 text-emerald-400 shrink-0" />
+                                                    Aman: Sisa {remainingHours.toFixed(1)} jam
+                                                  </span>
+                                                )}
+                                              </div>
+                                              <div className="flex items-center gap-3">
+                                                <span>Diterima: {submitDate.toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} WIB</span>
+                                                <span className="text-slate-800">|</span>
+                                                <span>Batas SLA: {new Date(submitDate.getTime() + 48 * 60 * 60 * 1000).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} WIB</span>
+                                                {!isQuoted && (
+                                                  <>
+                                                    <span className="text-slate-800">|</span>
+                                                    <span className={`${isOverdue ? "text-rose-400 font-black" : isWarning ? "text-amber-400 font-black" : "text-emerald-400 font-black"} font-bold`}>
+                                                      {percentLeft.toFixed(0)}% Sisa Waktu
+                                                    </span>
+                                                  </>
+                                                )}
+                                              </div>
+                                            </div>
                                           </div>
-                                        ) : isOverdue ? (
-                                          <div className="inline-flex flex-col items-center p-1.5 rounded bg-red-500/15 border border-red-500/30 text-red-400">
-                                            <span className="font-extrabold text-[10px] uppercase tracking-wide">⚠️ SLA Lewat</span>
-                                            <span className="text-[9px] font-mono font-bold mt-0.5 text-red-300">
-                                              -{Math.abs(Math.round(remainingHours))} jam
-                                            </span>
-                                          </div>
-                                        ) : isWarning ? (
-                                          <div className="inline-flex flex-col items-center p-1.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-400">
-                                            <span className="font-bold text-[10px] uppercase">⏳ Segera</span>
-                                            <span className="text-[9px] font-mono font-bold mt-0.5 text-amber-300">
-                                              Sisa {Math.round(remainingHours)}j
-                                            </span>
-                                          </div>
-                                        ) : (
-                                          <div className="inline-flex flex-col items-center p-1.5 rounded bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
-                                            <span className="font-bold text-[10px] uppercase">Aman</span>
-                                            <span className="text-[9px] font-mono font-bold mt-0.5 text-indigo-300">
-                                              Sisa {Math.round(remainingHours)}j
-                                            </span>
-                                          </div>
-                                        )}
-                                      </td>
-                                      <td className="p-4 text-center">
-                                        {rfq.status === "quoted" ? (
-                                          <div className="flex items-center justify-center space-x-2">
-                                            <button
-                                              onClick={() => {
-                                                const quote = quotations.find(q => q.rfqId === rfq.id || q.id === rfq.generatedQuotationId);
-                                                if (quote) {
-                                                  setSelectedQuotation(quote);
-                                                } else {
-                                                  showToast("File surat penawaran tidak ditemukan", "error");
-                                                }
-                                              }}
-                                              className="px-3 py-1.5 bg-indigo-500/10 hover:bg-indigo-600 border border-indigo-500/25 hover:border-indigo-500 text-indigo-300 hover:text-white rounded-lg font-bold transition-all flex items-center space-x-1 cursor-pointer"
-                                            >
-                                              <FileText className="h-3.5 w-3.5" />
-                                              <span>Buka Surat Penawaran</span>
-                                            </button>
-                                          </div>
-                                        ) : (
-                                          <button
-                                            onClick={() => generateQuotationWithAI(rfq.id)}
-                                            disabled={generatingQuoteId !== null}
-                                            className="px-4 py-2 bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 disabled:from-indigo-950 disabled:to-indigo-950 text-white rounded-xl font-bold transition-all shadow-md flex items-center space-x-1.5 mx-auto cursor-pointer"
-                                          >
-                                            {generatingQuoteId === rfq.id ? (
-                                              <>
-                                                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                                                <span>AI Menyusun...</span>
-                                              </>
-                                            ) : (
-                                              <>
-                                                <Sparkles className="h-3.5 w-3.5 text-amber-300 animate-pulse" />
-                                                <span>Generate Proposal (AI)</span>
-                                              </>
-                                            )}
-                                          </button>
-                                        )}
-                                      </td>
-                                    </tr>
+                                        </td>
+                                      </tr>
+                                    </React.Fragment>
                                   );
                                 })
                               ) : (
