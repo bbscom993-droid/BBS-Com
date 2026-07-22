@@ -1,10 +1,10 @@
 {
   "settings": {
     "config": {
-      "companyName": "Berkah Bintang Solusindo (Updated)",
+      "companyName": "Berkah Bintang Solusindo",
       "tagline": "Solusi Teknologi Informasi dan Pengadaan Terpercaya",
       "description": "Melayani kebutuhan pengadaan perangkat IT, infrastruktur jaringan, server, CCTV, software, maintenance, serta konsultasi teknologi informasi untuk perusahaan, lembaga pendidikan, bisnis, dan UMKM.",
-      "address": "Jl.Raya Cempaka No 10 Jakarta",
+      "address": "JL.CEMPAKA PUTIH BARAT NO.10,JAKARTA PUSAT 10520",
       "whatsapp": "+628131852419",
       "email": "bbscom993@gmail.com",
       "website": "www.berkahbintangsolusindo.com",
@@ -12,9 +12,9 @@
       "logoText": "BBS",
       "motto": "Inovasi, Integritas & Pelayanan Terbaik",
       "bankAccount": {
-        "bankName": "Bank Mandiri",
-        "accountNumber": "123-45-67890-1",
-        "accountHolder": "PT Berkah Bintang Solusindo"
+        "bankName": "SeaBank",
+        "accountNumber": "901640383663",
+        "accountHolder": "Arif Suharyadi"
       }
     },
     "reminderConfig": {
@@ -22,6 +22,16 @@
       "delayHours": 48,
       "subjectTemplate": "[PENGINGAT] Menunggu Tindak Lanjut Permintaan Penawaran - {rfqNumber}",
       "bodyTemplate": "Halo {clientName},\n\nKami ingin mengonfirmasi bahwa kami sedang menyusun penawaran terbaik untuk RFQ {rfqNumber} Anda.\n\nTim sales kami akan segera menghubungi Anda untuk mendiskusikan spesifikasi perangkat berkualitas tinggi yang Anda butuhkan.\n\nTerima kasih,\n{companyName}"
+    },
+    "layoutPreferences": {
+      "pinnedStatuses": [],
+      "legendStatusOrder": [
+        "pending",
+        "processing",
+        "quoted",
+        "completed",
+        "cancelled"
+      ]
     }
   },
   "rfqs": {

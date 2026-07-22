@@ -814,7 +814,7 @@ export default function App() {
     companyName: "Berkah Bintang Solusindo",
     tagline: "Solusi Teknologi Informasi dan Pengadaan Terpercaya",
     description: "Melayani kebutuhan pengadaan perangkat IT, infrastruktur jaringan, server, CCTV, software, maintenance, serta konsultasi teknologi informasi untuk perusahaan, lembaga pendidikan, bisnis, dan UMKM.",
-    address: "Jl.Raya Cempaka No 10 Jakarta",
+    address: "JL.CEMPAKA PUTIH BARAT NO.10,JAKARTA PUSAT 10520",
     whatsapp: "+628131852419",
     email: "bbscom993@gmail.com",
     website: "www.berkahbintangsolusindo.com",
@@ -6670,7 +6670,7 @@ export default function App() {
               <div className="absolute top-[-50px] right-[-50px] w-64 h-64 bg-indigo-500/15 rounded-full blur-3xl pointer-events-none"></div>
               <div className="space-y-3 max-w-xl text-center md:text-left">
                 <div className="inline-block px-2.5 py-0.5 bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-[10px] font-mono rounded-md uppercase tracking-widest font-bold">
-                  TEAM BBS CONSULTANT
+                  BBS CONSULTANT
                 </div>
                 <h3 className="text-2xl sm:text-3xl font-extrabold text-white">Bingung Spesifikasi Perangkat yang Dibutuhkan?</h3>
                 <p className="text-sm text-slate-300 leading-relaxed">
@@ -6683,7 +6683,7 @@ export default function App() {
                 className="px-8 py-4 bg-white text-slate-900 hover:bg-slate-100 rounded-xl font-bold shadow-lg transition-all flex items-center space-x-2 shrink-0 cursor-pointer transform hover:scale-[1.02]"
               >
                 <Sparkles className="h-5 w-5 text-indigo-600" />
-                <span>Konsultasi Team BBS</span>
+                <span>MULAI KONSULTASI</span>
               </button>
             </div>
 
@@ -16494,7 +16494,7 @@ export default function App() {
                         <Icons.MapPin className="h-6 w-6" />
                       </div>
                       <div className="space-y-1">
-                        <h4 className="font-extrabold text-white text-xs tracking-wide uppercase">Jakarta Raya Cempaka</h4>
+                        <h4 className="font-extrabold text-white text-xs tracking-wide uppercase">JAKARTA PUSAT - CEMPAKA PUTIH</h4>
                         <p className="text-[11px] text-slate-400 max-w-[220px] mx-auto leading-relaxed">
                           {settings.address}
                         </p>
