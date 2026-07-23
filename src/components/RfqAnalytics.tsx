@@ -1,24 +1,25 @@
 import React, { useState, useEffect, useRef } from "react";
 import * as d3 from "d3";
-import { RFQ, ProductItem, Quotation } from "../types";
-import { PRODUCT_CATALOG } from "../data";
-import { BarChart3, TrendingUp, Info, Shield, Layers, HelpCircle, Briefcase, Building, GraduationCap, Store, Activity, Calendar } from "lucide-react";
-import {
-  ResponsiveContainer,
-  AreaChart,
-  Area,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip as RechartsTooltip
+import { jsPDF } from "jspdf";
+import "jspdf-autotable";
+import { 
+  ResponsiveContainer, AreaChart, Area, LineChart, Line, CartesianGrid, 
+  XAxis, YAxis, Tooltip as RechartsTooltip 
 } from "recharts";
+import { RFQ, ProductItem, Quotation, CompanySettings } from "../types";
+import { PRODUCT_CATALOG } from "../data";
+import { 
+  BarChart3, TrendingUp, Info, Shield, Layers, HelpCircle, Briefcase, 
+  Building, GraduationCap, Store, Activity, Calendar, FileText, Download, 
+  Printer, CheckCircle2, X, Sparkles, FileCheck, ArrowUpRight, PieChart,
+  ChevronDown, RefreshCw
+} from "lucide-react";
 
 interface RfqAnalyticsProps {
   rfqs: RFQ[];
   catalogProducts?: ProductItem[];
   quotations?: Quotation[];
+  settings?: CompanySettings;
 }
 
 interface GroupedData {
@@ -105,12 +106,661 @@ const getLast6MonthsList = () => {
   return result;
 };
 
-export default function RfqAnalytics({ rfqs, catalogProducts, quotations }: RfqAnalyticsProps) {
+const MONTH_NAMES_INDONESIAN = [
+  "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+  "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+];
+
+// Helper to generate a D3 visual chart as base64 PNG image for the PDF report
+const generateD3PdfChartImage = (
+  monthlyData: { label: string; total: number; count: number }[],
+  statusDist: { label: string; count: number; color: string }[],
+  width = 1200,
+  height = 520
+): Promise<string> => {
+  return new Promise((resolve) => {
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+
+      if (!ctx) {
+        resolve("");
+        return;
+      }
+
+      // Fill Dark Slate Canvas Background
+      ctx.fillStyle = "#0f172a";
+      ctx.fillRect(0, 0, width, height);
+
+      // Decorative Top Accent Bar
+      const headerGrad = ctx.createLinearGradient(0, 0, width, 0);
+      headerGrad.addColorStop(0, "#4f46e5");
+      headerGrad.addColorStop(0.5, "#818cf8");
+      headerGrad.addColorStop(1, "#06b6d4");
+      ctx.fillStyle = headerGrad;
+      ctx.fillRect(0, 0, width, 8);
+
+      // Title & Subtitle
+      ctx.fillStyle = "#f8fafc";
+      ctx.font = "bold 24px sans-serif";
+      ctx.fillText("GRAFIK PERFORMA RFQ & ANALISIS TREN BULANAN", 35, 48);
+
+      ctx.fillStyle = "#818cf8";
+      ctx.font = "bold 13px sans-serif";
+      ctx.fillText("D3.JS DATA ENGINE - PROJECTION & STATUS DISTRIBUTION", 35, 70);
+
+      // Split Canvas into 2 Panels
+      const leftW = 720;
+      const rightW = width - leftW - 80;
+
+      // --- LEFT PANEL: D3 Bar & Line Trend Chart ---
+      const padding = { top: 120, right: 30, bottom: 65, left: 110 };
+      const chartW = leftW - padding.left - padding.right;
+      const chartH = height - padding.top - padding.bottom;
+
+      const maxVal = d3.max(monthlyData, (d) => d.total) || 1000000;
+
+      const xScale = d3.scaleBand()
+        .domain(monthlyData.map((d) => d.label))
+        .range([0, chartW])
+        .padding(0.35);
+
+      const yScale = d3.scaleLinear()
+        .domain([0, maxVal * 1.25])
+        .range([chartH, 0]);
+
+      // Draw Gridlines
+      const yTicks = yScale.ticks(5);
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.08)";
+      ctx.lineWidth = 1;
+
+      yTicks.forEach((tick) => {
+        const y = padding.top + yScale(tick);
+        ctx.beginPath();
+        ctx.moveTo(padding.left, y);
+        ctx.lineTo(padding.left + chartW, y);
+        ctx.stroke();
+
+        ctx.fillStyle = "#64748b";
+        ctx.font = "11px monospace";
+        ctx.textAlign = "right";
+        const formatted = tick >= 1_000_000_000 
+          ? `${(tick / 1_000_000_000).toFixed(1)} M` 
+          : tick >= 1_000_000 
+            ? `${(tick / 1_000_000).toFixed(0)} Jt` 
+            : `${tick}`;
+        ctx.fillText(formatted, padding.left - 12, y + 4);
+      });
+
+      // Draw Bars
+      monthlyData.forEach((d) => {
+        const x = padding.left + (xScale(d.label) || 0);
+        const barW = xScale.bandwidth();
+        const barH = chartH - yScale(d.total);
+        const y = padding.top + yScale(d.total);
+
+        // Bar Gradient
+        const grad = ctx.createLinearGradient(0, y, 0, y + barH);
+        grad.addColorStop(0, "#6366f1");
+        grad.addColorStop(1, "#312e81");
+
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        if (ctx.roundRect) {
+          ctx.roundRect(x, y, barW, barH, [6, 6, 0, 0]);
+        } else {
+          ctx.rect(x, y, barW, barH);
+        }
+        ctx.fill();
+
+        // Bar border
+        ctx.strokeStyle = "#818cf8";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Label on bar top
+        if (d.total > 0) {
+          ctx.fillStyle = "#38bdf8";
+          ctx.font = "bold 11px monospace";
+          ctx.textAlign = "center";
+          const lbl = d.total >= 1_000_000_000 
+            ? `${(d.total / 1_000_000_000).toFixed(1)}M` 
+            : d.total >= 1_000_000 
+              ? `${(d.total / 1_000_000).toFixed(1)}Jt` 
+              : `${d.total}`;
+          ctx.fillText(lbl, x + barW / 2, y - 8);
+        }
+
+        // X Axis Month Label
+        ctx.fillStyle = "#e2e8f0";
+        ctx.font = "bold 12px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(d.label, x + barW / 2, padding.top + chartH + 28);
+      });
+
+      // D3 Line Plot
+      const lineGen = d3.line<{ label: string; total: number; count: number }>()
+        .x((d) => padding.left + (xScale(d.label) || 0) + xScale.bandwidth() / 2)
+        .y((d) => padding.top + yScale(d.total))
+        .curve(d3.curveMonotoneX)
+        .context(ctx);
+
+      ctx.beginPath();
+      lineGen(monthlyData);
+      ctx.strokeStyle = "#c084fc";
+      ctx.lineWidth = 3.5;
+      ctx.stroke();
+
+      // Line Dots
+      monthlyData.forEach((d) => {
+        const cx = padding.left + (xScale(d.label) || 0) + xScale.bandwidth() / 2;
+        const cy = padding.top + yScale(d.total);
+
+        ctx.beginPath();
+        ctx.arc(cx, cy, 6, 0, 2 * Math.PI);
+        ctx.fillStyle = "#c084fc";
+        ctx.fill();
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      });
+
+      // --- RIGHT PANEL: Status Distribution Bar Chart ---
+      const rightX = leftW + 30;
+      const rightY = 115;
+
+      // Divider line
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.1)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(leftW, 90);
+      ctx.lineTo(leftW, height - 40);
+      ctx.stroke();
+
+      // Right Panel Header
+      ctx.fillStyle = "#f8fafc";
+      ctx.font = "bold 15px sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText("DISTRIBUSI STATUS RFQ", rightX, rightY);
+
+      const totalCount = d3.sum(statusDist, (s) => s.count) || 1;
+      const maxCount = d3.max(statusDist, (s) => s.count) || 1;
+
+      const rightBarScale = d3.scaleLinear()
+        .domain([0, maxCount])
+        .range([0, rightW - 130]);
+
+      let currY = rightY + 35;
+
+      statusDist.forEach((st) => {
+        // Label
+        ctx.fillStyle = "#cbd5e1";
+        ctx.font = "bold 11px sans-serif";
+        ctx.textAlign = "left";
+        ctx.fillText(st.label, rightX, currY);
+
+        // Bar
+        const bX = rightX;
+        const bY = currY + 8;
+        const bW = Math.max(8, rightBarScale(st.count));
+        const bH = 16;
+
+        ctx.fillStyle = st.color || "#6366f1";
+        ctx.beginPath();
+        if (ctx.roundRect) {
+          ctx.roundRect(bX, bY, bW, bH, 4);
+        } else {
+          ctx.rect(bX, bY, bW, bH);
+        }
+        ctx.fill();
+
+        // Count Text
+        const pct = Math.round((st.count / totalCount) * 100);
+        ctx.fillStyle = "#f8fafc";
+        ctx.font = "bold 11px monospace";
+        ctx.fillText(`${st.count} RFQ (${pct}%)`, bX + bW + 10, bY + 12);
+
+        currY += 52;
+      });
+
+      resolve(canvas.toDataURL("image/png"));
+    } catch (e) {
+      console.error("Gagal generate D3 chart image:", e);
+      resolve("");
+    }
+  });
+};
+
+export default function RfqAnalytics({ rfqs, catalogProducts, quotations, settings }: RfqAnalyticsProps) {
   const activeCatalog = catalogProducts || PRODUCT_CATALOG;
   const [dimension, setDimension] = useState<"client" | "product" | "vendor">("client");
   const svgRef = useRef<SVGSVGElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(600);
+
+  // Modal State for Monthly Report Generator
+  const [showMonthlyReportModal, setShowMonthlyReportModal] = useState(false);
+  const [selectedReportMonth, setSelectedReportMonth] = useState<number>(new Date().getMonth()); // 0-11
+  const [selectedReportYear, setSelectedReportYear] = useState<number>(new Date().getFullYear());
+  const [reportMode, setReportMode] = useState<"selected_month" | "all">("selected_month");
+  const [customReportNote, setCustomReportNote] = useState<string>("");
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+
+  // Helper function to resolve status text
+  const getStatusLabelText = (statusVal: string) => {
+    if (statusVal === "pending") return "Menunggu Proposal (Pending)";
+    if (statusVal === "processing") return "Sedang Diproses (Processing)";
+    if (statusVal === "quoted") return "Sudah Di-Quoted (Quoted)";
+    if (statusVal === "completed") return "Selesai (Completed)";
+    if (statusVal === "cancelled") return "Dibatalkan (Cancelled)";
+    const custom = settings?.customRfqStatuses?.find(c => c.value === statusVal);
+    return custom ? custom.label : statusVal.toUpperCase();
+  };
+
+  const getStatusHexColor = (statusVal: string) => {
+    if (statusVal === "pending") return "#f59e0b";
+    if (statusVal === "processing") return "#3b82f6";
+    if (statusVal === "quoted") return "#6366f1";
+    if (statusVal === "completed") return "#10b981";
+    if (statusVal === "cancelled") return "#ef4444";
+    const custom = settings?.customRfqStatuses?.find(c => c.value === statusVal);
+    if (custom && custom.color) {
+      const colMap: Record<string, string> = {
+        purple: "#a855f7",
+        emerald: "#10b981",
+        amber: "#f59e0b",
+        rose: "#f43f5e",
+        blue: "#3b82f6",
+        indigo: "#6366f1",
+        cyan: "#06b6d4"
+      };
+      return colMap[custom.color] || custom.color;
+    }
+    return "#a855f7";
+  };
+
+  // Filter RFQs for the target report period
+  const getTargetReportRfqs = () => {
+    if (reportMode === "all") return rfqs;
+    return rfqs.filter((r) => {
+      if (!r.date) return false;
+      let d: Date | null = null;
+      if (r.date.includes("-")) {
+        const parts = r.date.split("-");
+        if (parts[0].length === 4) {
+          d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+        } else if (parts[2]?.length === 4) {
+          d = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+        }
+      } else {
+        d = new Date(r.date);
+      }
+      if (!d || isNaN(d.getTime())) return false;
+      return d.getMonth() === selectedReportMonth && d.getFullYear() === selectedReportYear;
+    });
+  };
+
+  // Calculate Most Frequent Status
+  const getMostFrequentStatusInfo = (targetRfqs: RFQ[]) => {
+    if (targetRfqs.length === 0) {
+      return {
+        statusKey: "-",
+        label: "Belum Ada Data",
+        count: 0,
+        percentage: 0,
+        value: 0
+      };
+    }
+
+    const counts: Record<string, { count: number; value: number }> = {};
+    targetRfqs.forEach((r) => {
+      const st = r.status || "pending";
+      const val = getRfqValue(r, activeCatalog);
+      if (!counts[st]) counts[st] = { count: 0, value: 0 };
+      counts[st].count += 1;
+      counts[st].value += val;
+    });
+
+    let topStatus = "pending";
+    let maxCount = -1;
+
+    Object.entries(counts).forEach(([st, info]) => {
+      if (info.count > maxCount) {
+        maxCount = info.count;
+        topStatus = st;
+      }
+    });
+
+    const pct = targetRfqs.length > 0 ? Math.round((maxCount / targetRfqs.length) * 100) : 0;
+
+    return {
+      statusKey: topStatus,
+      label: getStatusLabelText(topStatus),
+      count: maxCount,
+      percentage: pct,
+      value: counts[topStatus]?.value || 0
+    };
+  };
+
+  // Calculate Performance Trend vs previous month
+  const getMonthPerformanceTrend = (m: number, y: number) => {
+    const currRfqs = rfqs.filter(r => {
+      if (!r.date) return false;
+      const d = new Date(r.date);
+      return !isNaN(d.getTime()) && d.getMonth() === m && d.getFullYear() === y;
+    });
+    const currValue = currRfqs.reduce((acc, r) => acc + getRfqValue(r, activeCatalog), 0);
+
+    const prevM = m === 0 ? 11 : m - 1;
+    const prevY = m === 0 ? y - 1 : y;
+    const prevRfqs = rfqs.filter(r => {
+      if (!r.date) return false;
+      const d = new Date(r.date);
+      return !isNaN(d.getTime()) && d.getMonth() === prevM && d.getFullYear() === prevY;
+    });
+    const prevValue = prevRfqs.reduce((acc, r) => acc + getRfqValue(r, activeCatalog), 0);
+
+    if (prevValue === 0) {
+      return {
+        percentageChange: 100,
+        text: "+100% (Awal Periode)",
+        isPositive: true,
+        currValue,
+        prevValue
+      };
+    }
+
+    const diff = currValue - prevValue;
+    const pct = Math.round((diff / prevValue) * 100);
+    const isPositive = pct >= 0;
+
+    return {
+      percentageChange: pct,
+      text: `${isPositive ? "+" : ""}${pct}% vs Bulan Lalu`,
+      isPositive,
+      currValue,
+      prevValue
+    };
+  };
+
+  // Core PDF Generator Function
+  const handleDownloadMonthlyPdfReport = async () => {
+    setIsGeneratingPdf(true);
+    try {
+      const targetRfqs = getTargetReportRfqs();
+      const totalVal = targetRfqs.reduce((acc, r) => acc + getRfqValue(r, activeCatalog), 0);
+      const topStatus = getMostFrequentStatusInfo(targetRfqs);
+      const trendInfo = getMonthPerformanceTrend(selectedReportMonth, selectedReportYear);
+
+      // Prepare Monthly Trend Data for D3 Chart
+      const monthlyList = getLast6MonthsList();
+      const monthlyDataForD3 = monthlyList.map(m => {
+        const matchRfqs = rfqs.filter(r => {
+          if (!r.date) return false;
+          const d = new Date(r.date);
+          if (isNaN(d.getTime())) return false;
+          const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+          return ym === m.key;
+        });
+        const tot = matchRfqs.reduce((acc, r) => acc + getRfqValue(r, activeCatalog), 0);
+        return {
+          label: m.label,
+          total: tot,
+          count: matchRfqs.length
+        };
+      });
+
+      // Prepare Status Distribution for D3 Chart
+      const statusKeys = ["pending", "processing", "quoted", "completed", "cancelled"];
+      if (settings?.customRfqStatuses) {
+        settings.customRfqStatuses.forEach(c => {
+          if (!statusKeys.includes(c.value)) statusKeys.push(c.value);
+        });
+      }
+
+      const statusDistForD3 = statusKeys.map(stKey => {
+        const cnt = targetRfqs.filter(r => r.status === stKey).length;
+        return {
+          label: getStatusLabelText(stKey),
+          count: cnt,
+          color: getStatusHexColor(stKey)
+        };
+      });
+
+      // Generate D3 Canvas Base64 Image
+      const chartImgBase64 = await generateD3PdfChartImage(monthlyDataForD3, statusDistForD3);
+
+      // Initialize jsPDF A4
+      const doc = new jsPDF("p", "mm", "a4");
+      const pageWidth = doc.internal.pageSize.getWidth();
+
+      // 1. Company Header Strip
+      const companyTitle = (settings?.companyName || "PT. BERKAH BINTANG SOLUSINDO").toUpperCase();
+      const companyAddress = settings?.address || "Jl. Raya Jakarta Timur, Indonesia";
+      const companyContact = `Telp/WA: ${settings?.whatsapp || "+62 812-3456-7890"} | Email: ${settings?.email || "info@berkahbintangsolusindo.com"}`;
+
+      doc.setFillColor(15, 23, 42); // slate-900
+      doc.rect(0, 0, pageWidth, 32, "F");
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(14);
+      doc.setTextColor(255, 255, 255);
+      doc.text(companyTitle, 14, 14);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(203, 213, 225);
+      doc.text(companyAddress, 14, 20);
+      doc.text(companyContact, 14, 25);
+
+      // Title & Period Subtitle
+      let yPos = 40;
+      const periodLabel = reportMode === "all"
+        ? "Semua Periode Akumulasi Data"
+        : `Periode: ${MONTH_NAMES_INDONESIAN[selectedReportMonth]} ${selectedReportYear}`;
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(13);
+      doc.setTextColor(30, 41, 59);
+      doc.text("LAPORAN BULANAN PERFORMA RFQ & REKAPITULASI PROSPEK", 14, yPos);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(100, 116, 139);
+      doc.text(`${periodLabel} | Tanggal Cetak: ${new Date().toLocaleDateString("id-ID", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}`, 14, yPos + 5);
+
+      yPos += 12;
+
+      // 2. Executive KPI Cards Box
+      doc.setFillColor(248, 250, 252);
+      doc.setDrawColor(226, 232, 240);
+      doc.roundedRect(14, yPos, 182, 34, 3, 3, "FD");
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.setTextColor(79, 70, 229);
+      doc.text("TOTAL NILAI RFQ (ESTIMASI)", 18, yPos + 8);
+      doc.text("STATUS TERBANYAK", 64, yPos + 8);
+      doc.text("TOTAL VOLUME RFQ", 114, yPos + 8);
+      doc.text("TREN PERFORMA", 154, yPos + 8);
+
+      doc.setFontSize(11);
+      doc.setTextColor(15, 23, 42);
+      doc.text(formatShortRupiah(totalVal), 18, yPos + 17);
+
+      const topStatusText = topStatus.count > 0 ? topStatus.label : "N/A";
+      doc.setFontSize(8.5);
+      doc.text(doc.splitTextToSize(topStatusText, 45), 64, yPos + 16);
+
+      doc.setFontSize(11);
+      doc.text(`${targetRfqs.length} Berkas RFQ`, 114, yPos + 17);
+
+      doc.setFontSize(9.5);
+      if (trendInfo.isPositive) {
+        doc.setTextColor(16, 185, 129);
+      } else {
+        doc.setTextColor(225, 29, 72);
+      }
+      doc.text(trendInfo.text, 154, yPos + 17);
+
+      doc.setFontSize(7.5);
+      doc.setTextColor(100, 116, 139);
+      doc.text(`Full: ${formatFullRupiah(totalVal)}`, 18, yPos + 26);
+      doc.text(`Volume: ${topStatus.count} RFQ (${topStatus.percentage}%)`, 64, yPos + 26);
+      doc.text(`Avg: ${targetRfqs.length > 0 ? formatShortRupiah(totalVal / targetRfqs.length) : "Rp 0"}/RFQ`, 114, yPos + 26);
+      doc.text(`Pertumbuhan Prospek`, 154, yPos + 26);
+
+      yPos += 40;
+
+      // 3. D3 Chart Embed
+      if (chartImgBase64) {
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(9.5);
+        doc.setTextColor(30, 41, 59);
+        doc.text("VISUALISASI PERFORMA & TREN RFQ (D3 ENGINE)", 14, yPos);
+
+        doc.addImage(chartImgBase64, "PNG", 14, yPos + 3, 182, 75);
+        yPos += 84;
+      }
+
+      // 4. AutoTable: Status Distribution Table
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9.5);
+      doc.setTextColor(30, 41, 59);
+      doc.text("RINCIAN DISTRIBUSI STATUS PERMINTAAN PENAWARAN (RFQ)", 14, yPos);
+      yPos += 4;
+
+      const statusTableRows = statusDistForD3.map((s, idx) => {
+        const stRfqs = targetRfqs.filter(r => r.status === statusKeys[idx]);
+        const stValue = stRfqs.reduce((acc, r) => acc + getRfqValue(r, activeCatalog), 0);
+        const pct = targetRfqs.length > 0 ? Math.round((s.count / targetRfqs.length) * 100) : 0;
+        return [
+          (idx + 1).toString(),
+          s.label,
+          `${s.count} Berkas`,
+          `${pct}%`,
+          formatFullRupiah(stValue),
+          pct > 30 ? "Mendominasi" : "Normal"
+        ];
+      });
+
+      (doc as any).autoTable({
+        startY: yPos,
+        head: [["No", "Status RFQ", "Jumlah Berkas", "Persentase", "Total Nilai Estimasi", "Keterangan Operational"]],
+        body: statusTableRows,
+        theme: "striped",
+        headStyles: {
+          fillColor: [79, 70, 229],
+          textColor: [255, 255, 255],
+          fontSize: 8,
+          fontStyle: "bold"
+        },
+        bodyStyles: {
+          fontSize: 7.5,
+          textColor: [15, 23, 42]
+        },
+        margin: { left: 14, right: 14 }
+      });
+
+      yPos = (doc as any).lastAutoTable.finalY + 8;
+
+      if (yPos > 240) {
+        doc.addPage();
+        yPos = 20;
+      }
+
+      // 5. AutoTable: Sample / List of RFQs
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9.5);
+      doc.setTextColor(30, 41, 59);
+      doc.text("DAFTAR BERKAS RFQ PERIODE INI", 14, yPos);
+      yPos += 4;
+
+      const rfqTableRows = targetRfqs.slice(0, 15).map((rfq, idx) => {
+        const val = getRfqValue(rfq, activeCatalog);
+        const itemsCount = rfq.items ? rfq.items.length : 0;
+        const clientName = rfq.companyName ? `${rfq.clientName} (${rfq.companyName})` : rfq.clientName;
+        return [
+          (idx + 1).toString(),
+          rfq.rfqNumber || rfq.id.substring(0, 8).toUpperCase(),
+          rfq.date || "-",
+          clientName,
+          `${itemsCount} Item`,
+          formatFullRupiah(val),
+          getStatusLabelText(rfq.status)
+        ];
+      });
+
+      (doc as any).autoTable({
+        startY: yPos,
+        head: [["No", "No RFQ", "Tanggal", "Nama Klien / Instansi", "Item", "Est. Nilai", "Status"]],
+        body: rfqTableRows,
+        theme: "grid",
+        headStyles: {
+          fillColor: [30, 41, 59],
+          textColor: [255, 255, 255],
+          fontSize: 7.5,
+          fontStyle: "bold"
+        },
+        bodyStyles: {
+          fontSize: 7,
+          textColor: [15, 23, 42]
+        },
+        margin: { left: 14, right: 14 }
+      });
+
+      yPos = (doc as any).lastAutoTable.finalY + 10;
+
+      if (yPos > 245) {
+        doc.addPage();
+        yPos = 20;
+      }
+
+      // Custom Note Section
+      if (customReportNote) {
+        doc.setFillColor(241, 245, 249);
+        doc.setDrawColor(203, 213, 225);
+        doc.roundedRect(14, yPos, 182, 20, 2, 2, "FD");
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.setTextColor(79, 70, 229);
+        doc.text("CATATAN KHUSUS MANAJEMEN / STRATEGIS:", 18, yPos + 6);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.5);
+        doc.setTextColor(51, 65, 85);
+        doc.text(doc.splitTextToSize(customReportNote, 174), 18, yPos + 12);
+
+        yPos += 26;
+      }
+
+      // Approval / Signatures Footer
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(100, 116, 139);
+      doc.text("Dibuat Oleh,", 30, yPos + 5);
+      doc.text("Disetujui Oleh,", 140, yPos + 5);
+
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(15, 23, 42);
+      doc.text("Admin Sales & Procurement", 30, yPos + 22);
+      doc.text("Direktur Utama / Management", 140, yPos + 22);
+
+      // Save File
+      const filename = `Laporan_Bulanan_RFQ_BBS_${MONTH_NAMES_INDONESIAN[selectedReportMonth]}_${selectedReportYear}.pdf`;
+      doc.save(filename);
+
+      setShowMonthlyReportModal(false);
+    } catch (err) {
+      console.error("Gagal generate Laporan Bulanan PDF:", err);
+      alert("Terjadi kesalahan saat membuat PDF laporan bulanan.");
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
   const [tooltip, setTooltip] = useState<{
     show: boolean;
     x: number;
@@ -619,41 +1269,55 @@ export default function RfqAnalytics({ rfqs, catalogProducts, quotations }: RfqA
             </div>
           </div>
 
-          {/* Dynamic Controls */}
-          <div className="flex flex-wrap gap-1.5 bg-slate-950 p-1 rounded-xl border border-white/5 self-start md:self-center">
+          {/* Dynamic Controls & Generate Report Action */}
+          <div className="flex flex-wrap items-center gap-2 self-start md:self-center">
+            {/* Generate Monthly Report Action Button */}
             <button
-              onClick={() => setDimension("client")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
-                dimension === "client"
-                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/10"
-                  : "text-slate-400 hover:text-white"
-              }`}
+              onClick={() => setShowMonthlyReportModal(true)}
+              className="px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-extrabold shadow-lg shadow-emerald-900/30 border border-emerald-400/30 transition-all flex items-center gap-2 cursor-pointer active:scale-95"
+              id="btn_generate_laporan_bulanan_card1"
+              title="Generate laporan bulanan RFQ & performa bisnis (PDF & D3 Chart)"
             >
-              <Building className="h-3.5 w-3.5" />
-              <span>Kategori Klien</span>
+              <FileText className="h-4 w-4 text-emerald-200 animate-pulse" />
+              <span>Generate Laporan Bulanan</span>
+              <span className="px-1.5 py-0.5 text-[9px] bg-white/20 text-white rounded-full font-mono font-bold">PDF</span>
             </button>
-            <button
-              onClick={() => setDimension("product")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
-                dimension === "product"
-                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/10"
-                  : "text-slate-400 hover:text-white"
-              }`}
-            >
-              <Layers className="h-3.5 w-3.5" />
-              <span>Kategori Produk</span>
-            </button>
-            <button
-              onClick={() => setDimension("vendor")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
-                dimension === "vendor"
-                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/10"
-                  : "text-slate-400 hover:text-white"
-              }`}
-            >
-              <Briefcase className="h-3.5 w-3.5" />
-              <span>Brand / Vendor</span>
-            </button>
+
+            <div className="flex flex-wrap gap-1.5 bg-slate-950 p-1 rounded-xl border border-white/5">
+              <button
+                onClick={() => setDimension("client")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                  dimension === "client"
+                    ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/10"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                <Building className="h-3.5 w-3.5" />
+                <span>Kategori Klien</span>
+              </button>
+              <button
+                onClick={() => setDimension("product")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                  dimension === "product"
+                    ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/10"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                <Layers className="h-3.5 w-3.5" />
+                <span>Kategori Produk</span>
+              </button>
+              <button
+                onClick={() => setDimension("vendor")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                  dimension === "vendor"
+                    ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/10"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                <Briefcase className="h-3.5 w-3.5" />
+                <span>Brand / Vendor</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -765,8 +1429,17 @@ export default function RfqAnalytics({ rfqs, catalogProducts, quotations }: RfqA
             </div>
           </div>
 
-          {/* Quick Metrics Badge */}
-          <div className="flex items-center gap-3">
+          {/* Quick Metrics Badge & Report Action */}
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={() => setShowMonthlyReportModal(true)}
+              className="px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-extrabold shadow-lg shadow-emerald-900/30 border border-emerald-400/30 transition-all flex items-center gap-2 cursor-pointer active:scale-95"
+              id="btn_generate_laporan_bulanan_card2"
+            >
+              <FileText className="h-4 w-4 text-emerald-200" />
+              <span>Generate Laporan Bulanan</span>
+              <span className="px-1.5 py-0.5 text-[9px] bg-white/20 text-white rounded-full font-mono font-bold">PDF</span>
+            </button>
             <div className="px-3 py-1.5 bg-slate-950 border border-white/5 rounded-xl text-xs text-slate-400">
               Total Quoted: <span className="font-mono font-bold text-emerald-400">{formatShortRupiah(totalSalesOverall)}</span>
             </div>
@@ -960,6 +1633,205 @@ export default function RfqAnalytics({ rfqs, catalogProducts, quotations }: RfqA
           </div>
         </div>
       </div>
+
+      {/* MODAL: Generate Laporan Bulanan (PDF) */}
+      {showMonthlyReportModal && (
+        <div className="fixed inset-0 z-[120] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-fadeIn">
+          <div className="bg-slate-900 border border-indigo-500/30 rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-6 relative text-left my-8">
+            
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-white/10 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/30 rounded-xl text-indigo-400">
+                  <FileText className="h-6 w-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-extrabold text-white flex items-center gap-2">
+                    <span>Generate Laporan Bulanan (PDF)</span>
+                    <span className="px-2 py-0.5 text-[10px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full font-mono font-bold">
+                      D3 Engine
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Ekspor rekapitulasi performa bulanan, total nilai RFQ, status terbanyak, dan grafik tren ke dokumen PDF resmi.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowMonthlyReportModal(false)}
+                className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-white/5 transition-all cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Controls Row: Select Month & Year */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-slate-950/60 p-4 rounded-xl border border-white/5">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                  Bulan Laporan
+                </label>
+                <select
+                  value={selectedReportMonth}
+                  onChange={(e) => setSelectedReportMonth(Number(e.target.value))}
+                  disabled={reportMode === "all"}
+                  className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50 cursor-pointer"
+                >
+                  {MONTH_NAMES_INDONESIAN.map((mName, idx) => (
+                    <option key={mName} value={idx}>{mName}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                  Tahun Laporan
+                </label>
+                <select
+                  value={selectedReportYear}
+                  onChange={(e) => setSelectedReportYear(Number(e.target.value))}
+                  disabled={reportMode === "all"}
+                  className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50 cursor-pointer"
+                >
+                  {[2024, 2025, 2026, 2027].map((yr) => (
+                    <option key={yr} value={yr}>{yr}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                  Cakupan Periode
+                </label>
+                <select
+                  value={reportMode}
+                  onChange={(e) => setReportMode(e.target.value as any)}
+                  className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                >
+                  <option value="selected_month">Bulan Terpilih</option>
+                  <option value="all">Akumulasi Semua Data</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Live Executive Summary Preview Cards */}
+            {(() => {
+              const targetRfqs = getTargetReportRfqs();
+              const totalVal = targetRfqs.reduce((acc, r) => acc + getRfqValue(r, activeCatalog), 0);
+              const topStatus = getMostFrequentStatusInfo(targetRfqs);
+              const trendInfo = getMonthPerformanceTrend(selectedReportMonth, selectedReportYear);
+
+              return (
+                <div className="space-y-3">
+                  <h4 className="text-xs font-extrabold text-indigo-300 uppercase tracking-wider flex items-center gap-1.5">
+                    <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+                    <span>Ringkasan Eksekutif Periode Ini</span>
+                  </h4>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {/* Card 1: Total Nilai RFQ */}
+                    <div className="bg-slate-950/80 border border-white/5 rounded-xl p-3 space-y-1">
+                      <span className="text-[10px] font-bold text-slate-400 block">Total Nilai RFQ</span>
+                      <p className="text-sm font-extrabold text-emerald-400 font-mono">
+                        {formatShortRupiah(totalVal)}
+                      </p>
+                      <span className="text-[9px] text-slate-500 block truncate" title={formatFullRupiah(totalVal)}>
+                        {formatFullRupiah(totalVal)}
+                      </span>
+                    </div>
+
+                    {/* Card 2: Status Terbanyak */}
+                    <div className="bg-slate-950/80 border border-white/5 rounded-xl p-3 space-y-1">
+                      <span className="text-[10px] font-bold text-slate-400 block">Status Terbanyak</span>
+                      <p className="text-xs font-extrabold text-amber-300 truncate" title={topStatus.label}>
+                        {topStatus.label}
+                      </p>
+                      <span className="text-[9px] text-slate-500 block">
+                        {topStatus.count} RFQ ({topStatus.percentage}%)
+                      </span>
+                    </div>
+
+                    {/* Card 3: Volume Berkas RFQ */}
+                    <div className="bg-slate-950/80 border border-white/5 rounded-xl p-3 space-y-1">
+                      <span className="text-[10px] font-bold text-slate-400 block">Volume RFQ</span>
+                      <p className="text-sm font-extrabold text-indigo-300 font-mono">
+                        {targetRfqs.length} Berkas
+                      </p>
+                      <span className="text-[9px] text-slate-500 block">
+                        {reportMode === "all" ? "Semua RFQ" : `${MONTH_NAMES_INDONESIAN[selectedReportMonth]} ${selectedReportYear}`}
+                      </span>
+                    </div>
+
+                    {/* Card 4: Tren Performa */}
+                    <div className="bg-slate-950/80 border border-white/5 rounded-xl p-3 space-y-1">
+                      <span className="text-[10px] font-bold text-slate-400 block">Tren Performa</span>
+                      <p className={`text-xs font-extrabold ${trendInfo.isPositive ? "text-emerald-400" : "text-rose-400"}`}>
+                        {trendInfo.text}
+                      </p>
+                      <span className="text-[9px] text-slate-500 block">
+                        Dibanding bulan sebelumnya
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Custom Notes Area */}
+            <div className="space-y-1.5">
+              <label className="block text-xs font-bold text-slate-300">
+                Catatan Strategis Manajemen / Rekomendasi (Opsional)
+              </label>
+              <textarea
+                value={customReportNote}
+                onChange={(e) => setCustomReportNote(e.target.value)}
+                placeholder="Tambahkan catatan khusus manajemen yang akan dicetak di bagian bawah laporan PDF..."
+                rows={2}
+                className="w-full bg-slate-950/80 border border-white/10 rounded-xl p-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+            </div>
+
+            {/* D3 Chart Embed Indicator Notice */}
+            <div className="p-3 bg-indigo-950/30 border border-indigo-500/20 rounded-xl flex items-center gap-3 text-xs text-indigo-200">
+              <BarChart3 className="h-5 w-5 text-indigo-400 shrink-0" />
+              <span>
+                Dokumen PDF yang dihasilkan mencakup <strong className="text-white font-bold">Grafik Visual D3.js Engine</strong> yang memetakan tren proyeksi 6 bulan serta rekapitulasi distribusi status terkini.
+              </span>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-end gap-3 border-t border-white/10 pt-4">
+              <button
+                type="button"
+                onClick={() => setShowMonthlyReportModal(false)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-all cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                disabled={isGeneratingPdf}
+                onClick={handleDownloadMonthlyPdfReport}
+                className="px-5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 text-white rounded-xl text-xs font-extrabold shadow-lg shadow-emerald-900/30 border border-emerald-400/30 transition-all flex items-center gap-2 cursor-pointer"
+                id="btn_download_monthly_pdf_modal"
+              >
+                {isGeneratingPdf ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 animate-spin text-white" />
+                    <span>Memproses D3 Chart & PDF...</span>
+                  </>
+                ) : (
+                  <>
+                    <Download className="h-4 w-4 text-emerald-100" />
+                    <span>Download Laporan PDF Bulanan</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
     </div>
   );
 }

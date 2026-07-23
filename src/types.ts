@@ -20,6 +20,7 @@ export interface ProductItem {
   image?: string;
   serialNumber?: string;
   sku?: string;
+  barcode?: string;
 }
 
 export interface RFQItem {
@@ -144,5 +145,39 @@ export interface AdminRfqFilterPreset {
   startDate?: string;
   endDate?: string;
   isSystem?: boolean;
+}
+
+export interface ServiceHistoryItem {
+  id: string;
+  serviceDate: string;
+  technician: string;
+  description: string;
+  statusAfter: "Normal" | "Perlu Replacement" | "Troubleshoot Selesai" | "Pembersihan & Kalibrasi";
+  costEstimate?: number;
+  replacedParts?: string;
+}
+
+export interface MaintenanceAsset {
+  id: string;
+  clientName: string;
+  clientCompany?: string;
+  clientEmail?: string;
+  clientPhone?: string;
+  assetName: string;
+  assetCategory: string; // e.g. "Server & Storage", "Networking", "CCTV & Security", "Workstation & PC", "Power & UPS"
+  serialNumber?: string;
+  sku?: string;
+  contractNumber: string; // e.g. "MNT-2026-001"
+  contractStartDate: string; // YYYY-MM-DD
+  contractEndDate: string; // YYYY-MM-DD
+  serviceIntervalMonths: number; // 1, 3, 6, 12
+  lastServiceDate?: string; // YYYY-MM-DD
+  nextServiceDueDate: string; // YYYY-MM-DD
+  status: "active" | "due_soon" | "overdue" | "completed" | "expired";
+  technicianInCharge?: string;
+  notes?: string;
+  locationRack?: string; // e.g. "Gudang Utama - Rak A1" or "Kantor Pusat LT.3 Server Room"
+  contractValue?: number;
+  serviceHistory: ServiceHistoryItem[];
 }
 

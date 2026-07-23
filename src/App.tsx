@@ -41,6 +41,7 @@ import ManualScheduleForm from "./components/ManualScheduleForm";
 import RfqAnalytics from "./components/RfqAnalytics";
 import BarcodeScanner from "./components/BarcodeScanner";
 import ProductDetailModal from "./components/ProductDetailModal";
+import MaintenanceModule from "./components/MaintenanceModule";
 import { SERVICE_OFFERINGS, PRODUCT_CATALOG } from "./data";
 import { 
   CompanySettings, 
@@ -858,6 +859,8 @@ export default function App() {
     image: string;
     specifications: string[];
     serialNumber?: string;
+    sku?: string;
+    barcode?: string;
   }>({
     id: "",
     name: "",
@@ -869,12 +872,18 @@ export default function App() {
     image: "",
     specifications: ["", "", "", "", ""],
     serialNumber: "",
+    sku: "",
+    barcode: "",
   });
   const [isEditingCatalog, setIsEditingCatalog] = useState(false);
   const [isAddingCatalog, setIsAddingCatalog] = useState(false);
   const [adminCatalogSearch, setAdminCatalogSearch] = useState("");
   const [adminCatalogCategory, setAdminCatalogCategory] = useState("Semua");
   const [adminCatalogBrand, setAdminCatalogBrand] = useState("Semua");
+  const [catalogValidationFilter, setCatalogValidationFilter] = useState<"all" | "missing_sku" | "missing_barcode" | "missing_any">("all");
+  const [quickFixEditingId, setQuickFixEditingId] = useState<string | null>(null);
+  const [quickFixSkuInput, setQuickFixSkuInput] = useState("");
+  const [quickFixBarcodeInput, setQuickFixBarcodeInput] = useState("");
 
   const [rfqCart, setRfqCart] = useState<{ product: ProductItem; quantity: number }[]>(() => {
     try {
@@ -1055,13 +1064,21 @@ export default function App() {
   }, [rfqCart, customCartItems, rfqForm]);
   const [emailError, setEmailError] = useState("");
 
-  // Budget threshold and estimation state
+  // Budget threshold, description note, and estimation state
   const [budgetThreshold, setBudgetThreshold] = useState<number>(() => {
     try {
       const saved = localStorage.getItem("bbs_budget_threshold");
       return saved ? parseInt(saved, 10) : 100000000; // default 100 million IDR
     } catch (e) {
       return 100000000;
+    }
+  });
+
+  const [budgetNote, setBudgetNote] = useState<string>(() => {
+    try {
+      return localStorage.getItem("bbs_budget_note") || "";
+    } catch (e) {
+      return "";
     }
   });
 
@@ -1072,6 +1089,14 @@ export default function App() {
       console.error("Error saving budgetThreshold to localStorage", e);
     }
   }, [budgetThreshold]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("bbs_budget_note", budgetNote);
+    } catch (e) {
+      console.error("Error saving budgetNote to localStorage", e);
+    }
+  }, [budgetNote]);
 
   const estimatedCartTotal = useMemo(() => {
     const parsePrice = (priceRange: string): number => {
@@ -1113,7 +1138,7 @@ export default function App() {
     }
   });
   const [adminPassword, setAdminPassword] = useState("");
-  const [activeAdminSubTab, setActiveAdminSubTab] = useState<"rfqs" | "quotations" | "emails" | "reminders" | "settings" | "users" | "catalog">("rfqs");
+  const [activeAdminSubTab, setActiveAdminSubTab] = useState<"rfqs" | "quotations" | "emails" | "reminders" | "settings" | "users" | "catalog" | "orders" | "clients" | "maintenance">("rfqs");
   const [adminRfqSearch, setAdminRfqSearch] = useState("");
   const [newCustomStatusName, setNewCustomStatusName] = useState("");
   const [newCustomStatusColor, setNewCustomStatusColor] = useState("purple");
@@ -4389,6 +4414,12 @@ export default function App() {
       ...customCartItems
     ];
 
+    let customReqText = rfqForm.customRequirements.trim();
+    if (budgetNote.trim() || budgetThreshold) {
+      const budgetInfo = `[Batas Anggaran: ${formatRupiah(budgetThreshold)}${budgetNote.trim() ? ` - Keterangan: ${budgetNote.trim()}` : ""}]`;
+      customReqText = customReqText ? `${customReqText} | ${budgetInfo}` : budgetInfo;
+    }
+
     const payload = {
       clientName: rfqForm.clientName.trim(),
       companyName: rfqForm.companyName.trim() || undefined,
@@ -4397,7 +4428,8 @@ export default function App() {
       address: rfqForm.address.trim(),
       clientCategory: rfqForm.clientCategory,
       items,
-      customRequirements: rfqForm.customRequirements.trim() || undefined
+      customRequirements: customReqText || undefined,
+      notes: budgetNote.trim() ? `Keterangan Anggaran: ${budgetNote.trim()}` : undefined
     };
 
     try {
@@ -4953,6 +4985,59 @@ export default function App() {
   const uniqueCategories = ["Semua", ...Array.from(new Set(catalogProducts.map(p => p.category)))];
   const uniqueBrands = ["Semua", ...Array.from(new Set(catalogProducts.map(p => p.brand || p.vendor).filter((b): b is string => !!b && b.trim() !== ""))).sort()];
 
+  const generateSkuForProduct = (item: ProductItem): string => {
+    const brand = (item.brand || item.vendor || "BBS").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 3) || "BBS";
+    const cat = item.category ? item.category.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 3) : "PRD";
+    const randomNum = Math.floor(100 + Math.random() * 900);
+    return `BBS-${brand}-${cat}-${randomNum}`;
+  };
+
+  const generateBarcodeForProduct = (item: ProductItem): string => {
+    const brand = (item.brand || item.vendor || "BBS").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 3) || "BBS";
+    const randomNum = Math.floor(10000 + Math.random() * 90000);
+    return `BC-${brand}-${randomNum}`;
+  };
+
+  const handleSaveQuickFix = (productId: string, newSku: string, newBarcode: string) => {
+    const trimmedSku = newSku.trim();
+    const trimmedBarcode = newBarcode.trim();
+    setCatalogProducts(prev => prev.map(p => {
+      if (p.id === productId) {
+        return {
+          ...p,
+          sku: trimmedSku || undefined,
+          serialNumber: trimmedBarcode || p.serialNumber,
+          barcode: trimmedBarcode || undefined,
+        };
+      }
+      return p;
+    }));
+    setQuickFixEditingId(null);
+    showToast("SKU & Barcode berhasil diperbarui secara langsung!", "success");
+  };
+
+  const handleBulkAutoFixAllMissing = () => {
+    let count = 0;
+    setCatalogProducts(prev => prev.map(p => {
+      const missingSku = !(p.sku && p.sku.trim());
+      const missingBarcode = !((p.barcode && p.barcode.trim()) || (p.serialNumber && p.serialNumber.trim()));
+      
+      if (missingSku || missingBarcode) {
+        count++;
+        const skuVal = missingSku ? generateSkuForProduct(p) : p.sku;
+        const barcodeVal = missingBarcode ? generateBarcodeForProduct(p) : (p.barcode || p.serialNumber);
+        return {
+          ...p,
+          sku: skuVal,
+          barcode: barcodeVal,
+          serialNumber: barcodeVal || p.serialNumber,
+        };
+      }
+      return p;
+    }));
+    showToast(`Otomatis men-generate SKU & Barcode untuk ${count} produk!`, "success");
+  };
+
   // Filter admin products catalog
   const filteredAdminCatalog = catalogProducts.filter(item => {
     const query = adminCatalogSearch.toLowerCase().trim();
@@ -4962,10 +5047,20 @@ export default function App() {
                    item.description.toLowerCase().includes(query) ||
                    itemBrand.toLowerCase().includes(query) ||
                    (item.sku && item.sku.toLowerCase().includes(query)) ||
-                   (item.serialNumber && item.serialNumber.toLowerCase().includes(query));
+                   (item.serialNumber && item.serialNumber.toLowerCase().includes(query)) ||
+                   (item.barcode && item.barcode.toLowerCase().includes(query));
     const matchC = adminCatalogCategory === "Semua" || item.category === adminCatalogCategory;
     const matchB = adminCatalogBrand === "Semua" || itemBrand === adminCatalogBrand;
-    return matchQ && matchC && matchB;
+    
+    const missingSku = !(item.sku && item.sku.trim());
+    const missingBarcode = !((item.barcode && item.barcode.trim()) || (item.serialNumber && item.serialNumber.trim()));
+    
+    const matchVal = catalogValidationFilter === "all" ||
+                     (catalogValidationFilter === "missing_any" && (missingSku || missingBarcode)) ||
+                     (catalogValidationFilter === "missing_sku" && missingSku) ||
+                     (catalogValidationFilter === "missing_barcode" && missingBarcode);
+
+    return matchQ && matchC && matchB && matchVal;
   });
 
   // Computed values for Bulk QR label printing and validation
@@ -7673,45 +7768,118 @@ export default function App() {
                       {/* Threshold Configurator */}
                       <div className="space-y-2 pt-2 border-t border-white/5">
                         <div className="flex items-center justify-between text-[10px]">
-                          <label className="text-slate-400 font-semibold">Ubah Batas Anggaran:</label>
-                          <span className="text-slate-500 font-mono">Geser untuk mengubah</span>
+                          <label className="text-slate-300 font-bold flex items-center gap-1">
+                            <Icons.Sliders className="h-3.5 w-3.5 text-indigo-400" />
+                            <span>Input Batas Anggaran (Rp):</span>
+                          </label>
+                          <span className="text-slate-500 font-mono text-[9px]">Geser atau ketik nominal spesifik</span>
                         </div>
                         
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2.5">
                           <input 
                             type="range"
-                            min="10000000" // 10M
-                            max="500000000" // 500M
-                            step="10000000" // 10M steps
+                            min="5000000" // 5M
+                            max="1000000000" // 1 Miliar
+                            step="5000000" // 5M steps
                             value={budgetThreshold}
                             onChange={(e) => setBudgetThreshold(parseInt(e.target.value))}
-                            className="flex-1 h-1 bg-slate-900 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                            className="flex-1 h-1.5 bg-slate-900 rounded-lg appearance-none cursor-pointer accent-indigo-500"
                           />
-                          <input 
-                            type="number"
-                            value={budgetThreshold}
-                            onChange={(e) => setBudgetThreshold(Math.max(0, parseInt(e.target.value) || 0))}
-                            className="w-24 px-2 py-0.5 bg-slate-900 border border-white/10 rounded-md text-[10px] font-mono font-bold text-slate-300 text-right focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                          />
+                          <div className="relative">
+                            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-500 font-mono">Rp</span>
+                            <input 
+                              type="number"
+                              value={budgetThreshold || ""}
+                              onChange={(e) => setBudgetThreshold(Math.max(0, parseInt(e.target.value) || 0))}
+                              placeholder="0"
+                              className="w-28 pl-6 pr-2 py-1 bg-slate-900 border border-white/10 rounded-lg text-[11px] font-mono font-bold text-amber-300 text-right focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500/50 shadow-inner"
+                            />
+                          </div>
                         </div>
 
                         {/* Quick select presets */}
-                        <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                          {[25000000, 50000000, 100000000, 250000000].map((preset) => (
+                        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                          <span className="text-[9px] text-slate-500 font-bold">Preset:</span>
+                          {[25000000, 50000000, 100000000, 250000000, 500000000, 1000000000].map((preset) => (
                             <button
                               key={preset}
                               type="button"
                               onClick={() => setBudgetThreshold(preset)}
-                              className={`px-2 py-0.5 rounded text-[9px] font-bold font-mono transition-colors ${
+                              className={`px-2 py-0.5 rounded-md text-[9px] font-bold font-mono transition-all cursor-pointer ${
                                 budgetThreshold === preset
-                                  ? "bg-indigo-600 text-white border border-indigo-500"
-                                  : "bg-slate-900 text-slate-400 hover:text-slate-200 border border-white/5"
+                                  ? "bg-indigo-600 text-white border border-indigo-500 shadow-sm shadow-indigo-600/30"
+                                  : "bg-slate-900 text-slate-400 hover:text-slate-200 border border-white/5 hover:bg-slate-800"
                               }`}
                             >
-                              {preset >= 1000000000 ? `${preset / 1000000000}M` : preset >= 1000000 ? `${preset / 1000000} Jt` : preset}
+                              {preset >= 1000000000 ? `${preset / 1000000000} M` : preset >= 1000000 ? `${preset / 1000000} Jt` : preset}
                             </button>
                           ))}
                         </div>
+                      </div>
+
+                      {/* NEW: Input Field - Keterangan Batas Anggaran / Catatan Memori Admin */}
+                      <div className="space-y-2 pt-2.5 border-t border-white/5">
+                        <div className="flex items-center justify-between text-[10px]">
+                          <label className="text-slate-300 font-bold flex items-center gap-1.5">
+                            <Icons.FileText className="h-3.5 w-3.5 text-amber-400" />
+                            <span>Keterangan Batas Anggaran (Memori Admin/Staf):</span>
+                          </label>
+                          <span className="text-[9px] text-slate-500">Opsional</span>
+                        </div>
+
+                        <div className="relative">
+                          <input
+                            type="text"
+                            value={budgetNote}
+                            onChange={(e) => setBudgetNote(e.target.value)}
+                            placeholder="Contoh: Alokasi Pagu DAK 2026 / Maksimal Anggaran Klien Dinas / HPS Rp 150 Jt..."
+                            className="w-full pl-3 pr-8 py-1.5 bg-slate-900 border border-white/10 rounded-xl text-[11px] text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500/50 transition-all shadow-inner"
+                          />
+                          {budgetNote && (
+                            <button
+                              type="button"
+                              onClick={() => setBudgetNote("")}
+                              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-rose-400 text-[10px] p-0.5 transition-colors"
+                              title="Hapus keterangan"
+                            >
+                              <Icons.X className="h-3 w-3" />
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Quick memo template tags */}
+                        <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                          <span className="text-[9px] text-slate-500 font-semibold">Teks Cepat:</span>
+                          {[
+                            "Pagu DAK TA 2026",
+                            "Sesuai HPS Dinas",
+                            "Batas Maksimal Klien",
+                            "Subsidi Proyek BUMN"
+                          ].map((tag) => (
+                            <button
+                              key={tag}
+                              type="button"
+                              onClick={() => {
+                                if (budgetNote.includes(tag)) return;
+                                setBudgetNote(budgetNote ? `${budgetNote} - ${tag}` : tag);
+                              }}
+                              className="px-2 py-0.5 bg-slate-900/80 hover:bg-slate-800 border border-white/5 hover:border-amber-500/30 rounded-md text-[9px] font-medium text-slate-400 hover:text-amber-300 transition-all cursor-pointer"
+                            >
+                              + {tag}
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Active Memo Display Badge */}
+                        {budgetNote.trim() && (
+                          <div className="mt-1 px-2.5 py-1 bg-amber-500/10 border border-amber-500/20 rounded-lg flex items-center justify-between text-[10px] text-amber-300">
+                            <div className="flex items-center gap-1.5 overflow-hidden">
+                              <Icons.Bookmark className="h-3 w-3 text-amber-400 shrink-0" />
+                              <span className="truncate"><strong>Tercatat:</strong> {budgetNote}</span>
+                            </div>
+                            <span className="text-[9px] text-amber-400/80 shrink-0 font-mono ml-2">Tersimpan di Sistem</span>
+                          </div>
+                        )}
                       </div>
 
                       {/* Exceeded Warning Alert Banner */}
@@ -9053,15 +9221,27 @@ export default function App() {
                   </button>
 
                   <button
-                    onClick={() => setActiveAdminSubTab("clients" as any)}
+                    onClick={() => setActiveAdminSubTab("clients")}
                     className={`px-5 py-3 text-sm font-bold border-b-2 transition-all flex items-center gap-2 ${
-                      activeAdminSubTab === ("clients" as any)
+                      activeAdminSubTab === "clients"
                         ? "border-indigo-500 text-indigo-400" 
                         : "border-transparent text-slate-400 hover:text-white"
                     }`}
                   >
                     <Icons.Users className="h-4.5 w-4.5" />
                     <span>Database Klien ({uniqueClients.length})</span>
+                  </button>
+
+                  <button
+                    onClick={() => setActiveAdminSubTab("maintenance")}
+                    className={`px-5 py-3 text-sm font-bold border-b-2 transition-all flex items-center gap-2 relative ${
+                      activeAdminSubTab === "maintenance" 
+                        ? "border-indigo-500 text-indigo-400" 
+                        : "border-transparent text-slate-400 hover:text-white"
+                    }`}
+                  >
+                    <Icons.Wrench className="h-4.5 w-4.5 text-indigo-400" />
+                    <span>Kontrak Pemeliharaan (Maintenance)</span>
                   </button>
 
                   {adminRole === "superadmin" && (
@@ -9146,7 +9326,7 @@ export default function App() {
                     <RfqAnalytics rfqs={rfqs} catalogProducts={catalogProducts} quotations={quotations} />
 
                     {/* Main RFQ Table Card */}
-                    <div className="bg-slate-900/40 border border-white/10 backdrop-blur-xl rounded-2xl overflow-hidden shadow-2xl">
+                    <div className="bg-slate-900/40 border border-white/10 backdrop-blur-xl rounded-2xl relative z-10 shadow-2xl">
                       <div className="px-5 py-4 bg-white/5 border-b border-white/10 flex flex-col md:flex-row md:items-center justify-between gap-4">
                         <div className="flex flex-col sm:flex-row sm:items-center gap-3 flex-1">
                           <h4 className="font-extrabold text-white text-base shrink-0">Database Request for Quote (RFQ) Klien</h4>
@@ -9786,7 +9966,7 @@ export default function App() {
                                 className="absolute -top-3.5 -right-2.5 bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-400/30 rounded-full px-2 py-0.5 text-[9px] font-extrabold tracking-wide shadow-md shadow-slate-950/80 z-30 flex items-center gap-1 cursor-default select-none transition-colors"
                                 initial={{ scale: 0.4, opacity: 0, y: -4 }}
                                 animate={{ 
-                                  scale: [0.4, 1.25, 0.95, 1], 
+                                  scale: 1, 
                                   opacity: 1, 
                                   y: 0,
                                   boxShadow: [
@@ -9890,14 +10070,83 @@ export default function App() {
                                 }}
                               />
 
-                              {/* Controls row container */}
-                              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-wrap z-10">
+                              {/* Controls row container - Vertical Stacked Layout */}
+                              <div className="flex flex-col gap-2.5 z-10 w-full">
 
-                              {/* Session Scanned Products Counter Badge */}
-                              <div className="flex items-center gap-1.5 bg-slate-950/80 border border-white/10 hover:border-emerald-500/30 rounded-xl px-2.5 py-1.5 text-[11px] text-slate-200 font-bold z-10 shrink-0 transition-all cursor-default" title="Total produk inventaris yang dipindai dalam sesi ini">
-                                <Icons.Scan className="h-3.5 w-3.5 text-emerald-400 animate-pulse" />
-                                <span>Pindai Sesi: <strong className="text-emerald-400 font-extrabold">{sessionScannedCount}</strong></span>
-                              </div>
+                                {/* Session Scanned Products Counter Badge */}
+                                <div className="flex items-center gap-1.5 bg-slate-950/80 border border-white/10 hover:border-emerald-500/30 rounded-xl px-2.5 py-1.5 text-[11px] text-slate-200 font-bold z-10 self-start shrink-0 transition-all cursor-default" title="Total produk inventaris yang dipindai dalam sesi ini">
+                                  <Icons.Scan className="h-3.5 w-3.5 text-emerald-400 animate-pulse" />
+                                  <span>Pindai Sesi: <strong className="text-emerald-400 font-extrabold">{sessionScannedCount}</strong></span>
+                                </div>
+
+                                {/* Vertical / Flexible Wrapped Status Filter Badges Row */}
+                                <div className="flex flex-col sm:flex-row sm:items-center gap-2 flex-wrap w-full">
+                                  <button
+                                    type="button"
+                                    onClick={() => setAdminRfqStatuses([])}
+                                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 border shadow-sm ${
+                                      adminRfqStatuses.length === 0
+                                        ? "bg-indigo-600 text-white border-indigo-500 shadow-indigo-600/30 ring-2 ring-indigo-500/30"
+                                        : "bg-slate-950/80 text-slate-300 border-white/10 hover:bg-slate-900 hover:border-white/20"
+                                    }`}
+                                  >
+                                    <span>Semua Status</span>
+                                    <span className="px-1.5 py-0.5 text-[9px] font-extrabold bg-indigo-950/80 text-indigo-300 rounded-full border border-indigo-500/30 font-mono">
+                                      {adminRfqStatusCounts[""] || 0}
+                                    </span>
+                                  </button>
+
+                                  <div className="flex flex-wrap items-center gap-1.5 flex-1">
+                                    {[
+                                      { value: "pending", label: "Menunggu Proposal (Pending)", color: "amber", bgActive: "bg-amber-950/70 text-amber-300 border-amber-500/60 shadow-amber-500/20 ring-1 ring-amber-500/30" },
+                                      { value: "processing", label: "Sedang Diproses (Processing)", color: "blue", bgActive: "bg-blue-950/70 text-blue-300 border-blue-500/60 shadow-blue-500/20 ring-1 ring-blue-500/30" },
+                                      { value: "quoted", label: "Sudah Di-Quoted (Quoted)", color: "indigo", bgActive: "bg-indigo-950/70 text-indigo-300 border-indigo-500/60 shadow-indigo-500/20 ring-1 ring-indigo-500/30" },
+                                      { value: "completed", label: "Selesai (Completed)", color: "emerald", bgActive: "bg-emerald-950/70 text-emerald-300 border-emerald-500/60 shadow-emerald-500/20 ring-1 ring-emerald-500/30" },
+                                      { value: "cancelled", label: "Dibatalkan (Cancelled)", color: "rose", bgActive: "bg-rose-950/70 text-rose-300 border-rose-500/60 shadow-rose-500/20 ring-1 ring-rose-500/30" },
+                                      ...(settings.customRfqStatuses || []).map(cs => ({
+                                        value: cs.value,
+                                        label: cs.label,
+                                        color: cs.color || "purple",
+                                        bgActive: "bg-purple-950/70 text-purple-300 border-purple-500/60 shadow-purple-500/20 ring-1 ring-purple-500/30"
+                                      }))
+                                    ].map((st) => {
+                                      const isSelected = adminRfqStatuses.includes(st.value);
+                                      const count = adminRfqStatusCounts[st.value as keyof typeof adminRfqStatusCounts] || 0;
+                                      return (
+                                        <button
+                                          key={st.value}
+                                          type="button"
+                                          onClick={() => {
+                                            if (adminRfqStatuses.includes(st.value)) {
+                                              setAdminRfqStatuses(adminRfqStatuses.filter(s => s !== st.value));
+                                            } else {
+                                              setAdminRfqStatuses([...adminRfqStatuses, st.value]);
+                                            }
+                                          }}
+                                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 border shadow-sm ${
+                                            isSelected
+                                              ? st.bgActive
+                                              : "bg-slate-950/80 text-slate-400 border-white/10 hover:bg-slate-900 hover:text-slate-200"
+                                          }`}
+                                        >
+                                          <span className={`h-2 w-2 rounded-full shrink-0 ${
+                                            st.value === "pending" ? "bg-amber-400 shadow-[0_0_6px_#f59e0b]" :
+                                            st.value === "processing" ? "bg-blue-400 shadow-[0_0_6px_#3b82f6]" :
+                                            st.value === "quoted" ? "bg-indigo-400 shadow-[0_0_6px_#6366f1]" :
+                                            st.value === "completed" ? "bg-emerald-400 shadow-[0_0_6px_#10b981]" :
+                                            st.value === "cancelled" ? "bg-rose-400 shadow-[0_0_6px_#ef4444]" : "bg-purple-400"
+                                          }`} />
+                                          <span>{st.label}</span>
+                                          <span className={`px-1.5 py-0.5 text-[9px] font-extrabold rounded-full font-mono border ${
+                                            isSelected ? "bg-white/15 border-white/30 text-white" : "bg-slate-900 border-white/5 text-slate-400"
+                                          }`}>
+                                            {count}
+                                          </span>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
                               {/* Hidden select for standard DOM API and integration compatibility */}
                               <select
                                 id="rfq_status_filter"
@@ -11747,8 +11996,8 @@ export default function App() {
                                 </div>
                               </div>
 
-                              {/* Small Dynamic Clickable Legend Row */}
-                              <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-[10px] text-slate-400 border-t border-white/5 pt-1.5 mt-0.5 z-10 w-full">
+                              {/* Small Dynamic Clickable Legend Row - Extended Horizontal Layout */}
+                              <div className="flex flex-row items-center gap-2 overflow-x-auto custom-scrollbar text-[10px] text-slate-400 border-t border-white/5 pt-2 mt-1 z-10 w-full pb-1">
                                 <span className="text-[9px] uppercase tracking-wider text-slate-300 font-extrabold mr-1 flex items-center gap-1">
                                   <Icons.Tags className="h-3 w-3 text-slate-400" />
                                   <span>Legenda Status (Klik untuk Filter):</span>
@@ -11856,9 +12105,10 @@ export default function App() {
                                     : (tailwindHexColors[currentRawColor] || "#64748b");
  
                                   return (
-                                    <button
+                                    <div
                                       key={item.value}
-                                      type="button"
+                                      role="button"
+                                      tabIndex={0}
                                       draggable="true"
                                       onDragStart={(e) => {
                                         setDraggingStatus(item.value);
@@ -11916,7 +12166,17 @@ export default function App() {
                                           setAdminRfqStatuses([...adminRfqStatuses, item.value]);
                                         }
                                       }}
-                                      className={`group flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[10px] font-bold transition-all cursor-grab active:cursor-grabbing select-none ${
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter" || e.key === " ") {
+                                          e.preventDefault();
+                                          if (adminRfqStatuses.includes(item.value)) {
+                                            setAdminRfqStatuses(adminRfqStatuses.filter(s => s !== item.value));
+                                          } else {
+                                            setAdminRfqStatuses([...adminRfqStatuses, item.value]);
+                                          }
+                                        }
+                                      }}
+                                      className={`group flex items-center gap-2.5 px-5 py-2.5 min-w-[165px] sm:min-w-[190px] rounded-xl border text-xs font-bold transition-all cursor-grab active:cursor-grabbing select-none shadow-sm ${
                                         draggingStatus === item.value
                                           ? "opacity-50 scale-95 border-dashed border-indigo-500/50 bg-slate-900/40"
                                           : isSelected
@@ -12019,7 +12279,7 @@ export default function App() {
                                           <Icons.Trash2 className="h-3 w-3" />
                                         </button>
                                       )}
-                                    </button>
+                                    </div>
                                   );
                                 })}
                               </div>
@@ -12849,7 +13109,8 @@ export default function App() {
                             </div>
                           </div>
 
-                          <table className="w-full text-left border-collapse text-xs">
+                          <div className="overflow-x-auto rounded-b-2xl">
+                            <table className="w-full text-left border-collapse text-xs">
                             <thead>
                               <tr className="bg-slate-950/60 text-slate-400 font-bold uppercase tracking-wider border-b border-white/5">
                                 <th className="p-4 w-12 text-center">
@@ -13184,7 +13445,7 @@ export default function App() {
 
                                               return (
                                                 <span 
-                                                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border ${bg} ${border} ${text}`}
+                                                  className={`inline-flex items-center justify-center gap-2 px-6 py-2 min-w-[160px] sm:min-w-[185px] rounded-full text-xs font-extrabold tracking-wide whitespace-nowrap border shadow-sm ${bg} ${border} ${text}`}
                                                   style={isHex ? {
                                                     backgroundColor: `${customCol}15`,
                                                     borderColor: `${customCol}30`,
@@ -13192,7 +13453,7 @@ export default function App() {
                                                   } : undefined}
                                                 >
                                                   <span 
-                                                    className={`h-1.5 w-1.5 rounded-full animate-pulse ${dot}`} 
+                                                    className={`h-2 w-2 rounded-full animate-pulse shrink-0 ${dot}`} 
                                                     style={isHex ? {
                                                       backgroundColor: customCol,
                                                       boxShadow: `0 0 5px ${customCol}`
@@ -13242,8 +13503,8 @@ export default function App() {
                                             };
                                             const cfg = statusConfigs[status] || statusConfigs.pending;
                                             return (
-                                              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border ${cfg.bg} ${cfg.border} ${cfg.text}`}>
-                                                <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot} ${status === "pending" || status === "processing" ? "animate-pulse" : ""}`} />
+                                              <span className={`inline-flex items-center justify-center gap-2 px-6 py-2 min-w-[160px] sm:min-w-[185px] rounded-full text-xs font-extrabold tracking-wide whitespace-nowrap border shadow-sm ${cfg.bg} ${cfg.border} ${cfg.text}`}>
+                                                <span className={`h-2 w-2 rounded-full shrink-0 ${cfg.dot} ${status === "pending" || status === "processing" ? "animate-pulse" : ""}`} />
                                                 <span>{cfg.label}</span>
                                               </span>
                                             );
@@ -13301,10 +13562,10 @@ export default function App() {
 
                                             return (
                                               <span 
-                                                className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold font-mono ${badgeClass}`}
+                                                className={`inline-flex items-center justify-center gap-2 px-4 py-2 min-w-[130px] sm:min-w-[155px] rounded-xl text-xs font-extrabold font-mono tracking-wide whitespace-nowrap border shadow-sm ${badgeClass}`}
                                                 title={titleText}
                                               >
-                                                <span className={`h-1.5 w-1.5 rounded-full ${dotColor}`} />
+                                                <span className={`h-2 w-2 rounded-full shrink-0 ${dotColor}`} />
                                                 <span>{formatTimeInStatus(timeInStatusHours)}</span>
                                               </span>
                                             );
@@ -13536,7 +13797,8 @@ export default function App() {
                               )}
                             </tbody>
                           </table>
-                        </motion.div>
+                        </div>
+                      </motion.div>
                       ) : (
                         <div className="py-16 text-center text-slate-500 space-y-2">
                           <FileText className="h-10 w-10 text-slate-600 mx-auto" />
@@ -14952,12 +15214,41 @@ export default function App() {
                             </div>
 
                             <div>
-                              <label className="block text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1">Serial Number (Opsional)</label>
+                              <div className="flex items-center justify-between mb-1">
+                                <label className="block text-[10px] text-slate-400 uppercase font-bold tracking-wider">Kode SKU Produk</label>
+                                <button
+                                  type="button"
+                                  onClick={() => setCatalogForm(prev => ({ ...prev, sku: generateSkuForProduct(prev as ProductItem) }))}
+                                  className="text-[9px] text-amber-400 hover:text-amber-300 font-extrabold cursor-pointer"
+                                >
+                                  ⚡ Auto SKU
+                                </button>
+                              </div>
                               <input
                                 type="text"
-                                placeholder="Contoh: SN-ASUS-98231"
-                                value={catalogForm.serialNumber || ""}
-                                onChange={(e) => setCatalogForm({ ...catalogForm, serialNumber: e.target.value })}
+                                placeholder="Contoh: BBS-LNV-T14"
+                                value={catalogForm.sku || ""}
+                                onChange={(e) => setCatalogForm({ ...catalogForm, sku: e.target.value })}
+                                className="w-full px-3.5 py-2 bg-slate-950 border border-white/10 rounded-xl text-xs focus:outline-none text-slate-100 placeholder-slate-600 focus:border-indigo-500 font-mono"
+                              />
+                            </div>
+
+                            <div>
+                              <div className="flex items-center justify-between mb-1">
+                                <label className="block text-[10px] text-slate-400 uppercase font-bold tracking-wider">Barcode / Serial Number</label>
+                                <button
+                                  type="button"
+                                  onClick={() => setCatalogForm(prev => ({ ...prev, serialNumber: generateBarcodeForProduct(prev as ProductItem), barcode: generateBarcodeForProduct(prev as ProductItem) }))}
+                                  className="text-[9px] text-emerald-400 hover:text-emerald-300 font-extrabold cursor-pointer"
+                                >
+                                  ⚡ Auto Barcode
+                                </button>
+                              </div>
+                              <input
+                                type="text"
+                                placeholder="Contoh: BC-ASUS-98231"
+                                value={catalogForm.serialNumber || catalogForm.barcode || ""}
+                                onChange={(e) => setCatalogForm({ ...catalogForm, serialNumber: e.target.value, barcode: e.target.value })}
                                 className="w-full px-3.5 py-2 bg-slate-950 border border-white/10 rounded-xl text-xs focus:outline-none text-slate-100 placeholder-slate-600 focus:border-indigo-500 font-mono"
                               />
                             </div>
@@ -15053,16 +15344,78 @@ export default function App() {
                     )}
 
                     {/* Catalog Interactive List & Search Card */}
-                    <div className="bg-slate-900/40 border border-white/10 backdrop-blur-xl rounded-2xl overflow-hidden shadow-2xl">
+                    <div className="bg-slate-900/40 border border-white/10 backdrop-blur-xl rounded-2xl overflow-hidden shadow-2xl space-y-0">
+                      {/* Validation Status Summary & Quick Action Bar */}
+                      {(() => {
+                        const totalCount = catalogProducts.length;
+                        const missingSkuCount = catalogProducts.filter(p => !(p.sku && p.sku.trim())).length;
+                        const missingBarcodeCount = catalogProducts.filter(p => !((p.barcode && p.barcode.trim()) || (p.serialNumber && p.serialNumber.trim()))).length;
+                        const missingAnyCount = catalogProducts.filter(p => !(p.sku && p.sku.trim()) || !((p.barcode && p.barcode.trim()) || (p.serialNumber && p.serialNumber.trim()))).length;
+
+                        return (
+                          <div className="px-5 py-3 bg-slate-950/90 border-b border-white/10 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+                            <div className="flex flex-wrap items-center gap-2">
+                              {missingAnyCount === 0 ? (
+                                <span className="px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-extrabold rounded-xl flex items-center gap-1.5">
+                                  <Icons.CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                                  <span>Validasi Katalog: 100% Valid (Seluruh SKU & Barcode Lengkap)</span>
+                                </span>
+                              ) : (
+                                <span className="px-3 py-1 bg-amber-500/15 border border-amber-500/30 text-amber-300 font-extrabold rounded-xl flex items-center gap-1.5">
+                                  <Icons.AlertTriangle className="h-4 w-4 text-amber-400 animate-pulse" />
+                                  <span>Peringatan Validasi: {missingAnyCount} Perangkat Perlu SKU / Barcode</span>
+                                </span>
+                              )}
+
+                              {/* Validation Filter Switcher */}
+                              <div className="inline-flex bg-slate-900 border border-white/10 p-0.5 rounded-xl">
+                                <button
+                                  type="button"
+                                  onClick={() => setCatalogValidationFilter("all")}
+                                  className={`px-2.5 py-1 text-[10px] font-bold rounded-lg transition-all cursor-pointer ${
+                                    catalogValidationFilter === "all" ? "bg-indigo-600 text-white shadow" : "text-slate-400 hover:text-slate-200"
+                                  }`}
+                                >
+                                  Semua ({totalCount})
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setCatalogValidationFilter("missing_any")}
+                                  className={`px-2.5 py-1 text-[10px] font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
+                                    catalogValidationFilter === "missing_any" ? "bg-amber-500 text-slate-950 shadow font-black" : "text-amber-400 hover:text-amber-300"
+                                  }`}
+                                >
+                                  <Icons.AlertTriangle className="h-3 w-3" />
+                                  <span>Perlu Fix ({missingAnyCount})</span>
+                                </button>
+                              </div>
+                            </div>
+
+                            {missingAnyCount > 0 && (
+                              <button
+                                type="button"
+                                onClick={handleBulkAutoFixAllMissing}
+                                className="px-3.5 py-1.5 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
+                                title="Otomatis generate SKU & Barcode untuk semua produk yang belum memiliki identifier"
+                              >
+                                <Icons.Wand2 className="h-4 w-4 text-slate-950" />
+                                <span>⚡ Auto-Fix Semua SKU/Barcode ({missingAnyCount})</span>
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })()}
+
+                      {/* Main Filters Toolbar */}
                       <div className="px-5 py-4 bg-white/5 border-b border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                        <h4 className="font-extrabold text-white text-base">Daftar Inventaris Katalog ({catalogProducts.length} Items)</h4>
+                        <h4 className="font-extrabold text-white text-base">Daftar Inventaris Katalog ({filteredAdminCatalog.length} Items)</h4>
                         
                         <div className="flex flex-wrap items-center gap-3">
                           <div className="relative w-full sm:w-64">
                             <Icons.Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500" />
                             <input
                               type="text"
-                              placeholder="Cari nama, brand, atau deskripsi..."
+                              placeholder="Cari nama, brand, SKU, atau deskripsi..."
                               value={adminCatalogSearch}
                               onChange={(e) => setAdminCatalogSearch(e.target.value)}
                               className="w-full pl-9 pr-3 py-1.5 bg-slate-950 border border-white/5 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500/50"
@@ -15118,17 +15471,18 @@ export default function App() {
                             <tr className="border-b border-white/5 bg-white/5 text-[10px] text-slate-400 uppercase tracking-widest font-extrabold">
                               <th className="py-3 px-5 text-center w-12">No</th>
                               <th className="py-3 px-4">Nama Perangkat</th>
+                              <th className="py-3 px-4">Identifikasi (SKU & Barcode)</th>
                               <th className="py-3 px-4">Brand / Vendor</th>
                               <th className="py-3 px-4">Kategori</th>
                               <th className="py-3 px-4">Rentang Estimasi Harga</th>
                               <th className="py-3 px-4 max-w-xs">Detail Spesifikasi Utama</th>
-                              <th className="py-3 px-5 text-right w-28">Aksi</th>
+                              <th className="py-3 px-5 text-right w-36">Aksi</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-white/5">
                             {filteredAdminCatalog.length === 0 ? (
                               <tr>
-                                <td colSpan={7} className="py-12 text-center text-slate-500 text-xs">
+                                <td colSpan={8} className="py-12 text-center text-slate-500 text-xs">
                                   Tidak ada item katalog yang sesuai dengan pencarian atau filter Anda.
                                 </td>
                               </tr>
@@ -15136,107 +15490,251 @@ export default function App() {
                               filteredAdminCatalog.map((item, idx) => {
                                 const ItemIcon = (Icons as any)[item.icon || "Package"] || Icons.Package;
                                 const brandName = item.brand || item.vendor;
+                                const missingSku = !(item.sku && item.sku.trim());
+                                const missingBarcode = !((item.barcode && item.barcode.trim()) || (item.serialNumber && item.serialNumber.trim()));
+                                const isInvalid = missingSku || missingBarcode;
+
                                 return (
-                                  <tr key={item.id} className="hover:bg-white/5 text-xs text-slate-300 transition-colors">
-                                    <td className="py-4 px-5 text-center font-mono font-bold text-slate-500">{idx + 1}</td>
-                                    <td className="py-4 px-4">
-                                      <div className="flex items-center space-x-3">
-                                        <div className="w-9 h-9 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
-                                          <ItemIcon className="h-4.5 w-4.5" />
+                                  <React.Fragment key={item.id}>
+                                    <tr className={`hover:bg-white/5 text-xs text-slate-300 transition-colors ${
+                                      isInvalid ? "bg-amber-500/[0.03] border-l-2 border-l-amber-500" : ""
+                                    }`}>
+                                      <td className="py-4 px-5 text-center font-mono font-bold text-slate-500">{idx + 1}</td>
+                                      <td className="py-4 px-4">
+                                        <div className="flex items-center space-x-3">
+                                          <div className="w-9 h-9 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
+                                            <ItemIcon className="h-4.5 w-4.5" />
+                                          </div>
+                                          <div>
+                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                              <h5 className="font-extrabold text-white text-xs">{item.name}</h5>
+                                              {isInvalid && (
+                                                <span className="inline-flex items-center gap-1 text-[9px] bg-amber-500/20 text-amber-300 font-extrabold px-1.5 py-0.5 rounded border border-amber-500/40 shrink-0" title="Validasi Warning: Perangkat belum memiliki SKU atau Barcode lengkap!">
+                                                  <Icons.AlertTriangle className="h-3 w-3 text-amber-400 animate-pulse" />
+                                                  <span>Perlu SKU/Barcode</span>
+                                                </span>
+                                              )}
+                                            </div>
+                                            <p className="text-[10px] text-slate-400 line-clamp-1 mt-0.5">{item.description}</p>
+                                          </div>
                                         </div>
-                                        <div>
-                                          <h5 className="font-extrabold text-white text-xs">{item.name}</h5>
-                                          <p className="text-[10px] text-slate-400 line-clamp-1 mt-0.5">{item.description}</p>
-                                          {item.serialNumber && (
-                                            <div className="inline-flex items-center space-x-1 text-[9px] font-mono text-indigo-400 bg-indigo-950/40 px-1.5 py-0.5 rounded border border-indigo-500/10 mt-1">
-                                              <Icons.QrCode className="h-2.5 w-2.5" />
-                                              <span>SN: {item.serialNumber}</span>
+                                      </td>
+
+                                      {/* Identifier Badges (SKU & Barcode) */}
+                                      <td className="py-4 px-4 min-w-[170px]">
+                                        <div className="space-y-1">
+                                          {missingSku ? (
+                                            <div className="inline-flex items-center gap-1 text-[9px] font-mono text-amber-300 bg-amber-950/60 border border-amber-500/40 px-2 py-0.5 rounded" title="SKU belum diisi">
+                                              <Icons.AlertTriangle className="h-2.5 w-2.5 text-amber-400 shrink-0" />
+                                              <span>SKU: Belum Diisi</span>
+                                            </div>
+                                          ) : (
+                                            <div className="inline-flex items-center gap-1 text-[9px] font-mono text-indigo-300 bg-indigo-950/60 border border-indigo-500/20 px-2 py-0.5 rounded">
+                                              <Icons.Tag className="h-2.5 w-2.5 text-indigo-400" />
+                                              <span>SKU: {item.sku}</span>
                                             </div>
                                           )}
+
+                                          <div>
+                                            {missingBarcode ? (
+                                              <div className="inline-flex items-center gap-1 text-[9px] font-mono text-amber-300 bg-amber-950/60 border border-amber-500/40 px-2 py-0.5 rounded" title="Barcode / SN belum diisi">
+                                                <Icons.AlertTriangle className="h-2.5 w-2.5 text-amber-400 shrink-0" />
+                                                <span>BC: Belum Diisi</span>
+                                              </div>
+                                            ) : (
+                                              <div className="inline-flex items-center gap-1 text-[9px] font-mono text-emerald-300 bg-emerald-950/60 border border-emerald-500/20 px-2 py-0.5 rounded">
+                                                <Icons.QrCode className="h-2.5 w-2.5 text-emerald-400" />
+                                                <span>BC: {item.barcode || item.serialNumber}</span>
+                                              </div>
+                                            )}
+                                          </div>
                                         </div>
-                                      </div>
-                                    </td>
-                                    <td className="py-4 px-4">
-                                      {brandName ? (
-                                        <span className="inline-flex items-center gap-1 bg-indigo-500/10 text-indigo-300 text-[10px] font-bold px-2 py-0.5 rounded-md border border-indigo-500/20">
-                                          <Icons.Tag className="h-2.5 w-2.5 text-indigo-400" />
-                                          <span>{brandName}</span>
-                                        </span>
-                                      ) : (
-                                        <span className="text-[10px] text-slate-600 font-mono italic">-</span>
-                                      )}
-                                    </td>
-                                    <td className="py-4 px-4">
-                                      <span className="inline-block bg-slate-800 text-slate-300 text-[10px] font-bold px-2 py-0.5 rounded-full border border-white/5">
-                                        {item.category}
-                                      </span>
-                                    </td>
-                                    <td className="py-4 px-4">
-                                      <span className="font-mono font-bold text-amber-400">{item.estimatedPriceRange}</span>
-                                    </td>
-                                    <td className="py-4 px-4 max-w-xs">
-                                      <div className="flex flex-wrap gap-1">
-                                        {item.specifications && item.specifications.length > 0 ? (
-                                          item.specifications.slice(0, 3).map((spec, sIdx) => (
-                                            <span key={sIdx} className="text-[9px] bg-slate-950 px-1.5 py-0.5 rounded text-slate-400 border border-white/5 truncate max-w-[120px]" title={spec}>
-                                              &bull; {spec}
-                                            </span>
-                                          ))
+                                      </td>
+
+                                      <td className="py-4 px-4">
+                                        {brandName ? (
+                                          <span className="inline-flex items-center gap-1 bg-indigo-500/10 text-indigo-300 text-[10px] font-bold px-2 py-0.5 rounded-md border border-indigo-500/20">
+                                            <Icons.Tag className="h-2.5 w-2.5 text-indigo-400" />
+                                            <span>{brandName}</span>
+                                          </span>
                                         ) : (
-                                          <span className="text-[9px] text-slate-600 font-mono italic">Tanpa spesifikasi</span>
+                                          <span className="text-[10px] text-slate-600 font-mono italic">-</span>
                                         )}
-                                        {item.specifications && item.specifications.length > 3 && (
-                                          <span className="text-[9px] text-indigo-400 font-bold px-1 py-0.5">+{item.specifications.length - 3} lagi</span>
-                                        )}
-                                      </div>
-                                    </td>
-                                    <td className="py-4 px-5 text-right">
-                                      <div className="flex justify-end gap-1.5">
-                                        <button
-                                          onClick={() => {
-                                            const filledSpecs = [...item.specifications];
-                                            // Pad up to 5 elements for editing inputs
-                                            while (filledSpecs.length < 5) {
-                                              filledSpecs.push("");
-                                            }
-                                            setCatalogForm({
-                                              id: item.id,
-                                              name: item.name,
-                                              category: item.category,
-                                              brand: item.brand || item.vendor || "",
-                                              description: item.description,
-                                              estimatedPriceRange: item.estimatedPriceRange,
-                                              icon: item.icon || "Package",
-                                              image: item.image || "",
-                                              specifications: filledSpecs,
-                                              serialNumber: item.serialNumber || "",
-                                            });
-                                            setIsAddingCatalog(false);
-                                            setIsEditingCatalog(true);
-                                            // Scroll form smoothly into view
-                                            window.scrollTo({ top: 0, behavior: "smooth" });
-                                          }}
-                                          className="p-1.5 bg-slate-800 hover:bg-slate-700 hover:text-white rounded-lg transition-colors border border-white/5 cursor-pointer"
-                                          title="Ubah Perangkat"
-                                        >
-                                          <Icons.Edit2 className="h-3.5 w-3.5" />
-                                        </button>
-                                        
-                                        <button
-                                          onClick={() => {
-                                            if (confirm(`Apakah Anda yakin ingin menghapus "${item.name}" dari katalog?`)) {
-                                              setCatalogProducts(prev => prev.filter(p => p.id !== item.id));
-                                              showToast(`Berhasil menghapus "${item.name}" dari katalog`, "success");
-                                            }
-                                          }}
-                                          className="p-1.5 bg-rose-500/10 hover:bg-rose-500/30 text-rose-400 hover:text-white rounded-lg transition-colors border border-rose-500/20 cursor-pointer"
-                                          title="Hapus Perangkat"
-                                        >
-                                          <Icons.Trash2 className="h-3.5 w-3.5" />
-                                        </button>
-                                      </div>
-                                    </td>
-                                  </tr>
+                                      </td>
+                                      <td className="py-4 px-4">
+                                        <span className="inline-block bg-slate-800 text-slate-300 text-[10px] font-bold px-2 py-0.5 rounded-full border border-white/5">
+                                          {item.category}
+                                        </span>
+                                      </td>
+                                      <td className="py-4 px-4">
+                                        <span className="font-mono font-bold text-amber-400">{item.estimatedPriceRange}</span>
+                                      </td>
+                                      <td className="py-4 px-4 max-w-xs">
+                                        <div className="flex flex-wrap gap-1">
+                                          {item.specifications && item.specifications.length > 0 ? (
+                                            item.specifications.slice(0, 3).map((spec, sIdx) => (
+                                              <span key={sIdx} className="text-[9px] bg-slate-950 px-1.5 py-0.5 rounded text-slate-400 border border-white/5 truncate max-w-[120px]" title={spec}>
+                                                &bull; {spec}
+                                              </span>
+                                            ))
+                                          ) : (
+                                            <span className="text-[9px] text-slate-600 font-mono italic">Tanpa spesifikasi</span>
+                                          )}
+                                          {item.specifications && item.specifications.length > 3 && (
+                                            <span className="text-[9px] text-indigo-400 font-bold px-1 py-0.5">+{item.specifications.length - 3} lagi</span>
+                                          )}
+                                        </div>
+                                      </td>
+                                      <td className="py-4 px-5 text-right">
+                                        <div className="flex justify-end items-center gap-1.5">
+                                          {/* Quick Fix Button */}
+                                          <button
+                                            onClick={() => {
+                                              if (quickFixEditingId === item.id) {
+                                                setQuickFixEditingId(null);
+                                              } else {
+                                                setQuickFixEditingId(item.id);
+                                                setQuickFixSkuInput(item.sku || "");
+                                                setQuickFixBarcodeInput(item.barcode || item.serialNumber || "");
+                                              }
+                                            }}
+                                            className={`p-1.5 rounded-lg transition-colors border cursor-pointer flex items-center gap-1 shrink-0 ${
+                                              isInvalid 
+                                                ? "bg-amber-500/20 hover:bg-amber-500/40 text-amber-300 border-amber-500/40" 
+                                                : "bg-slate-800 hover:bg-slate-700 text-slate-300 border-white/10"
+                                            }`}
+                                            title="Quick-Fix SKU & Barcode secara langsung"
+                                          >
+                                            <Icons.Wand2 className="h-3.5 w-3.5 text-amber-400" />
+                                            <span className="text-[10px] font-extrabold hidden xl:inline">Quick-Fix</span>
+                                          </button>
+
+                                          <button
+                                            onClick={() => {
+                                              const filledSpecs = [...item.specifications];
+                                              while (filledSpecs.length < 5) {
+                                                filledSpecs.push("");
+                                              }
+                                              setCatalogForm({
+                                                id: item.id,
+                                                name: item.name,
+                                                category: item.category,
+                                                brand: item.brand || item.vendor || "",
+                                                description: item.description,
+                                                estimatedPriceRange: item.estimatedPriceRange,
+                                                icon: item.icon || "Package",
+                                                image: item.image || "",
+                                                specifications: filledSpecs,
+                                                serialNumber: item.serialNumber || item.barcode || "",
+                                                sku: item.sku || "",
+                                                barcode: item.barcode || item.serialNumber || "",
+                                              });
+                                              setIsAddingCatalog(false);
+                                              setIsEditingCatalog(true);
+                                              window.scrollTo({ top: 0, behavior: "smooth" });
+                                            }}
+                                            className="p-1.5 bg-slate-800 hover:bg-slate-700 hover:text-white rounded-lg transition-colors border border-white/5 cursor-pointer"
+                                            title="Ubah Perangkat (Lengkap)"
+                                          >
+                                            <Icons.Edit2 className="h-3.5 w-3.5" />
+                                          </button>
+                                          
+                                          <button
+                                            onClick={() => {
+                                              if (confirm(`Apakah Anda yakin ingin menghapus "${item.name}" dari katalog?`)) {
+                                                setCatalogProducts(prev => prev.filter(p => p.id !== item.id));
+                                                showToast(`Berhasil menghapus "${item.name}" dari katalog`, "success");
+                                              }
+                                            }}
+                                            className="p-1.5 bg-rose-500/10 hover:bg-rose-500/30 text-rose-400 hover:text-white rounded-lg transition-colors border border-rose-500/20 cursor-pointer"
+                                            title="Hapus Perangkat"
+                                          >
+                                            <Icons.Trash2 className="h-3.5 w-3.5" />
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </tr>
+
+                                    {/* Inline Quick-Fix Form Row */}
+                                    {quickFixEditingId === item.id && (
+                                      <tr className="bg-slate-950/95 border-y-2 border-amber-500/50 animate-fadeIn">
+                                        <td colSpan={8} className="p-4 bg-gradient-to-r from-amber-950/30 via-slate-900 to-amber-950/30">
+                                          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                                            <div className="flex items-center gap-3">
+                                              <div className="p-2 bg-amber-500/20 text-amber-400 rounded-xl border border-amber-500/30 shrink-0">
+                                                <Icons.Wand2 className="h-5 w-5 animate-pulse" />
+                                              </div>
+                                              <div>
+                                                <h5 className="font-extrabold text-white text-xs flex items-center gap-2">
+                                                  <span>Quick-Fix Identifikasi SKU & Barcode</span>
+                                                  <span className="text-amber-300 font-mono text-[10px]">({item.name})</span>
+                                                </h5>
+                                                <p className="text-[10px] text-slate-400 mt-0.5">Lengkapi nilai secara manual atau klik tombol ⚡ Auto untuk men-generate identifier otomatis.</p>
+                                              </div>
+                                            </div>
+
+                                            <div className="flex flex-wrap items-center gap-3">
+                                              <div className="flex items-center gap-1.5 bg-slate-900 p-1.5 rounded-xl border border-white/10">
+                                                <span className="text-[10px] font-mono font-extrabold text-amber-300 px-1">SKU:</span>
+                                                <input
+                                                  type="text"
+                                                  value={quickFixSkuInput}
+                                                  onChange={(e) => setQuickFixSkuInput(e.target.value)}
+                                                  placeholder="Contoh: BBS-LNV-T14"
+                                                  className="px-2.5 py-1 bg-slate-950 border border-white/10 rounded-lg text-xs text-white font-mono w-36 focus:outline-none focus:border-amber-400"
+                                                />
+                                                <button
+                                                  type="button"
+                                                  onClick={() => setQuickFixSkuInput(generateSkuForProduct(item))}
+                                                  className="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/40 text-amber-300 text-[10px] font-black rounded-md border border-amber-500/30 cursor-pointer transition-colors"
+                                                  title="Auto-generate SKU"
+                                                >
+                                                  ⚡ Auto
+                                                </button>
+                                              </div>
+
+                                              <div className="flex items-center gap-1.5 bg-slate-900 p-1.5 rounded-xl border border-white/10">
+                                                <span className="text-[10px] font-mono font-extrabold text-emerald-300 px-1">Barcode/SN:</span>
+                                                <input
+                                                  type="text"
+                                                  value={quickFixBarcodeInput}
+                                                  onChange={(e) => setQuickFixBarcodeInput(e.target.value)}
+                                                  placeholder="Contoh: BC-LNV-98231"
+                                                  className="px-2.5 py-1 bg-slate-950 border border-white/10 rounded-lg text-xs text-white font-mono w-36 focus:outline-none focus:border-emerald-400"
+                                                />
+                                                <button
+                                                  type="button"
+                                                  onClick={() => setQuickFixBarcodeInput(generateBarcodeForProduct(item))}
+                                                  className="px-2 py-1 bg-emerald-500/20 hover:bg-emerald-500/40 text-emerald-300 text-[10px] font-black rounded-md border border-emerald-500/30 cursor-pointer transition-colors"
+                                                  title="Auto-generate Barcode"
+                                                >
+                                                  ⚡ Auto
+                                                </button>
+                                              </div>
+
+                                              <div className="flex items-center gap-1.5">
+                                                <button
+                                                  type="button"
+                                                  onClick={() => handleSaveQuickFix(item.id, quickFixSkuInput, quickFixBarcodeInput)}
+                                                  className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-md cursor-pointer flex items-center gap-1 transition-all"
+                                                >
+                                                  <Icons.Check className="h-4 w-4" />
+                                                  <span>Simpan</span>
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => setQuickFixEditingId(null)}
+                                                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl cursor-pointer transition-all"
+                                                >
+                                                  Batal
+                                                </button>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    )}
+                                  </React.Fragment>
                                 );
                               })
                             )}
@@ -16105,6 +16603,18 @@ export default function App() {
                     </div>
 
                   </div>
+                )}
+
+                {/* ================================== */}
+                {/* ADMIN T5: MAINTENANCE CONTRACTS    */}
+                {/* ================================== */}
+                {activeAdminSubTab === "maintenance" && (
+                  <MaintenanceModule
+                    catalogProducts={catalogProducts}
+                    clientsList={uniqueClients}
+                    showToast={showToast}
+                    formatRupiah={formatRupiah}
+                  />
                 )}
 
               </div>

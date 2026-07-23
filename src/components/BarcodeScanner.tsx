@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Html5Qrcode } from "html5-qrcode";
 import { Camera, Scan, X, RotateCw, CheckCircle, AlertCircle, ShoppingCart, Info, History, Trash2, Search, Filter, Zap, ZapOff, Volume2, VolumeX } from "lucide-react";
 import { ProductItem } from "../types";
+import BarcodeOverlay from "./BarcodeOverlay";
 
 interface BarcodeScannerProps {
   catalogProducts: ProductItem[];
@@ -1010,37 +1011,13 @@ export default function BarcodeScanner({
                       <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_75%_25%,rgba(251,191,36,0.15),transparent_60%)] z-10 animate-pulse" />
                     )}
 
-                    {/* Glowing Perimeter Scan Border Overlay */}
-                    {scannerActive && (
-                      <div className="absolute inset-0 border-2 border-indigo-500/40 rounded-xl pointer-events-none z-10 animate-pulse" />
-                    )}
-
-                    {/* Scanning Target Frame & Brackets overlay */}
-                    {scannerActive && (
-                      <div className="absolute inset-0 pointer-events-none flex items-center justify-center z-10 overflow-hidden">
-                        {/* Target Frame Area with giant box-shadow mask to dim the outer region */}
-                        <div className="w-56 h-36 border border-indigo-500/40 rounded-2xl relative flex flex-col items-center justify-center shadow-[0_0_0_9999px_rgba(2,6,23,0.65)] shadow-indigo-500/10">
-                          {/* Corner brackets with neon drop-shadow */}
-                          <div className="absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 border-indigo-400 rounded-tl-xl shadow-[0_0_12px_rgba(129,140,248,0.9)]" />
-                          <div className="absolute -top-1 -right-1 w-6 h-6 border-t-4 border-r-4 border-indigo-400 rounded-tr-xl shadow-[0_0_12px_rgba(129,140,248,0.9)]" />
-                          <div className="absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 border-indigo-400 rounded-bl-xl shadow-[0_0_12px_rgba(129,140,248,0.9)]" />
-                          <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 border-indigo-400 rounded-br-xl shadow-[0_0_12px_rgba(129,140,248,0.9)]" />
-                          
-                          {/* Subtle pulsating center target dot */}
-                          <div className="w-2.5 h-2.5 bg-indigo-400 rounded-full shadow-[0_0_12px_rgba(129,140,248,0.9)] animate-pulse" />
-                          
-                          {/* Subtle text inside/below the frame helper overlay */}
-                          <span className="absolute bottom-2 text-[9px] uppercase tracking-widest text-indigo-300 font-extrabold bg-slate-950/80 px-2 py-0.5 rounded-md border border-white/5">
-                            Posisikan Barcode
-                          </span>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Laser Overlay scanning effect */}
-                    {scannerActive && (
-                      <div className="absolute inset-x-0 h-0.5 bg-gradient-to-r from-transparent via-indigo-400 to-transparent shadow-[0_0_15px_rgba(129,140,248,1)] animate-scanLine z-10" />
-                    )}
+                    {/* Visual Alignment Overlay Component */}
+                    <BarcodeOverlay
+                      isActive={scannerActive}
+                      isTorchOn={isTorchOn}
+                      onToggleTorch={toggleTorch}
+                      torchSupported={torchSupported || simulateMode}
+                    />
 
                     {!scannerActive && (
                       <div className="text-center p-4 space-y-3 z-10">
